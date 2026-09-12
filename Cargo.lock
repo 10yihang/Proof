@@ -2466,6 +2466,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "proof-observer"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "libc",
+ "proof-core",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "uuid",
+]
+
+[[package]]
 name = "quick-xml"
 version = "0.42.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

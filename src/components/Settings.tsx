@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   Desktop,
+  Database,
   GearSix,
   Info,
   Moon,
@@ -8,21 +9,28 @@ import {
   ShieldCheck,
   Sun,
 } from "@phosphor-icons/react";
-import type { Preferences, ProofError } from "../types";
+import type { Preferences, ProofError, Workspace } from "../types";
 import { Modal } from "./Modal";
+import { DataSettings } from "./DataSettings";
 
 export function Settings({
   preferences,
   error,
   onChange,
   onClose,
+  workspaces,
+  workspaceId,
+  demo,
 }: {
   preferences: Preferences;
   error: ProofError | null;
   onChange: (p: Partial<Preferences>) => Promise<void>;
   onClose: () => void;
+  workspaces: Workspace[];
+  workspaceId?: string;
+  demo: boolean;
 }) {
-  const [tab, setTab] = useState<"appearance" | "review" | "observer">(
+  const [tab, setTab] = useState<"appearance" | "review" | "observer" | "data">(
     "appearance",
   );
   return (
@@ -50,8 +58,22 @@ export function Settings({
             <Plug size={17} />
             Agent 观察
           </button>
+          <button
+            className={tab === "data" ? "active" : ""}
+            onClick={() => setTab("data")}
+          >
+            <Database size={17} />
+            本地数据
+          </button>
         </nav>
         <div className="settings-content">
+          {tab === "data" && (
+            <DataSettings
+              workspaces={workspaces}
+              workspaceId={workspaceId}
+              demo={demo}
+            />
+          )}
           {tab === "appearance" && (
             <>
               <h3>让代码保持清晰</h3>

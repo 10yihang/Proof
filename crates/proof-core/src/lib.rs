@@ -3,14 +3,18 @@ mod git;
 mod guarded_file;
 mod history;
 mod model;
+mod observer;
 mod patch;
 mod process;
 mod recovery;
 mod service;
 mod store;
 
+pub use data::*;
 pub use error::{Error, Result};
 pub use model::*;
+pub use observer::*;
+pub use process::cancel_owned_operations_for_shutdown;
 pub use service::Proof;
 
 pub(crate) fn fingerprint(parts: &[&[u8]]) -> String {
@@ -28,3 +32,4 @@ pub(crate) fn now() -> u64 {
         .unwrap_or_default()
         .as_millis() as u64
 }
+mod data;

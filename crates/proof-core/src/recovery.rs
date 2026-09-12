@@ -140,9 +140,13 @@ impl Proof {
             if path.exists() {
                 fs::remove_dir_all(path)?;
             }
-            self.store
-                .connection
-                .execute("DELETE FROM recovery_points WHERE id=?", [id])?;
+            let tx = rusqlite::Transaction::new_unchecked(
+                &self.store.connection,
+                rusqlite::TransactionBehavior::Immediate,
+            )?;
+            tx.execute("DELETE FROM recovery_points WHERE id=?", [id])?;
+            crate::data::mark_cleanup_pending(&tx)?;
+            tx.commit()?;
         }
         Ok(())
     }
@@ -330,9 +334,13 @@ impl Proof {
         if directory.exists() {
             fs::remove_dir_all(directory)?;
         }
-        self.store
-            .connection
-            .execute("DELETE FROM recovery_points WHERE id=?", [id])?;
+        let tx = rusqlite::Transaction::new_unchecked(
+            &self.store.connection,
+            rusqlite::TransactionBehavior::Immediate,
+        )?;
+        tx.execute("DELETE FROM recovery_points WHERE id=?", [id])?;
+        crate::data::mark_cleanup_pending(&tx)?;
+        tx.commit()?;
         Ok(())
     }
     pub fn discard(&mut self, id: &str) -> Result<RecoveryAction> {

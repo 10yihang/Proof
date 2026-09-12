@@ -30,7 +30,7 @@ impl Proof {
             snapshot_order: VecDeque::new(),
             previews: HashMap::new(),
         };
-        core.expire_recovery()?;
+        core.maintain_local_data()?;
         Ok(core)
     }
     pub(crate) fn git(&self) -> Result<Git> {

@@ -1338,6 +1338,9 @@ export default function App() {
       )}
       {dialog === "settings" && (
         <Settings
+          workspaces={recent}
+          workspaceId={changes?.workspace.id}
+          demo={demo}
           error={error}
           preferences={preferences}
           onChange={updatePreferences}

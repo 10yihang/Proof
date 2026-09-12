@@ -44,6 +44,11 @@ fn dispatch(
         "set_preferences" => serde_json::to_value(
             proof.set_preferences(serde_json::from_value(args["preferences"].clone())?)?,
         ),
+        "data_usage" => serde_json::to_value(proof.data_usage(args["workspaceId"].as_str())?),
+        "maintain_local_data" => serde_json::to_value(proof.maintain_local_data()?),
+        "clear_observer_data" => {
+            serde_json::to_value(proof.clear_observer_data(string(&args, "workspaceId")?)?)
+        }
         "changes" => serde_json::to_value(proof.changes(string(&args, "workspaceId")?)?),
         "file_diff" => serde_json::to_value(proof.file_diff(
             string(&args, "workspaceId")?,

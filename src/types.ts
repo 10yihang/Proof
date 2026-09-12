@@ -150,6 +150,30 @@ export interface ProofError {
   message: string;
   detail: string;
 }
+export interface DataUsage {
+  applicationBytes: number;
+  applicationBytesLowerBound: boolean;
+  softLimitBytes: number;
+  observerEvents: number;
+  observerSessions: number;
+  observationPayloadBytes: number;
+  contentCollectionPaused: boolean;
+  cleanupPending: boolean;
+  databaseCompactionPending: boolean;
+  outputRetentionDays: number;
+  observationRetentionDays: number;
+  reviewRetentionDays: number;
+}
+export interface DataCleanup {
+  redactedOutputs: number;
+  deletedEvents: number;
+  deletedSessions: number;
+  deletedReviewRecords: number;
+  deletedCorrections: number;
+  deletedOperations: number;
+  walCheckpointComplete: boolean;
+  databaseCompactionPending: boolean;
+}
 export const defaultPreferences: Preferences = {
   theme: "light",
   fontSize: 13,

@@ -386,3 +386,81 @@
   font-size: 10px;
   margin-top: 8px;
 }
+.data-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 20px 0 8px;
+}
+.data-toolbar .field-label {
+  margin: 0;
+}
+.settings-content select {
+  width: 100%;
+  max-width: 100%;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+}
+.data-usage-card {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  border: 1px solid var(--border);
+  padding: 18px;
+  border-radius: 8px;
+  margin: 20px 0 10px;
+}
+.data-usage-card div {
+  display: grid;
+  gap: 7px;
+}
+.data-usage-card span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.data-usage-card strong {
+  font-size: 21px;
+  font-variant-numeric: tabular-nums;
+}
+.data-usage-card small {
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--muted);
+}
+.data-warning,
+.data-confirm {
+  margin: 16px 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+}
+.data-warning small {
+  display: block;
+  margin: 7px 0;
+}
+.data-warning p,
+.data-confirm p {
+  margin: 8px 0;
+  line-height: 1.65;
+}
+.data-notice {
+  font-size: 12px;
+  line-height: 1.7;
+}
+.data-delete-section {
+  margin-top: 26px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.data-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 15px;
+}

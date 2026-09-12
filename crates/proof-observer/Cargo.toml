@@ -1,5 +1,5 @@
 [package]
-name = "proof-core"
+name = "proof-observer"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -7,15 +7,12 @@ rust-version.workspace = true
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
-thiserror.workspace = true
 sha2.workspace = true
 uuid.workspace = true
-rusqlite.workspace = true
-tempfile.workspace = true
-wait-timeout = "0.2"
+proof-core = { path = "../proof-core" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [dev-dependencies]
-rusqlite = { workspace = true, features = ["hooks"] }
+tempfile.workspace = true

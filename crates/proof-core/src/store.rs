@@ -20,7 +20,7 @@ impl Store {
         let connection = Connection::open(path.join("proof.sqlite3"))?;
         connection.busy_timeout(std::time::Duration::from_secs(3))?;
         let version: u32 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        if version > 2 {
+        if version > 3 {
             return Err(Error::new(
                 "DATABASE_VERSION",
                 "本地数据由更新版本的 Proof 创建，请使用对应版本打开。",
@@ -38,12 +38,34 @@ impl Store {
             CREATE TABLE IF NOT EXISTS review_events (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
                 unit_id TEXT NOT NULL, reviewed INTEGER NOT NULL, source TEXT NOT NULL, origin_unit_id TEXT, created_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            INSERT OR IGNORE INTO settings VALUES('observer_revision','0');
             CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, kind TEXT NOT NULL, result TEXT NOT NULL, created_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS recovery_points (id TEXT PRIMARY KEY,
                 workspace_id TEXT NOT NULL REFERENCES workspaces(id), point TEXT NOT NULL,
                 payload TEXT NOT NULL, expires_at INTEGER NOT NULL, reserved_bytes INTEGER NOT NULL,
                 before_data BLOB, after_data BLOB);
-            PRAGMA user_version=2;")?;
+            CREATE TABLE IF NOT EXISTS observer_installations (id TEXT PRIMARY KEY, agent TEXT NOT NULL, agent_version TEXT NOT NULL,
+                adapter_version TEXT NOT NULL, token_hash TEXT NOT NULL, state TEXT NOT NULL, created_at INTEGER NOT NULL, last_event_at INTEGER);
+            CREATE TABLE IF NOT EXISTS observer_permissions (installation_id TEXT NOT NULL REFERENCES observer_installations(id) ON DELETE CASCADE,
+                workspace_id TEXT NOT NULL REFERENCES workspaces(id), enabled INTEGER NOT NULL, prompt INTEGER NOT NULL, command INTEGER NOT NULL,
+                reply INTEGER NOT NULL, output INTEGER NOT NULL, background INTEGER NOT NULL, generation INTEGER NOT NULL,
+                PRIMARY KEY(installation_id,workspace_id));
+            CREATE TABLE IF NOT EXISTS observer_sessions (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, installation_id TEXT NOT NULL REFERENCES observer_installations(id),
+                native_session_id TEXT, native_agent_id TEXT, first_received_at INTEGER NOT NULL, last_received_at INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS observer_events (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, installation_id TEXT NOT NULL REFERENCES observer_installations(id),
+                session_id TEXT NOT NULL REFERENCES observer_sessions(id) ON DELETE CASCADE, native_key TEXT, received_at INTEGER NOT NULL, payload TEXT NOT NULL,
+                content_expires_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, UNIQUE(installation_id,native_key));
+            CREATE INDEX IF NOT EXISTS observer_event_workspace ON observer_events(workspace_id,received_at);
+            CREATE INDEX IF NOT EXISTS observer_event_session ON observer_events(session_id);
+            CREATE INDEX IF NOT EXISTS observer_event_expiry ON observer_events(expires_at);
+            CREATE INDEX IF NOT EXISTS observer_output_expiry ON observer_events(content_expires_at);
+            CREATE TABLE IF NOT EXISTS observer_associations (workspace_id TEXT NOT NULL, path TEXT NOT NULL, session_id TEXT NOT NULL,
+                enabled INTEGER NOT NULL, note TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY(workspace_id,path,session_id));
+            CREATE TABLE IF NOT EXISTS observer_association_history (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, path TEXT NOT NULL, session_id TEXT NOT NULL,
+                payload TEXT NOT NULL, created_at INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS observer_gaps (id TEXT PRIMARY KEY, installation_id TEXT, workspace_id TEXT, code TEXT NOT NULL,
+                count INTEGER, started_at INTEGER NOT NULL, ended_at INTEGER);
+            PRAGMA user_version=3;")?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -149,10 +171,19 @@ impl Store {
     }
     pub fn trust(&self, id: &str, trusted: bool) -> Result<()> {
         self.workspace(id)?;
-        self.connection.execute(
+        let transaction = rusqlite::Transaction::new_unchecked(
+            &self.connection,
+            rusqlite::TransactionBehavior::Immediate,
+        )?;
+        transaction.execute(
             "UPDATE workspaces SET trusted=? WHERE id=?",
             params![trusted, id],
         )?;
+        transaction.execute(
+            "UPDATE settings SET value=CAST(value AS INTEGER)+1 WHERE key='observer_revision'",
+            [],
+        )?;
+        transaction.commit()?;
         Ok(())
     }
     pub fn review_state(

@@ -95,9 +95,9 @@ mod platform {
             .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
             .open(path)?)
     }
-    fn read_image(mut file: File) -> Result<FileImage> {
+    fn read_image(mut file: File, limit: u64) -> Result<FileImage> {
         let before = file.metadata()?;
-        if !before.is_file() || before.nlink() != 1 || before.len() > MAX_FILE {
+        if !before.is_file() || before.nlink() != 1 || before.len() > limit {
             return Err(Error::new(
                 "UNSUPPORTED_RECOVERY_FILE",
                 "丢弃仅支持 32 MiB 以内、没有硬链接的普通文本文件。",
@@ -106,10 +106,10 @@ mod platform {
         }
         let mut bytes = Vec::new();
         Read::by_ref(&mut file)
-            .take(MAX_FILE + 1)
+            .take(limit + 1)
             .read_to_end(&mut bytes)?;
         let after = file.metadata()?;
-        if bytes.len() as u64 > MAX_FILE
+        if bytes.len() as u64 > limit
             || before.len() != after.len()
             || before.mtime() != after.mtime()
             || before.mtime_nsec() != after.mtime_nsec()
@@ -177,7 +177,19 @@ mod platform {
             Ok(Some(unsafe { File::from_raw_fd(fd) }))
         }
         pub fn read(&self) -> Result<Option<FileImage>> {
-            self.open_file()?.map(read_image).transpose()
+            self.open_file()?
+                .map(|file| read_image(file, MAX_FILE))
+                .transpose()
+        }
+        pub fn matches_bytes(&self, expected: &[u8]) -> Result<bool> {
+            if expected.len() as u64 > MAX_FILE {
+                return Ok(false);
+            }
+            let image = self
+                .open_file()?
+                .map(|file| read_image(file, expected.len() as u64))
+                .transpose()?;
+            Ok(image.is_some_and(|image| image.bytes == expected))
         }
         pub fn same_parent(&self, other: &Self) -> Result<bool> {
             let a = self.parent.metadata()?;
@@ -306,6 +318,7 @@ mod platform {
                 .read(true)
                 .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
                 .open(path)?,
+            MAX_FILE,
         )
     }
     fn rename_exclusive(from_dir: i32, from: &CString, to_dir: i32, to: &CString) -> Result<()> {
