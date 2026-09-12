@@ -1,4 +1,10 @@
-import type { ChangedFile, Changes, FileDiff, Hunk } from "./types";
+import type {
+  ChangedFile,
+  Changes,
+  DiffContext,
+  FileDiff,
+  Hunk,
+} from "./types";
 import { DEMO_HEAD } from "./graph-demo";
 
 // All names and code in this fixture are fictional. It is only entered through
@@ -62,14 +68,18 @@ function makeHunk(
   start: number,
   header: string,
   rows: [string, string][],
+  newStart = start,
 ): Hunk {
   let old = start,
-    next = start;
+    next = newStart;
   return {
     id,
-    header,
+    header: header.replace(
+      /^@@.*?@@/,
+      `@@ -${start},${rows.filter(([kind]) => kind !== "add").length} +${newStart},${rows.filter(([kind]) => kind !== "delete").length} @@`,
+    ),
     oldStart: start,
-    newStart: start,
+    newStart,
     reviewState: "unreviewed",
     lines: rows.map(([kind, content]) => ({
       kind: kind as "add" | "delete" | "context",
@@ -126,22 +136,50 @@ export function demoDiff(file: ChangedFile): FileDiff {
               ],
               ["context", "}"],
             ],
+            26,
           ),
         ]
-      : [
-          makeHunk(`demo-${file.path}`, 1, "@@ -1,3 +1,4 @@", [
-            [
-              "context",
-              file.path.endsWith(".md")
-                ? "# Demo service"
-                : "// Demo service — interface preview",
-            ],
-            ["delete", "// Accept the request body"],
-            ["add", "// Validate the request before processing"],
-            ["add", "// Keep the error response explicit"],
-            ["context", ""],
-          ]),
-        ];
+      : file.path === "src/api/response.ts"
+        ? [
+            makeHunk("demo-response", 1, "@@ @@", [
+              [
+                "context",
+                "export function createResponse(data: unknown, status = 200) {",
+              ],
+              [
+                "delete",
+                "    const headers = { 'content-type': 'application/json' };",
+              ],
+              [
+                "add",
+                "  const headers = { 'content-type': 'application/json' };",
+              ],
+              ["context", ""],
+              [
+                "delete",
+                "  return new Response(JSON.stringify(data), { status });",
+              ],
+              [
+                "add",
+                "  return new Response(JSON.stringify(data), { status, headers });",
+              ],
+              ["context", "}"],
+            ]),
+          ]
+        : [
+            makeHunk(`demo-${file.path}`, 1, "@@ -1,3 +1,4 @@", [
+              [
+                "context",
+                file.path.endsWith(".md")
+                  ? "# Demo service"
+                  : "// Demo service — interface preview",
+              ],
+              ["delete", "// Accept the request body"],
+              ["add", "// Validate the request before processing"],
+              ["add", "// Keep the error response explicit"],
+              ["context", ""],
+            ]),
+          ];
   return {
     id: `demo:${file.path}`,
     workspaceId: "demo",
@@ -176,5 +214,45 @@ export function demoDiff(file: ChangedFile): FileDiff {
     canDiscard: false,
     canDiscardHunks: false,
     discardReason: "演示数据不可执行丢弃",
+  };
+}
+
+export function demoDiffContext(
+  diff: FileDiff,
+  contextLines: number,
+): DiffContext {
+  const gap = [
+    "",
+    "// Fictional request metadata helpers.",
+    "export function requestId(headers: Headers) {",
+    "  return headers.get('x-request-id');",
+    "}",
+    "",
+    "export function isJson(headers: Headers) {",
+    "  return headers.get('content-type') === 'application/json';",
+    "}",
+    "",
+    "const apiVersion = 'v1';",
+    "const requestFormat = 'json';",
+    "",
+    "// Error response handling.",
+  ];
+  return {
+    snapshotId: diff.id,
+    contextLines,
+    gaps:
+      diff.path === "src/api/requests.ts" && contextLines > 3
+        ? [
+            {
+              beforeHunkId: "demo-hunk-2",
+              lines: gap.map((content, index) => ({
+                kind: "context",
+                content,
+                oldLine: 10 + index,
+                newLine: 12 + index,
+              })),
+            },
+          ]
+        : [],
   };
 }

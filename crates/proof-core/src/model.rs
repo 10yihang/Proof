@@ -123,6 +123,22 @@ pub struct FileDiff {
     pub guard: String,
 }
 
+/// Read-only unchanged lines around the original review units. Never a patch.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffContext {
+    pub snapshot_id: String,
+    pub context_lines: u16,
+    pub gaps: Vec<ContextGap>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextGap {
+    /// None means the tail after the final original Hunk.
+    pub before_hunk_id: Option<String>,
+    pub lines: Vec<DiffLine>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitEntry {
@@ -249,6 +265,10 @@ pub struct Preferences {
     pub font_size: u16,
     pub diff_mode: String,
     pub wrap_lines: bool,
+    #[serde(default)]
+    pub ignore_whitespace: bool,
+    #[serde(default)]
+    pub show_whitespace: bool,
     pub context_open: bool,
     pub strict_review: bool,
     pub git_path: String,
@@ -260,6 +280,8 @@ impl Default for Preferences {
             font_size: 13,
             diff_mode: "unified".into(),
             wrap_lines: false,
+            ignore_whitespace: false,
+            show_whitespace: false,
             context_open: true,
             strict_review: false,
             git_path: "git".into(),

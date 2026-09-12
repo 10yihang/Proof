@@ -260,7 +260,16 @@ impl Git {
         self.query(workspace, &["cat-file", "--filters", &format!(":{path}")])
     }
     pub fn patch(&self, workspace: &Workspace, file: &ChangedFile) -> Result<String> {
+        self.patch_with_context(workspace, file, 3)
+    }
+    pub(crate) fn patch_with_context(
+        &self,
+        workspace: &Workspace,
+        file: &ChangedFile,
+        context: u16,
+    ) -> Result<String> {
         checked_path(workspace, &file.path)?;
+        let unified = format!("--unified={context}");
         let mut args = vec![
             "diff",
             "--no-ext-diff",
@@ -268,7 +277,7 @@ impl Git {
             "--no-color",
             "--binary",
             "--full-index",
-            "--unified=3",
+            &unified,
             "--src-prefix=a/",
             "--dst-prefix=b/",
         ];

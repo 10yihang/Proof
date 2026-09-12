@@ -61,11 +61,18 @@ export interface FileDiff {
   canDiscardHunks: boolean;
   discardReason: string | null;
 }
+export interface DiffContext {
+  snapshotId: string;
+  contextLines: number;
+  gaps: { beforeHunkId: string | null; lines: DiffLine[] }[];
+}
 export interface Preferences {
   theme: "light" | "dark" | "system";
   fontSize: number;
   diffMode: "unified" | "split";
   wrapLines: boolean;
+  ignoreWhitespace: boolean;
+  showWhitespace: boolean;
   contextOpen: boolean;
   strictReview: boolean;
   gitPath: string;
@@ -212,6 +219,8 @@ export const defaultPreferences: Preferences = {
   fontSize: 13,
   diffMode: "unified",
   wrapLines: false,
+  ignoreWhitespace: false,
+  showWhitespace: false,
   contextOpen: true,
   strictReview: false,
   gitPath: "git",

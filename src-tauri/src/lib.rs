@@ -74,6 +74,21 @@ fn dispatch(
             args["hunkId"].as_str(),
             args["reviewed"].as_bool().unwrap_or(false),
         )?),
+        "diff_context" => serde_json::to_value(
+            proof.diff_context(
+                string(&args, "snapshotId")?,
+                args["contextLines"]
+                    .as_u64()
+                    .and_then(|n| u16::try_from(n).ok())
+                    .ok_or_else(|| {
+                        Error::new(
+                            "INVALID_CONTEXT_SIZE",
+                            "上下文行数无效。",
+                            "Expected an unsigned context size",
+                        )
+                    })?,
+            )?,
+        ),
         "stage" => serde_json::to_value(
             proof.stage(string(&args, "snapshotId")?, args["hunkId"].as_str())?,
         ),

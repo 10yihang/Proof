@@ -21,13 +21,15 @@ import {
   ClockCounterClockwise,
 } from "@phosphor-icons/react";
 import { asError, isDesktop, request } from "./api";
-import { demoChanges, demoDiff } from "./demo";
+import { demoChanges, demoDiff, demoDiffContext } from "./demo";
+import { hiddenWhitespace } from "./diff-reading";
 import { defaultPreferences, fileKey } from "./types";
 import type {
   ChangedFile,
   Changes,
   CommitPreview,
   FileDiff,
+  DiffContext,
   OperationResult,
   Preferences,
   ProofError,
@@ -58,6 +60,15 @@ type Dialog =
   | null;
 export default function App() {
   const [preferences, setPreferences] = useState(defaultPreferences);
+  const preferenceState = useRef(defaultPreferences);
+  const savedPreferences = useRef(defaultPreferences);
+  const preferenceWrites = useRef<Promise<void>>(Promise.resolve());
+  const preferenceLoad = useRef<Promise<Preferences>>(
+    Promise.resolve(defaultPreferences),
+  );
+  const preferenceRevision = useRef(0);
+  const pendingPreferences = useRef(new Map<number, Partial<Preferences>>());
+  const initialized = useRef(false);
   const [recent, setRecent] = useState<Workspace[]>([]);
   const [changes, setChanges] = useState<Changes | null>(null);
   const [incoming, setIncoming] = useState<Changes | null>(null);
@@ -96,15 +107,25 @@ export default function App() {
   current.current = changes;
 
   useEffect(() => {
+    if (initialized.current) return;
+    initialized.current = true;
     if (isDesktop) {
-      void Promise.all([
-        request<Preferences>("preferences"),
-        request<Workspace[]>("recent_workspaces"),
-      ])
-        .then(([prefs, projects]) => {
-          setPreferences(prefs);
-          setRecent(projects);
-        })
+      const load = request<Preferences>("preferences").then((prefs) => {
+        savedPreferences.current = prefs;
+        const visible = [
+          ...pendingPreferences.current.values(),
+        ].reduce<Preferences>(
+          (next, partial) => ({ ...next, ...partial }),
+          prefs,
+        );
+        preferenceState.current = visible;
+        setPreferences(visible);
+        return prefs;
+      });
+      preferenceLoad.current = load;
+      void load.catch((e) => setError(asError(e)));
+      void request<Workspace[]>("recent_workspaces")
+        .then(setRecent)
         .catch((e) => setError(asError(e)));
     } else if (
       new URLSearchParams(window.location.search).get("demo") === "1"
@@ -316,13 +337,36 @@ export default function App() {
     }
   }
   async function updatePreferences(partial: Partial<Preferences>) {
-    const next = { ...preferences, ...partial };
-    try {
-      if (isDesktop) await request("set_preferences", { preferences: next });
-      setPreferences(next);
-    } catch (e) {
-      setError(asError(e));
-    }
+    const revision = ++preferenceRevision.current;
+    pendingPreferences.current.set(revision, partial);
+    const next = { ...preferenceState.current, ...partial };
+    preferenceState.current = next;
+    setPreferences(next);
+    // Rapid reading toggles must compose and persist in the same order.
+    const write = preferenceWrites.current
+      .then(async () => {
+        await preferenceLoad.current;
+        const persisted = { ...savedPreferences.current, ...partial };
+        if (isDesktop)
+          await request("set_preferences", { preferences: persisted });
+        savedPreferences.current = persisted;
+        if (preferenceRevision.current === revision) {
+          preferenceState.current = persisted;
+          setPreferences(persisted);
+        }
+      })
+      .catch((e) => {
+        if (preferenceRevision.current === revision) {
+          preferenceState.current = savedPreferences.current;
+          setPreferences(savedPreferences.current);
+        }
+        setError(asError(e));
+      })
+      .finally(() => {
+        pendingPreferences.current.delete(revision);
+      });
+    preferenceWrites.current = write;
+    await write;
   }
   async function mark(
     hunkId: string | null,
@@ -330,6 +374,22 @@ export default function App() {
     confirmed = false,
   ) {
     if (!diff) return;
+    if (
+      reviewed &&
+      preferences.ignoreWhitespace &&
+      diff.hunks.some(
+        (hunk) =>
+          (!hunkId || hunk.id === hunkId) && hiddenWhitespace(hunk).size > 0,
+      )
+    ) {
+      setError({
+        code: "HIDDEN_REVIEW_CONTENT",
+        message: "此范围隐藏了空白变化，请显示全部真实变化后再标记已审查。",
+        detail:
+          "Review remains bound to the complete original Hunk, including whitespace.",
+      });
+      return;
+    }
     if (!hunkId && reviewed && !confirmed) {
       setDialog("mark-file");
       return;
@@ -952,7 +1012,7 @@ export default function App() {
               <div className="center-panel">
                 {diff ? (
                   <DiffView
-                    key={`${diff.path}:${diff.side}`}
+                    key={`${diff.workspaceId}:${diff.path}:${diff.side}`}
                     diff={diff}
                     preferences={preferences}
                     pending={busy || loadingDiff}
@@ -971,6 +1031,14 @@ export default function App() {
                     onPreferences={(p) => {
                       void updatePreferences(p);
                     }}
+                    onLoadContext={(contextLines) =>
+                      demo
+                        ? Promise.resolve(demoDiffContext(diff, contextLines))
+                        : request<DiffContext>("diff_context", {
+                            snapshotId: diff.id,
+                            contextLines,
+                          })
+                    }
                     onFocus={() => setFocused((f) => !f)}
                   />
                 ) : (

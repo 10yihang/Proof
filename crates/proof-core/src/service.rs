@@ -19,6 +19,7 @@ pub struct Proof {
     pub(crate) data_dir: PathBuf,
     snapshots: HashMap<String, FileDiff>,
     snapshot_order: VecDeque<String>,
+    pub(crate) contexts: VecDeque<DiffContext>,
     previews: HashMap<String, CommitPreview>,
     pub(crate) graphs: VecDeque<crate::graph::GraphSnapshot>,
 }
@@ -29,6 +30,7 @@ impl Proof {
             data_dir: data_dir.as_ref().to_path_buf(),
             snapshots: HashMap::new(),
             snapshot_order: VecDeque::new(),
+            contexts: VecDeque::new(),
             previews: HashMap::new(),
             graphs: VecDeque::new(),
         };
@@ -209,6 +211,7 @@ impl Proof {
         while self.snapshot_order.len() > 64 {
             if let Some(old) = self.snapshot_order.pop_front() {
                 self.snapshots.remove(&old);
+                self.contexts.retain(|context| context.snapshot_id != old);
             }
         }
         Ok(diff)

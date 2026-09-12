@@ -2,6 +2,7 @@ import type { DiffLine, Hunk } from "./types";
 
 export type DiffRow =
   | { kind: "header"; hunk: Hunk }
+  | { kind: "hidden"; hunkId: string; count: number }
   | { kind: "line"; left: DiffLine | null; right?: DiffLine | null };
 
 // Presentation alignment only. This module never creates an executable Git patch.

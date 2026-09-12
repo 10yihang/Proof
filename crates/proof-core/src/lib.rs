@@ -9,6 +9,7 @@ mod model;
 mod observer;
 mod patch;
 mod process;
+mod reading;
 mod recovery;
 mod service;
 mod store;
