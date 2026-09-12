@@ -27,9 +27,18 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg"],
+    "targets": [
+      "app",
+      "dmg"
+    ],
     "shortDescription": "看清变化，认真审查。",
     "category": "DeveloperTool",
-    "icon": ["icons/icon.png", "icons/icon.icns"]
+    "icon": [
+      "icons/icon.png",
+      "icons/icon.icns"
+    ],
+    "macOS": {
+      "signingIdentity": "-"
+    }
   }
 }

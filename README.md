@@ -24,6 +24,8 @@ npm run tauri -- build --debug --bundles app
 
 完整构建：`npm run bundle`。在签名、兼容性、性能及隐私验收完成前，不作为公开发行版发布。
 
+当前 macOS Alpha 使用本地 ad-hoc 签名，尚未进行 Developer ID 签名与公证。签名方式依据 [Tauri 官方说明](https://v2.tauri.app/distribute/sign/macos/#ad-hoc-signing)。
+
 ## 结构
 
 - `crates/proof-core`：Git 查询、受校验的写操作、内容绑定的 Review 和 SQLite。

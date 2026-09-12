@@ -29,6 +29,8 @@
 
 当前检查点完整运行 `cargo test -p proof-core`：25 个真实 Git 集成用例通过；`npm test`：2 个呈现模型用例通过；前端生产构建、`cargo clippy -p proof-core --all-targets -- -D warnings` 与 Rust 格式检查通过。没有将这些检查扩展宣称为 AT-01—30 全部通过。
 
+更新的 macOS Alpha 已重新打包。最初仅有链接器签名，严格 bundle 校验失败；配置 Tauri 的本地 ad-hoc 签名后重新构建，`codesign --verify --deep --strict --verbose=1 target/debug/bundle/macos/Proof.app` 返回 0，Info.plist 与资源已封装校验。此证据仅为本地包完整性，不是 Developer ID 公证或公开发行验收。
+
 ## 按 AT 编号的当前覆盖
 
 | 用例 | 当前证据与缺口 |
