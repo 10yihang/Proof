@@ -19,6 +19,7 @@ import {
   X,
   Trash,
   ClockCounterClockwise,
+  List,
 } from "@phosphor-icons/react";
 import { asError, isDesktop, request } from "./api";
 import { demoChanges, demoDiff, demoDiffContext } from "./demo";
@@ -46,6 +47,9 @@ import type { RepositorySection } from "./components/RepositoryView";
 import { Settings } from "./components/Settings";
 import { RecoveryDialog } from "./components/RecoveryDialog";
 import { FileHistory } from "./components/FileHistory";
+import { ResizableWorkbench } from "./components/ResizableWorkbench";
+import { useRepositoryLayout } from "./use-repository-layout";
+import { shouldDismissDrawer } from "./components/panel-focus";
 
 type Dialog =
   | "open"
@@ -95,6 +99,9 @@ export default function App() {
     [demo, setDemo] = useState(false);
   const [narrow, setNarrow] = useState(window.innerWidth <= 1100),
     [contextDrawer, setContextDrawer] = useState(false);
+  const [compact, setCompact] = useState(window.innerWidth <= 780),
+    [filesDrawer, setFilesDrawer] = useState(false);
+  const repositoryLayout = useRepositoryLayout(changes?.workspace, demo);
   const [preview, setPreview] = useState<CommitPreview | null>(null),
     [draft, setDraft] = useState("");
   const [discardPoint, setDiscardPoint] = useState<RecoveryPoint | null>(null);
@@ -149,6 +156,19 @@ export default function App() {
     media.addEventListener("change", update);
     return () => media.removeEventListener("change", update);
   }, []);
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 780px)");
+    const update = () => {
+      setCompact(media.matches);
+      setFilesDrawer(false);
+    };
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+  useEffect(() => {
+    setFilesDrawer(false);
+    setContextDrawer(false);
+  }, [changes?.workspace.id]);
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
@@ -648,9 +668,18 @@ export default function App() {
         return;
       const editing =
         event.target instanceof HTMLElement &&
-        event.target.closest('input,textarea,[contenteditable="true"]') !==
-          null;
-      if (event.key === "Escape" && !dialog) setFocused(false);
+        event.target.closest(
+          'input,textarea,select,[contenteditable="true"]',
+        ) !== null;
+      if (event.key === "Escape" && !dialog) {
+        if (contextDrawer) {
+          setContextDrawer(false);
+          document.getElementById("context-toggle")?.focus();
+        } else if (filesDrawer) {
+          setFilesDrawer(false);
+          document.getElementById("files-toggle")?.focus();
+        } else setFocused(false);
+      }
       if (editing || busy || (dialog !== null && dialog !== "commands")) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
@@ -665,7 +694,7 @@ export default function App() {
               ".workspace-page:not([hidden]) .graph-search input",
             )
             ?.focus();
-        } else document.getElementById("file-search")?.focus();
+        } else showFileSearch();
       }
       if (
         (event.metaKey || event.ctrlKey) &&
@@ -679,7 +708,18 @@ export default function App() {
     }
     window.addEventListener("keydown", keydown);
     return () => window.removeEventListener("keydown", keydown);
-  }, [dialog, busy, tab]);
+  }, [
+    dialog,
+    busy,
+    tab,
+    compact,
+    filesDrawer,
+    contextDrawer,
+    repositoryLayout.ready,
+    repositoryLayout.value.sidebarOpen,
+    repositoryLayout.scopeKey,
+    changes?.workspace.id,
+  ]);
 
   const knownDiffs = Object.values(loaded).filter(
     (d) =>
@@ -696,7 +736,38 @@ export default function App() {
   const stagedCount =
     changes?.files.filter((f) => f.side === "staged").length ?? 0;
   const contextOpen =
-    !focused && (narrow ? contextDrawer : preferences.contextOpen);
+    !focused &&
+    (narrow
+      ? contextDrawer
+      : (repositoryLayout.value.contextOpen ?? preferences.contextOpen));
+  const sidebarVisible =
+    !focused && (compact ? filesDrawer : repositoryLayout.value.sidebarOpen);
+  function showFileSearch() {
+    setFocused(false);
+    setTab("changes");
+    if (compact) {
+      setFilesDrawer(true);
+      setContextDrawer(false);
+    } else if (!repositoryLayout.value.sidebarOpen)
+      void repositoryLayout.update({ sidebarOpen: true });
+    requestAnimationFrame(() =>
+      document.getElementById("file-search")?.focus(),
+    );
+  }
+  function closeFiles() {
+    if (compact) setFilesDrawer(false);
+    else void repositoryLayout.update({ sidebarOpen: false });
+    requestAnimationFrame(() =>
+      document.getElementById("files-toggle")?.focus(),
+    );
+  }
+  function closeContext() {
+    if (narrow) setContextDrawer(false);
+    else void repositoryLayout.update({ contextOpen: false });
+    requestAnimationFrame(() =>
+      document.getElementById("context-toggle")?.focus(),
+    );
+  }
   function openSettings(
     section: "appearance" | "review" | "observer" | "data" = "appearance",
   ) {
@@ -708,7 +779,7 @@ export default function App() {
     setTab("repository");
   }
   return (
-    <div className={`app ${focused ? "is-focused" : ""}`}>
+    <div className={`app layout-enabled ${focused ? "is-focused" : ""}`}>
       <header className="app-header">
         <a
           className="brand"
@@ -907,6 +978,28 @@ export default function App() {
           </button>
         </div>
       )}
+      {changes && repositoryLayout.error && dialog !== "settings" && (
+        <div className="layout-error-banner" role="alert">
+          <Warning size={16} />
+          <span>
+            {repositoryLayout.ready
+              ? repositoryLayout.saving
+                ? "有布局调整未保存，其余调整仍在保存。"
+                : "有布局调整未保存，当前显示已保存的值。"
+              : "无法读取此仓库布局。"}{" "}
+            {repositoryLayout.error.message}
+          </span>
+          <button
+            onClick={() =>
+              repositoryLayout.ready
+                ? openSettings()
+                : void repositoryLayout.retry()
+            }
+          >
+            {repositoryLayout.ready ? "布局设置" : "重试读取"}
+          </button>
+        </div>
+      )}
       {!changes ? (
         <main className="welcome">
           <div className="welcome-main">
@@ -992,14 +1085,53 @@ export default function App() {
             )}
           </div>
           <div className="workspace-page" hidden={tab !== "changes"}>
-            <main className={`workbench ${contextOpen ? "with-context" : ""}`}>
-              {!focused && (
-                <aside className="files-panel">
+            <ResizableWorkbench
+              layout={repositoryLayout.value}
+              scopeKey={repositoryLayout.scopeKey}
+              enabled={repositoryLayout.ready}
+              active={tab === "changes" && dialog === null}
+              sidebarVisible={sidebarVisible && !compact}
+              contextDocked={contextOpen && !narrow}
+              onChange={(partial) => {
+                void repositoryLayout.update(partial);
+              }}
+              onCollapse={(side) =>
+                side === "sidebarWidth" ? closeFiles() : closeContext()
+              }
+              sidebar={
+                <aside
+                  id="files-panel"
+                  aria-label="变化文件"
+                  hidden={!sidebarVisible}
+                  className={`files-panel ${compact ? "files-drawer" : ""}`}
+                  onBlurCapture={(event) => {
+                    if (compact && shouldDismissDrawer(event))
+                      setFilesDrawer(false);
+                  }}
+                >
+                  <button
+                    className="icon-button files-close"
+                    aria-label="收起文件栏"
+                    onClick={closeFiles}
+                    disabled={!compact && !repositoryLayout.ready}
+                  >
+                    <X size={15} />
+                  </button>
                   <FileTree
                     files={changes.files}
                     selected={selected}
                     onSelect={(f) => {
                       void loadFile(f);
+                      if (compact) {
+                        setFilesDrawer(false);
+                        requestAnimationFrame(() =>
+                          document
+                            .querySelector<HTMLElement>(
+                              ".workspace-page:not([hidden]) .diff-scroll",
+                            )
+                            ?.focus(),
+                        );
+                      }
                     }}
                     search={search}
                     onSearch={setSearch}
@@ -1008,7 +1140,21 @@ export default function App() {
                     onScope={setScope}
                   />
                 </aside>
-              )}
+              }
+              context={
+                contextOpen && (
+                  <ContextInspector
+                    diff={diff}
+                    demo={demo}
+                    drawer={narrow}
+                    closeDisabled={!narrow && !repositoryLayout.ready}
+                    onClose={closeContext}
+                    onLeave={() => setContextDrawer(false)}
+                    onSettings={() => openSettings("observer")}
+                  />
+                )
+              }
+            >
               <div className="center-panel">
                 {diff ? (
                   <DiffView
@@ -1072,19 +1218,7 @@ export default function App() {
                   </div>
                 )}
               </div>
-              {contextOpen && (
-                <ContextInspector
-                  diff={diff}
-                  demo={demo}
-                  drawer={narrow}
-                  onClose={() => {
-                    if (narrow) setContextDrawer(false);
-                    else void updatePreferences({ contextOpen: false });
-                  }}
-                  onSettings={() => openSettings("observer")}
-                />
-              )}
-            </main>
+            </ResizableWorkbench>
           </div>
         </>
       )}
@@ -1120,16 +1254,48 @@ export default function App() {
             </button>
           )}
           <button
+            id="files-toggle"
+            className="icon-button"
+            aria-label={sidebarVisible ? "收起文件栏" : "显示文件栏"}
+            aria-expanded={sidebarVisible}
+            aria-controls="files-panel"
+            title="文件栏 · ⌘/Ctrl P 搜索"
+            disabled={!compact && !repositoryLayout.ready}
+            onClick={() => {
+              if (sidebarVisible) closeFiles();
+              else showFileSearch();
+            }}
+          >
+            <List size={18} />
+          </button>
+          <button
+            id="context-toggle"
             className="icon-button"
             aria-label={contextOpen ? "收起上下文" : "显示上下文"}
             title="上下文面板"
+            aria-expanded={contextOpen}
+            aria-controls="context-panel"
+            disabled={!narrow && !repositoryLayout.ready}
             onClick={() => {
+              if (contextOpen) {
+                closeContext();
+                return;
+              }
               setFocused(false);
-              if (narrow) setContextDrawer(!contextDrawer);
-              else
-                void updatePreferences({
-                  contextOpen: !preferences.contextOpen,
+              if (narrow) {
+                setContextDrawer(true);
+                setFilesDrawer(false);
+              } else
+                void repositoryLayout.update({
+                  contextOpen: true,
                 });
+              requestAnimationFrame(() =>
+                document
+                  .querySelector<HTMLButtonElement>(
+                    "#context-panel .context-header button",
+                  )
+                  ?.focus(),
+              );
             }}
           >
             <SidebarSimple size={18} />
@@ -1497,6 +1663,24 @@ export default function App() {
           demo={demo}
           error={error}
           preferences={preferences}
+          layout={
+            changes
+              ? {
+                  snapshot: repositoryLayout,
+                  name: changes.workspace.name,
+                  key: repositoryLayout.scopeKey,
+                  onChange: (partial) => {
+                    void repositoryLayout.update(partial);
+                  },
+                  onReset: () => {
+                    void repositoryLayout.reset();
+                  },
+                  onRetry: () => {
+                    void repositoryLayout.retry();
+                  },
+                }
+              : undefined
+          }
           onChange={updatePreferences}
           onClose={() => setDialog(null)}
         />
@@ -1518,11 +1702,7 @@ export default function App() {
                 icon: <MagnifyingGlass size={19} />,
                 run: () => {
                   setDialog(null);
-                  setFocused(false);
-                  setTimeout(
-                    () => document.getElementById("file-search")?.focus(),
-                    0,
-                  );
+                  showFileSearch();
                 },
                 disabled: !changes,
               },

@@ -86,12 +86,19 @@ export function DiffView({
     rowHeights.current.clear();
     heightSnapshot.current = diff.id;
   }
-  const [paneVisible, setPaneVisible] = useState(true);
+  const [paneSize, setPaneSize] = useState({ visible: true, width: 0 });
+  const paneVisible = paneSize.visible;
   useLayoutEffect(() => {
     const element = parent.current;
     if (!element) return;
     const update = () =>
-      setPaneVisible(element.clientWidth > 0 && element.clientHeight > 0);
+      setPaneSize((previous) => {
+        const visible = element.clientWidth > 0 && element.clientHeight > 0;
+        const width = visible ? element.clientWidth : previous.width;
+        return visible === previous.visible && width === previous.width
+          ? previous
+          : { visible, width };
+      });
     update();
     const observer = new ResizeObserver(update);
     observer.observe(element);
@@ -138,7 +145,7 @@ export function DiffView({
         (line) => line && line.content.length > 10_000,
       ),
   );
-  const readingLayout = `${split}:${preferences.fontSize}:${preferences.wrapLines}:${preferences.ignoreWhitespace}:${preferences.showWhitespace}:${displayedContext?.contextLines ?? 3}:${preferences.wrapLines ? (parent.current?.clientWidth ?? 0) : 0}`;
+  const readingLayout = `${split}:${preferences.fontSize}:${preferences.wrapLines}:${preferences.ignoreWhitespace}:${preferences.showWhitespace}:${displayedContext?.contextLines ?? 3}:${preferences.wrapLines ? paneSize.width : 0}`;
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => parent.current,

@@ -273,6 +273,27 @@ pub struct Preferences {
     pub strict_review: bool,
     pub git_path: String,
 }
+/// UI layout belongs to a local repository, including its linked worktrees.
+/// It is separate from Git/Agent configuration and from review state.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RepositoryLayout {
+    pub sidebar_width: u16,
+    pub context_width: u16,
+    pub sidebar_open: bool,
+    /// None inherits the application's context-panel default.
+    pub context_open: Option<bool>,
+}
+impl Default for RepositoryLayout {
+    fn default() -> Self {
+        Self {
+            sidebar_width: 240,
+            context_width: 300,
+            sidebar_open: true,
+            context_open: None,
+        }
+    }
+}
 impl Default for Preferences {
     fn default() -> Self {
         Self {

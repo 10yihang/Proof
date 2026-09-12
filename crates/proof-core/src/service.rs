@@ -58,6 +58,16 @@ impl Proof {
     pub fn set_preferences(&self, preferences: Preferences) -> Result<()> {
         self.store.set_preferences(&preferences)
     }
+    pub fn repository_layout(&self, workspace_id: &str) -> Result<RepositoryLayout> {
+        self.store.repository_layout(workspace_id)
+    }
+    pub fn set_repository_layout(
+        &self,
+        workspace_id: &str,
+        layout: RepositoryLayout,
+    ) -> Result<()> {
+        self.store.set_repository_layout(workspace_id, &layout)
+    }
     pub fn changes(&self, workspace_id: &str) -> Result<Changes> {
         self.git()?.changes(&self.store.workspace(workspace_id)?)
     }

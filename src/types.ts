@@ -77,6 +77,12 @@ export interface Preferences {
   strictReview: boolean;
   gitPath: string;
 }
+export interface RepositoryLayout {
+  sidebarWidth: number;
+  contextWidth: number;
+  sidebarOpen: boolean;
+  contextOpen: boolean | null;
+}
 export interface CommitPreview {
   id: string;
   workspaceId: string;

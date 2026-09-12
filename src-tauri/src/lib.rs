@@ -58,6 +58,13 @@ fn dispatch(
         "set_preferences" => serde_json::to_value(
             proof.set_preferences(serde_json::from_value(args["preferences"].clone())?)?,
         ),
+        "repository_layout" => {
+            serde_json::to_value(proof.repository_layout(string(&args, "workspaceId")?)?)
+        }
+        "set_repository_layout" => serde_json::to_value(proof.set_repository_layout(
+            string(&args, "workspaceId")?,
+            serde_json::from_value(args["layout"].clone())?,
+        )?),
         "data_usage" => serde_json::to_value(proof.data_usage(args["workspaceId"].as_str())?),
         "maintain_local_data" => serde_json::to_value(proof.maintain_local_data()?),
         "clear_observer_data" => {

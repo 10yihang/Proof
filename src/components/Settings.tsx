@@ -9,7 +9,14 @@ import {
   ShieldCheck,
   Sun,
 } from "@phosphor-icons/react";
-import type { Preferences, ProofError, Workspace } from "../types";
+import type {
+  Preferences,
+  ProofError,
+  RepositoryLayout,
+  Workspace,
+} from "../types";
+import type { LayoutSnapshot } from "../repository-layout";
+import { RepositoryLayoutSettings } from "./RepositoryLayoutSettings";
 import { Modal } from "./Modal";
 import { DataSettings } from "./DataSettings";
 import { ObserverSettings } from "./ObserverSettings";
@@ -22,6 +29,7 @@ export function Settings({
   workspaces,
   workspaceId,
   demo,
+  layout,
   initialSection = "appearance",
 }: {
   preferences: Preferences;
@@ -31,6 +39,14 @@ export function Settings({
   workspaces: Workspace[];
   workspaceId?: string;
   demo: boolean;
+  layout?: {
+    snapshot: LayoutSnapshot;
+    name: string;
+    key: string;
+    onChange: (value: Partial<RepositoryLayout>) => void;
+    onReset: () => void;
+    onRetry: () => void;
+  };
   initialSection?: "appearance" | "review" | "observer" | "data";
 }) {
   const [tab, setTab] = useState<"appearance" | "review" | "observer" | "data">(
@@ -80,7 +96,9 @@ export function Settings({
           {tab === "appearance" && (
             <>
               <h3>让代码保持清晰</h3>
-              <p className="muted">偏好保存在本机，所有主题均可离线使用。</p>
+              <p className="muted">
+                应用默认设置，保存在本机；所有主题均可离线使用。
+              </p>
               <label className="field-label">主题</label>
               <div className="theme-options">
                 {(
@@ -135,7 +153,7 @@ export function Settings({
               <label className="settings-toggle">
                 <span>
                   <strong>显示上下文面板</strong>
-                  <small>随时核对来源与执行证据</small>
+                  <small>应用默认；仓库单独设置时优先使用仓库值</small>
                 </span>
                 <input
                   type="checkbox"
@@ -145,6 +163,17 @@ export function Settings({
                   }}
                 />
               </label>
+              {layout && (
+                <RepositoryLayoutSettings
+                  key={layout.key}
+                  snapshot={layout.snapshot}
+                  name={layout.name}
+                  demo={demo}
+                  onChange={layout.onChange}
+                  onReset={layout.onReset}
+                  onRetry={layout.onRetry}
+                />
+              )}
             </>
           )}
           {tab === "review" && (

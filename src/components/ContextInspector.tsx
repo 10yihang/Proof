@@ -10,6 +10,7 @@ import {
   MagnifyingGlass,
 } from "@phosphor-icons/react";
 import type { FileDiff } from "../types";
+import { shouldDismissDrawer } from "./panel-focus";
 
 export function ContextInspector({
   diff,
@@ -17,17 +18,25 @@ export function ContextInspector({
   onClose,
   onSettings,
   drawer = false,
+  closeDisabled = false,
+  onLeave,
 }: {
   diff: FileDiff | null;
   demo: boolean;
   drawer?: boolean;
+  closeDisabled?: boolean;
+  onLeave?: () => void;
   onClose: () => void;
   onSettings: () => void;
 }) {
   return (
     <aside
+      id="context-panel"
       className={`context-panel ${drawer ? "context-drawer" : ""}`}
       aria-label="上下文与证据"
+      onBlurCapture={(event) => {
+        if (drawer && shouldDismissDrawer(event)) onLeave?.();
+      }}
     >
       <header className="context-header">
         <strong>修改上下文</strong>
@@ -36,6 +45,7 @@ export function ContextInspector({
           title="收起上下文"
           aria-label="收起上下文"
           onClick={onClose}
+          disabled={closeDisabled}
         >
           <X size={16} />
         </button>

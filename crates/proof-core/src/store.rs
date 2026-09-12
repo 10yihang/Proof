@@ -1,6 +1,6 @@
 use crate::{
     error::{Error, Result},
-    model::{Preferences, Workspace},
+    model::{Preferences, RepositoryLayout, Workspace},
     now,
 };
 use rusqlite::{params, Connection, OptionalExtension};
@@ -20,7 +20,7 @@ impl Store {
         let connection = Connection::open(path.join("proof.sqlite3"))?;
         connection.busy_timeout(std::time::Duration::from_secs(3))?;
         let version: u32 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        if version > 3 {
+        if version > 4 {
             return Err(Error::new(
                 "DATABASE_VERSION",
                 "本地数据由更新版本的 Proof 创建，请使用对应版本打开。",
@@ -38,6 +38,7 @@ impl Store {
             CREATE TABLE IF NOT EXISTS review_events (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
                 unit_id TEXT NOT NULL, reviewed INTEGER NOT NULL, source TEXT NOT NULL, origin_unit_id TEXT, created_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS repository_layouts (repository_id TEXT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE, value TEXT NOT NULL);
             INSERT OR IGNORE INTO settings VALUES('observer_revision','0');
             CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, kind TEXT NOT NULL, result TEXT NOT NULL, created_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS recovery_points (id TEXT PRIMARY KEY,
@@ -65,7 +66,7 @@ impl Store {
                 payload TEXT NOT NULL, created_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS observer_gaps (id TEXT PRIMARY KEY, installation_id TEXT, workspace_id TEXT, code TEXT NOT NULL,
                 count INTEGER, started_at INTEGER NOT NULL, ended_at INTEGER);
-            PRAGMA user_version=3;")?;
+            PRAGMA user_version=4;")?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -295,6 +296,47 @@ impl Store {
             ));
         }
         self.connection.execute("INSERT INTO settings VALUES('preferences',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [serde_json::to_string(preferences)?])?;
+        Ok(())
+    }
+    pub fn repository_layout(&self, workspace_id: &str) -> Result<RepositoryLayout> {
+        let workspace = self.workspace(workspace_id)?;
+        let value: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT value FROM repository_layouts WHERE repository_id=?",
+                [&workspace.repository_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let layout = value
+            .map(|value| serde_json::from_str(&value).map_err(Error::from))
+            .unwrap_or_else(|| Ok(RepositoryLayout::default()))?;
+        Self::validate_layout(&layout)?;
+        Ok(layout)
+    }
+    pub fn set_repository_layout(
+        &self,
+        workspace_id: &str,
+        layout: &RepositoryLayout,
+    ) -> Result<()> {
+        Self::validate_layout(layout)?;
+        let workspace = self.workspace(workspace_id)?;
+        self.connection.execute(
+            "INSERT INTO repository_layouts VALUES(?,?) ON CONFLICT(repository_id) DO UPDATE SET value=excluded.value",
+            params![workspace.repository_id, serde_json::to_string(layout)?],
+        )?;
+        Ok(())
+    }
+    fn validate_layout(layout: &RepositoryLayout) -> Result<()> {
+        if !(180..=480).contains(&layout.sidebar_width)
+            || !(240..=520).contains(&layout.context_width)
+        {
+            return Err(Error::new(
+                "INVALID_LAYOUT",
+                "面板宽度超出支持范围。",
+                "Sidebar: 180–480 px; context: 240–520 px",
+            ));
+        }
         Ok(())
     }
     pub fn record_operation(&self, workspace: &str, kind: &str, result: &str) -> Result<()> {

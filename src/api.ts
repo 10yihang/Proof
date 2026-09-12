@@ -1,7 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { ProofError } from "./types";
 
-export const isDesktop = "__TAURI_INTERNALS__" in window;
+export const isDesktop =
+  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 export async function request<T>(
   command: string,
   args: Record<string, unknown> = {},
