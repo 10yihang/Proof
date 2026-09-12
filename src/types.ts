@@ -1,0 +1,123 @@
+export type Side = "unstaged" | "staged";
+export type ReviewState = "unreviewed" | "reviewed" | "needs_review";
+export interface Workspace {
+  id: string;
+  repositoryId: string;
+  name: string;
+  path: string;
+  gitDir: string;
+  commonDir: string;
+  trusted: boolean;
+}
+export interface ChangedFile {
+  path: string;
+  oldPath: string | null;
+  status: string;
+  side: Side;
+  conflicted: boolean;
+}
+export interface Changes {
+  workspace: Workspace;
+  head: string | null;
+  branch: string | null;
+  operation: string | null;
+  token: string;
+  capturedAt: number;
+  files: ChangedFile[];
+  gitVersion: string;
+}
+export interface DiffLine {
+  kind: "add" | "delete" | "context" | "note";
+  content: string;
+  oldLine: number | null;
+  newLine: number | null;
+}
+export interface Hunk {
+  id: string;
+  header: string;
+  oldStart: number;
+  newStart: number;
+  lines: DiffLine[];
+  reviewState: ReviewState;
+}
+export interface FileDiff {
+  id: string;
+  workspaceId: string;
+  path: string;
+  oldPath: string | null;
+  side: Side;
+  base: string;
+  capturedAt: number;
+  token: string;
+  patch: string;
+  hunks: Hunk[];
+  additions: number;
+  deletions: number;
+  kind: string;
+  notice: string | null;
+  canStage: boolean;
+  canStageHunks: boolean;
+}
+export interface Preferences {
+  theme: "light" | "dark" | "system";
+  fontSize: number;
+  diffMode: "unified" | "split";
+  wrapLines: boolean;
+  contextOpen: boolean;
+  strictReview: boolean;
+  gitPath: string;
+}
+export interface CommitPreview {
+  id: string;
+  workspaceId: string;
+  branch: string | null;
+  head: string | null;
+  files: ChangedFile[];
+  reviewed: number;
+  total: number;
+  indexFingerprint: string;
+  capturedAt: number;
+}
+export interface CommitEntry {
+  oid: string;
+  parents: string[];
+  author: string;
+  date: string;
+  subject: string;
+  refs: string;
+}
+export interface BranchEntry {
+  name: string;
+  current: boolean;
+  oid: string;
+  remote: boolean;
+}
+export interface WorktreeEntry {
+  path: string;
+  branch: string | null;
+  head: string;
+  locked: boolean;
+}
+export interface OperationResult {
+  ok: boolean;
+  message: string;
+  actualHead: string | null;
+  actualBranch: string | null;
+  warning: string | null;
+}
+export interface ProofError {
+  code: string;
+  message: string;
+  detail: string;
+}
+export const defaultPreferences: Preferences = {
+  theme: "light",
+  fontSize: 13,
+  diffMode: "unified",
+  wrapLines: false,
+  contextOpen: true,
+  strictReview: false,
+  gitPath: "git",
+};
+export const fileKey = (file: Pick<ChangedFile, "side" | "path">) =>
+  `${file.side}:${file.path}`;

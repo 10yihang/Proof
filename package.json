@@ -1,0 +1,40 @@
+{
+  "name": "proof",
+  "version": "0.1.0-alpha.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 1420 --strictPort",
+    "build": "tsc -b && vite build",
+    "typecheck": "tsc -b",
+    "format": "prettier --write src vite.config.ts",
+    "lint:core": "cargo clippy -p proof-core --all-targets -- -D warnings",
+    "test": "vitest run",
+    "test:core": "cargo test -p proof-core",
+    "test:e2e": "playwright test",
+    "tauri": "tauri",
+    "desktop": "tauri dev",
+    "bundle": "tauri build",
+    "check": "npm run typecheck && npm test && cargo test -p proof-core"
+  },
+  "dependencies": {
+    "@phosphor-icons/react": "^2.1.10",
+    "@tanstack/react-virtual": "^3.13.12",
+    "@tauri-apps/api": "^2.8.0",
+    "@tauri-apps/plugin-dialog": "^2.4.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "@tauri-apps/cli": "^2.8.0",
+    "@types/node": "^22.18.0",
+    "@types/react": "^19.1.13",
+    "@types/react-dom": "^19.1.9",
+    "@vitejs/plugin-react": "^4.7.0",
+    "prettier": "^3.9.6",
+    "typescript": "^5.9.2",
+    "vite": "^6.4.0",
+    "vitest": "^3.2.4"
+  }
+}

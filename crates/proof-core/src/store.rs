@@ -1,0 +1,243 @@
+use crate::{
+    error::{Error, Result},
+    model::{Preferences, Workspace},
+    now,
+};
+use rusqlite::{params, Connection, OptionalExtension};
+use std::path::Path;
+
+pub(crate) struct Store {
+    pub connection: Connection,
+}
+impl Store {
+    pub fn open(path: &Path) -> Result<Self> {
+        std::fs::create_dir_all(path)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
+        }
+        let connection = Connection::open(path.join("proof.sqlite3"))?;
+        connection.busy_timeout(std::time::Duration::from_secs(3))?;
+        connection.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA secure_delete=ON;
+            CREATE TABLE IF NOT EXISTS repositories (id TEXT PRIMARY KEY, identity TEXT UNIQUE NOT NULL, path TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, identity TEXT UNIQUE NOT NULL, repository_id TEXT NOT NULL REFERENCES repositories(id),
+                name TEXT NOT NULL, path TEXT NOT NULL, git_dir TEXT NOT NULL, common_dir TEXT NOT NULL, trusted INTEGER NOT NULL DEFAULT 0, opened_at INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS review_marks (workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+                unit_id TEXT NOT NULL, path TEXT NOT NULL, side TEXT NOT NULL, reviewed INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+                PRIMARY KEY(workspace_id, unit_id));
+            CREATE INDEX IF NOT EXISTS review_path ON review_marks(workspace_id, path, side);
+            CREATE TABLE IF NOT EXISTS review_events (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+                unit_id TEXT NOT NULL, reviewed INTEGER NOT NULL, source TEXT NOT NULL, origin_unit_id TEXT, created_at INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, kind TEXT NOT NULL, result TEXT NOT NULL, created_at INTEGER NOT NULL);
+            PRAGMA user_version=1;")?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(
+                path.join("proof.sqlite3"),
+                std::fs::Permissions::from_mode(0o600),
+            )?;
+        }
+        Ok(Self { connection })
+    }
+
+    pub fn register(
+        &mut self,
+        repository_identity: &str,
+        identity: &str,
+        mut workspace: Workspace,
+    ) -> Result<Workspace> {
+        let tx = self.connection.transaction()?;
+        let repo_id: Option<String> = tx
+            .query_row(
+                "SELECT id FROM repositories WHERE identity=?",
+                [repository_identity],
+                |row| row.get(0),
+            )
+            .optional()?;
+        workspace.repository_id = match repo_id {
+            Some(id) => id,
+            None => {
+                let id = uuid::Uuid::new_v4().to_string();
+                tx.execute(
+                    "INSERT INTO repositories VALUES (?,?,?)",
+                    params![id, repository_identity, workspace.common_dir],
+                )?;
+                id
+            }
+        };
+        let previous: Option<(String, bool)> = tx
+            .query_row(
+                "SELECT id,trusted FROM workspaces WHERE identity=?",
+                [identity],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        if let Some((id, trusted)) = previous {
+            workspace.id = id;
+            workspace.trusted = trusted;
+        }
+        tx.execute("INSERT INTO workspaces VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+            name=excluded.name,path=excluded.path,git_dir=excluded.git_dir,common_dir=excluded.common_dir,opened_at=excluded.opened_at",
+            params![workspace.id, identity, workspace.repository_id, workspace.name, workspace.path, workspace.git_dir, workspace.common_dir, workspace.trusted, now()])?;
+        tx.commit()?;
+        Ok(workspace)
+    }
+
+    fn read_workspace(row: &rusqlite::Row<'_>) -> rusqlite::Result<Workspace> {
+        Ok(Workspace {
+            id: row.get(0)?,
+            repository_id: row.get(1)?,
+            name: row.get(2)?,
+            path: row.get(3)?,
+            git_dir: row.get(4)?,
+            common_dir: row.get(5)?,
+            trusted: row.get(6)?,
+        })
+    }
+    pub fn workspaces(&self) -> Result<Vec<Workspace>> {
+        let mut query = self.connection.prepare("SELECT id,repository_id,name,path,git_dir,common_dir,trusted FROM workspaces ORDER BY opened_at DESC")?;
+        let rows = query
+            .query_map([], Self::read_workspace)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+    pub fn workspace(&self, id: &str) -> Result<Workspace> {
+        self.connection.query_row("SELECT id,repository_id,name,path,git_dir,common_dir,trusted FROM workspaces WHERE id=?", [id], Self::read_workspace)
+            .optional()?.ok_or_else(|| Error::new("WORKSPACE_MISSING", "请重新打开仓库。", "Unknown workspace id"))
+    }
+    pub fn trust(&self, id: &str, trusted: bool) -> Result<()> {
+        self.workspace(id)?;
+        self.connection.execute(
+            "UPDATE workspaces SET trusted=? WHERE id=?",
+            params![trusted, id],
+        )?;
+        Ok(())
+    }
+    pub fn review_state(
+        &self,
+        workspace: &str,
+        path: &str,
+        side: &str,
+        unit: &str,
+    ) -> Result<String> {
+        let exact: Option<bool> = self
+            .connection
+            .query_row(
+                "SELECT reviewed FROM review_marks WHERE workspace_id=? AND unit_id=?",
+                params![workspace, unit],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(reviewed) = exact {
+            return Ok(if reviewed { "reviewed" } else { "unreviewed" }.into());
+        }
+        let had_review: bool = self.connection.query_row("SELECT EXISTS(SELECT 1 FROM review_marks WHERE workspace_id=? AND path=? AND side=? AND reviewed=1)", params![workspace,path,side], |row| row.get(0))?;
+        Ok(if had_review {
+            "needs_review"
+        } else {
+            "unreviewed"
+        }
+        .into())
+    }
+    pub fn mark(
+        &mut self,
+        workspace: &str,
+        path: &str,
+        side: &str,
+        units: &[String],
+        reviewed: bool,
+    ) -> Result<()> {
+        let tx = self.connection.transaction()?;
+        for unit in units {
+            tx.execute("INSERT INTO review_marks VALUES(?,?,?,?,?,?) ON CONFLICT(workspace_id,unit_id) DO UPDATE SET reviewed=excluded.reviewed,updated_at=excluded.updated_at",
+                params![workspace, unit, path, side, reviewed, now()])?;
+            tx.execute(
+                "INSERT INTO review_events VALUES(?,?,?,?,?,?,?)",
+                params![
+                    uuid::Uuid::new_v4().to_string(),
+                    workspace,
+                    unit,
+                    reviewed,
+                    "user",
+                    Option::<String>::None,
+                    now()
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+    pub fn migrate_mark(
+        &mut self,
+        workspace: &str,
+        path: &str,
+        side: &str,
+        from: &str,
+        to: &str,
+    ) -> Result<()> {
+        let tx = self.connection.transaction()?;
+        let timestamp: Option<u64> = tx.query_row("SELECT updated_at FROM review_marks WHERE workspace_id=? AND unit_id=? AND reviewed=1", params![workspace,from], |row|row.get(0)).optional()?;
+        if let Some(timestamp) = timestamp {
+            tx.execute("INSERT INTO review_marks VALUES(?,?,?,?,1,?) ON CONFLICT(workspace_id,unit_id) DO UPDATE SET reviewed=1,updated_at=excluded.updated_at",params![workspace,to,path,side,timestamp])?;
+            tx.execute(
+                "INSERT INTO review_events VALUES(?,?,?,?,?,?,?)",
+                params![
+                    uuid::Uuid::new_v4().to_string(),
+                    workspace,
+                    to,
+                    true,
+                    "stage_migration",
+                    from,
+                    now()
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+    pub fn preferences(&self) -> Result<Preferences> {
+        let value: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT value FROM settings WHERE key='preferences'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        value
+            .map(|v| serde_json::from_str(&v).map_err(Error::from))
+            .unwrap_or_else(|| Ok(Preferences::default()))
+    }
+    pub fn set_preferences(&self, preferences: &Preferences) -> Result<()> {
+        if !(10..=26).contains(&preferences.font_size)
+            || !["light", "dark", "system"].contains(&preferences.theme.as_str())
+            || !["unified", "split"].contains(&preferences.diff_mode.as_str())
+            || preferences.git_path.is_empty()
+            || preferences.git_path.contains('\0')
+        {
+            return Err(Error::new(
+                "INVALID_SETTING",
+                "设置值超出支持范围。",
+                "Invalid preference",
+            ));
+        }
+        self.connection.execute("INSERT INTO settings VALUES('preferences',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [serde_json::to_string(preferences)?])?;
+        Ok(())
+    }
+    pub fn record_operation(&self, workspace: &str, kind: &str, result: &str) -> Result<()> {
+        self.connection.execute(
+            "INSERT INTO operations VALUES(?,?,?,?,?)",
+            params![
+                uuid::Uuid::new_v4().to_string(),
+                workspace,
+                kind,
+                result,
+                now()
+            ],
+        )?;
+        Ok(())
+    }
+}
