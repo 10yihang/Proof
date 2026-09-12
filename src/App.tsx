@@ -5,12 +5,10 @@ import {
   ArrowRight,
   CaretDown,
   Check,
-  Command,
   FolderOpen,
   GearSix,
   GitBranch,
   GitCommit,
-  HardDrives,
   Info,
   MagnifyingGlass,
   Minus,
@@ -42,6 +40,7 @@ import { FileTree } from "./components/FileTree";
 import { ContextInspector } from "./components/ContextInspector";
 import { Modal } from "./components/Modal";
 import { RepositoryView } from "./components/RepositoryView";
+import type { RepositorySection } from "./components/RepositoryView";
 import { Settings } from "./components/Settings";
 import { RecoveryDialog } from "./components/RecoveryDialog";
 import { FileHistory } from "./components/FileHistory";
@@ -70,6 +69,15 @@ export default function App() {
     [loadingDiff, setLoadingDiff] = useState(false);
   const [dialog, setDialog] = useState<Dialog>(null),
     [tab, setTab] = useState<"changes" | "repository">("changes");
+  const [repositoryVisited, setRepositoryVisited] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<
+    "appearance" | "review" | "observer" | "data"
+  >("appearance");
+  const [repositorySection, setRepositorySection] =
+    useState<RepositorySection>("history");
+  useEffect(() => {
+    if (tab === "repository") setRepositoryVisited(true);
+  }, [tab]);
   const [search, setSearch] = useState(""),
     [scope, setScope] = useState<"all" | "unstaged" | "staged">("all");
   const [focused, setFocused] = useState(false),
@@ -576,7 +584,8 @@ export default function App() {
   }
   useEffect(() => {
     function keydown(event: KeyboardEvent) {
-      if (event.isComposing || event.keyCode === 229) return;
+      if (event.defaultPrevented || event.isComposing || event.keyCode === 229)
+        return;
       const editing =
         event.target instanceof HTMLElement &&
         event.target.closest('input,textarea,[contenteditable="true"]') !==
@@ -590,11 +599,18 @@ export default function App() {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "p") {
         event.preventDefault();
         setFocused(false);
-        document.getElementById("file-search")?.focus();
+        if (tab === "repository") {
+          document
+            .querySelector<HTMLInputElement>(
+              ".workspace-page:not([hidden]) .graph-search input",
+            )
+            ?.focus();
+        } else document.getElementById("file-search")?.focus();
       }
       if (
         (event.metaKey || event.ctrlKey) &&
         event.shiftKey &&
+        tab === "changes" &&
         event.key.toLowerCase() === "r"
       ) {
         event.preventDefault();
@@ -603,7 +619,7 @@ export default function App() {
     }
     window.addEventListener("keydown", keydown);
     return () => window.removeEventListener("keydown", keydown);
-  }, [dialog, busy]);
+  }, [dialog, busy, tab]);
 
   const knownDiffs = Object.values(loaded).filter(
     (d) =>
@@ -621,6 +637,16 @@ export default function App() {
     changes?.files.filter((f) => f.side === "staged").length ?? 0;
   const contextOpen =
     !focused && (narrow ? contextDrawer : preferences.contextOpen);
+  function openSettings(
+    section: "appearance" | "review" | "observer" | "data" = "appearance",
+  ) {
+    setSettingsSection(section);
+    setDialog("settings");
+  }
+  function showRepository(section: RepositorySection) {
+    setRepositorySection(section);
+    setTab("repository");
+  }
   return (
     <div className={`app ${focused ? "is-focused" : ""}`}>
       <header className="app-header">
@@ -645,18 +671,85 @@ export default function App() {
         {changes && (
           <button
             className="branch-picker"
-            onClick={() => setTab("repository")}
+            onClick={() => showRepository("branches")}
           >
             <GitBranch size={15} />
             <span>{changes.branch ?? "Detached HEAD"}</span>
             <CaretDown size={11} />
           </button>
         )}
+        {changes && (
+          <nav
+            className="top-navigation"
+            aria-label="工作区"
+            style={
+              {
+                "--nav-index":
+                  tab === "changes"
+                    ? 0
+                    : repositorySection === "history"
+                      ? 1
+                      : 2,
+              } as React.CSSProperties
+            }
+          >
+            <button
+              className={tab === "changes" ? "active" : ""}
+              aria-current={tab === "changes" ? "page" : undefined}
+              onClick={() => setTab("changes")}
+            >
+              Changes<span className="tab-count">{changes.files.length}</span>
+            </button>
+            <button
+              className={
+                tab === "repository" && repositorySection === "history"
+                  ? "active"
+                  : ""
+              }
+              aria-current={
+                tab === "repository" && repositorySection === "history"
+                  ? "page"
+                  : undefined
+              }
+              onClick={() => showRepository("history")}
+            >
+              History
+            </button>
+            <button
+              className={
+                tab === "repository" && repositorySection !== "history"
+                  ? "active"
+                  : ""
+              }
+              aria-current={
+                tab === "repository" && repositorySection !== "history"
+                  ? "page"
+                  : undefined
+              }
+              onClick={() => showRepository("branches")}
+            >
+              Branches
+            </button>
+          </nav>
+        )}
         <div className="toolbar-spacer" />
         {demo && <span className="demo-badge">演示数据</span>}
+        {changes && (
+          <button
+            className="icon-button"
+            disabled={busy}
+            aria-label="刷新工作区"
+            title="刷新本地工作区"
+            onClick={() => {
+              void refresh();
+            }}
+          >
+            <ArrowClockwise size={17} className={busy ? "spinning" : ""} />
+          </button>
+        )}
         <button
           className="observer-status"
-          onClick={() => setDialog("settings")}
+          onClick={() => openSettings("observer")}
         >
           <span className="status-dot neutral" />
           观察未接入
@@ -667,52 +760,21 @@ export default function App() {
           aria-label="打开命令面板"
           onClick={() => setDialog("commands")}
         >
-          <Command size={15} />
-          <kbd>K</kbd>
+          <MagnifyingGlass size={15} />
+          <span>Command</span>
+          <kbd>⌘ K</kbd>
         </button>
         <button
           className="icon-button"
           aria-label="设置"
           title="设置"
-          onClick={() => setDialog("settings")}
+          onClick={() => openSettings()}
         >
           <GearSix size={19} />
         </button>
       </header>
       {changes ? (
         <>
-          <nav className="workspace-navigation" aria-label="工作区">
-            <div className="primary-tabs">
-              <button
-                className={tab === "changes" ? "active" : ""}
-                onClick={() => setTab("changes")}
-              >
-                <span>Changes</span>
-                <span className="tab-count">{changes.files.length}</span>
-              </button>
-              <button
-                className={tab === "repository" ? "active" : ""}
-                onClick={() => setTab("repository")}
-              >
-                <HardDrives size={15} />
-                Repository
-              </button>
-            </div>
-            <span className="workspace-path" title={changes.workspace.path}>
-              {changes.workspace.path}
-            </span>
-            <button
-              className="icon-button"
-              disabled={busy}
-              aria-label="刷新工作区"
-              title="刷新工作区"
-              onClick={() => {
-                void refresh();
-              }}
-            >
-              <ArrowClockwise size={16} className={busy ? "spinning" : ""} />
-            </button>
-          </nav>
           {demo && (
             <div className="demo-notice">
               <Info size={15} />
@@ -849,105 +911,116 @@ export default function App() {
             <span className="version">0.1.0 Alpha</span>
           </footer>
         </main>
-      ) : tab === "repository" ? (
-        <RepositoryView
-          key={changes.workspace.id}
-          error={error}
-          changes={changes}
-          demo={demo}
-          onOpen={openWorkspace}
-          onError={(e) => {
-            if (current.current?.workspace.id === changes.workspace.id)
-              setError(asError(e));
-          }}
-          onChanged={refresh}
-        />
       ) : (
-        <main className={`workbench ${contextOpen ? "with-context" : ""}`}>
-          {!focused && (
-            <aside className="files-panel">
-              <FileTree
-                files={changes.files}
-                selected={selected}
-                onSelect={(f) => {
-                  void loadFile(f);
+        <>
+          <div className="workspace-page" hidden={tab !== "repository"}>
+            {(repositoryVisited || tab === "repository") && (
+              <RepositoryView
+                key={changes.workspace.id}
+                section={repositorySection}
+                onSection={setRepositorySection}
+                error={error}
+                changes={changes}
+                demo={demo}
+                onOpen={openWorkspace}
+                onError={(e) => {
+                  if (current.current?.workspace.id === changes.workspace.id)
+                    setError(asError(e));
                 }}
-                search={search}
-                onSearch={setSearch}
-                loaded={loaded}
-                scope={scope}
-                onScope={setScope}
+                onChanged={refresh}
               />
-            </aside>
-          )}
-          <div className="center-panel">
-            {diff ? (
-              <DiffView
-                key={`${diff.path}:${diff.side}`}
-                diff={diff}
-                preferences={preferences}
-                pending={busy || loadingDiff}
-                onMark={(h, r) => {
-                  void mark(h, r);
-                }}
-                onStage={(h) => {
-                  void stage(h);
-                }}
-                onDiscard={(h) => {
-                  void prepareDiscard(h);
-                }}
-                onHistory={demo ? undefined : () => setDialog("file-history")}
-                onPreferences={(p) => {
-                  void updatePreferences(p);
-                }}
-                onFocus={() => setFocused((f) => !f)}
-              />
-            ) : (
-              <div className="empty-diff">
-                <div className="empty-symbol">
-                  <Check size={30} />
-                </div>
-                <h2>
-                  {changes.files.length
-                    ? "选择一个文件，开始审查"
-                    : "当前没有代码变化"}
-                </h2>
-                <p>
-                  {changes.files.length
-                    ? "真实 Diff、明确基准、由你判断。"
-                    : "工作树与索引中暂无需要核对的修改。"}
-                </p>
-                {!changes.files.length && (
-                  <button
-                    className="button"
-                    onClick={() => setTab("repository")}
-                  >
-                    查看提交历史
-                  </button>
-                )}
-              </div>
-            )}
-            {loadingDiff && (
-              <div className="loading-overlay" role="status">
-                正在读取文件变化…
-              </div>
             )}
           </div>
-          {contextOpen && (
-            <ContextInspector
-              diff={diff}
-              demo={demo}
-              drawer={narrow}
-              onClose={() => {
-                if (narrow) setContextDrawer(false);
-                else void updatePreferences({ contextOpen: false });
-              }}
-              onSettings={() => setDialog("settings")}
-            />
-          )}
-        </main>
+          <div className="workspace-page" hidden={tab !== "changes"}>
+            <main className={`workbench ${contextOpen ? "with-context" : ""}`}>
+              {!focused && (
+                <aside className="files-panel">
+                  <FileTree
+                    files={changes.files}
+                    selected={selected}
+                    onSelect={(f) => {
+                      void loadFile(f);
+                    }}
+                    search={search}
+                    onSearch={setSearch}
+                    loaded={loaded}
+                    scope={scope}
+                    onScope={setScope}
+                  />
+                </aside>
+              )}
+              <div className="center-panel">
+                {diff ? (
+                  <DiffView
+                    key={`${diff.path}:${diff.side}`}
+                    diff={diff}
+                    preferences={preferences}
+                    pending={busy || loadingDiff}
+                    onMark={(h, r) => {
+                      void mark(h, r);
+                    }}
+                    onStage={(h) => {
+                      void stage(h);
+                    }}
+                    onDiscard={(h) => {
+                      void prepareDiscard(h);
+                    }}
+                    onHistory={
+                      demo ? undefined : () => setDialog("file-history")
+                    }
+                    onPreferences={(p) => {
+                      void updatePreferences(p);
+                    }}
+                    onFocus={() => setFocused((f) => !f)}
+                  />
+                ) : (
+                  <div className="empty-diff">
+                    <div className="empty-symbol">
+                      <Check size={30} />
+                    </div>
+                    <h2>
+                      {changes.files.length
+                        ? "选择一个文件，开始审查"
+                        : "当前没有代码变化"}
+                    </h2>
+                    <p>
+                      {changes.files.length
+                        ? "真实 Diff、明确基准、由你判断。"
+                        : "工作树与索引中暂无需要核对的修改。"}
+                    </p>
+                    {!changes.files.length && (
+                      <button
+                        className="button"
+                        onClick={() => showRepository("history")}
+                      >
+                        查看提交历史
+                      </button>
+                    )}
+                  </div>
+                )}
+                {loadingDiff && (
+                  <div className="loading-overlay" role="status">
+                    正在读取文件变化…
+                  </div>
+                )}
+              </div>
+              {contextOpen && (
+                <ContextInspector
+                  diff={diff}
+                  demo={demo}
+                  drawer={narrow}
+                  onClose={() => {
+                    if (narrow) setContextDrawer(false);
+                    else void updatePreferences({ contextOpen: false });
+                  }}
+                  onSettings={() => openSettings("observer")}
+                />
+              )}
+            </main>
+          </div>
+        </>
       )}
-      {changes && (
+      {changes && tab === "changes" && (
         <footer className="app-footer">
           <div className="review-progress">
             <span
@@ -1336,8 +1409,21 @@ export default function App() {
           </div>
         </Modal>
       )}
+      {changes && (
+        <div className="workspace-statusbar">
+          <span className="workspace-path" title={changes.workspace.path}>
+            {changes.workspace.path}
+          </span>
+          <span>
+            <GitBranch size={12} />
+            {changes.branch ?? "Detached HEAD"}
+          </span>
+          <span>本地 Git</span>
+        </div>
+      )}
       {dialog === "settings" && (
         <Settings
+          initialSection={settingsSection}
           workspaces={recent}
           workspaceId={changes?.workspace.id}
           demo={demo}
@@ -1402,7 +1488,7 @@ export default function App() {
               {
                 label: "观察与偏好设置",
                 icon: <GearSix size={19} />,
-                run: () => setDialog("settings"),
+                run: () => openSettings(),
               },
             ].map((action) => (
               <button

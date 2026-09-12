@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { X } from "@phosphor-icons/react";
 import type { ProofError } from "../types";
@@ -17,11 +17,26 @@ export function Modal({
   error?: ProofError | null;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const [closing, setClosing] = useState(false);
+  const closingRef = useRef(false);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function close() {
+    if (closingRef.current) return;
+    closingRef.current = true;
+    if (ref.current) ref.current.inert = true;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      onClose();
+      return;
+    }
+    setClosing(true);
+    closeTimer.current = setTimeout(onClose, 140);
+  }
   useEffect(() => {
     const dialog = ref.current;
     const focused = document.activeElement as HTMLElement | null;
     dialog?.showModal();
     return () => {
+      if (closeTimer.current) clearTimeout(closeTimer.current);
       dialog?.close();
       focused?.focus();
     };
@@ -29,14 +44,26 @@ export function Modal({
   return (
     <dialog
       ref={ref}
-      className={`modal ${wide ? "modal-wide" : ""}`}
+      className={`modal ${wide ? "modal-wide" : ""} ${closing ? "is-closing" : ""}`}
       aria-label={title}
+      onSubmitCapture={(event) => {
+        if (closingRef.current) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }}
+      onKeyDownCapture={(event) => {
+        if (closingRef.current) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }}
       onCancel={(e) => {
         e.preventDefault();
-        onClose();
+        close();
       }}
       onClick={(e) => {
-        if (e.target === ref.current) onClose();
+        if (e.target === ref.current) close();
       }}
     >
       <div className="modal-content">
@@ -46,7 +73,7 @@ export function Modal({
             className="icon-button"
             title="关闭"
             aria-label="关闭"
-            onClick={onClose}
+            onClick={close}
           >
             <X size={18} />
           </button>

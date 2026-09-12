@@ -22,6 +22,7 @@ export function Settings({
   workspaces,
   workspaceId,
   demo,
+  initialSection = "appearance",
 }: {
   preferences: Preferences;
   error: ProofError | null;
@@ -30,9 +31,10 @@ export function Settings({
   workspaces: Workspace[];
   workspaceId?: string;
   demo: boolean;
+  initialSection?: "appearance" | "review" | "observer" | "data";
 }) {
   const [tab, setTab] = useState<"appearance" | "review" | "observer" | "data">(
-    "appearance",
+    initialSection,
   );
   return (
     <Modal title="设置" error={error} onClose={onClose} wide>

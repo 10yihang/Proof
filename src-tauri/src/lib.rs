@@ -105,6 +105,12 @@ fn dispatch(
             args["offset"].as_u64().unwrap_or(0) as usize,
             args["path"].as_str(),
         )?),
+        "commit_graph" => serde_json::to_value(proof.commit_graph(
+            string(&args, "workspaceId")?,
+            args["snapshotId"].as_str(),
+            args["offset"].as_u64().unwrap_or(0) as usize,
+            args["scope"].as_str().unwrap_or("all"),
+        )?),
         "file_blame" => serde_json::to_value(proof.file_blame(
             string(&args, "workspaceId")?,
             string(&args, "path")?,
@@ -113,6 +119,12 @@ fn dispatch(
         )?),
         "commit_diff" => serde_json::to_value(proof.commit_diff(
             string(&args, "workspaceId")?,
+            string(&args, "oid")?,
+            args["parent"].as_u64().unwrap_or(0) as usize,
+        )?),
+        "graph_commit_diff" => serde_json::to_value(proof.graph_commit_diff(
+            string(&args, "workspaceId")?,
+            string(&args, "snapshotId")?,
             string(&args, "oid")?,
             args["parent"].as_u64().unwrap_or(0) as usize,
         )?),

@@ -338,6 +338,7 @@ impl Git {
         let skip = format!("--skip={}", offset.min(1_000_000));
         let mut args = vec![
             "log",
+            "--no-show-signature",
             "-z",
             "--max-count=50",
             &skip,
@@ -366,6 +367,7 @@ impl Git {
                 date: row[3].clone(),
                 subject: row[4].clone(),
                 refs: row[5].clone(),
+                boundary: None,
             });
         }
         Ok(commits)

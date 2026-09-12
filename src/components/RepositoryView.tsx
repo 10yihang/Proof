@@ -2,25 +2,22 @@ import { useEffect, useState } from "react";
 import {
   ArrowRight,
   Check,
-  ClockCounterClockwise,
   FolderOpen,
   GitBranch,
-  GitCommit,
   HardDrives,
-  MagnifyingGlass,
   Plus,
 } from "@phosphor-icons/react";
 import { request } from "../api";
-import type {
-  BranchEntry,
-  Changes,
-  CommitEntry,
-  WorktreeEntry,
-  ProofError,
-} from "../types";
+import type { BranchEntry, Changes, WorktreeEntry, ProofError } from "../types";
 import { Modal } from "./Modal";
+import { CommitHistory } from "./CommitHistory";
+import { demoGraphPage } from "../graph-demo";
+
+export type RepositorySection = "history" | "branches" | "worktrees";
 
 export function RepositoryView({
+  section,
+  onSection,
   changes,
   error,
   demo,
@@ -28,6 +25,8 @@ export function RepositoryView({
   onError,
   onChanged,
 }: {
+  section: RepositorySection;
+  onSection: (section: RepositorySection) => void;
   changes: Changes;
   error: ProofError | null;
   demo: boolean;
@@ -35,35 +34,22 @@ export function RepositoryView({
   onError: (e: unknown) => void;
   onChanged: () => Promise<void>;
 }) {
-  const [section, setSection] = useState<"history" | "branches" | "worktrees">(
-    "history",
-  );
-  const [commits, setCommits] = useState<CommitEntry[]>([]),
-    [branches, setBranches] = useState<BranchEntry[]>([]),
-    [worktrees, setWorktrees] = useState<WorktreeEntry[]>([]);
-  const [search, setSearch] = useState(""),
-    [busy, setBusy] = useState(false),
-    [create, setCreate] = useState(false),
-    [branchName, setBranchName] = useState("");
-  const [selected, setSelected] = useState<CommitEntry | null>(null),
-    [patch, setPatch] = useState(""),
-    [parent, setParent] = useState(0);
-  const [more, setMore] = useState(true);
+  const [historyVisited, setHistoryVisited] = useState(section === "history");
+  useEffect(() => {
+    if (section === "history") setHistoryVisited(true);
+  }, [section]);
+  const [branches, setBranches] = useState<BranchEntry[]>([]);
+  const [worktrees, setWorktrees] = useState<WorktreeEntry[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [create, setCreate] = useState(false);
+  const [branchName, setBranchName] = useState("");
+  const [historyScope, setHistoryScope] = useState("all");
+  const [historyRef, setHistoryRef] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
     setBusy(true);
-    setSelected(null);
-    setPatch("");
     if (demo) {
-      setCommits([]);
-      setBranches([
-        {
-          name: changes.branch ?? "main",
-          current: true,
-          oid: changes.head ?? "",
-          remote: false,
-        },
-      ]);
+      setBranches(demoGraphPage().branches);
       setWorktrees([
         {
           path: changes.workspace.path,
@@ -76,19 +62,13 @@ export function RepositoryView({
       return;
     }
     void Promise.all([
-      request<CommitEntry[]>("history", {
-        workspaceId: changes.workspace.id,
-        offset: 0,
-      }),
       request<BranchEntry[]>("branches", { workspaceId: changes.workspace.id }),
       request<WorktreeEntry[]>("worktrees", {
         workspaceId: changes.workspace.id,
       }),
     ])
-      .then(([history, refs, trees]) => {
+      .then(([refs, trees]) => {
         if (!cancelled) {
-          setCommits(history);
-          setMore(history.length === 50);
           setBranches(refs);
           setWorktrees(trees);
         }
@@ -103,28 +83,6 @@ export function RepositoryView({
       cancelled = true;
     };
   }, [changes.workspace.id, changes.head, changes.branch, demo]);
-  useEffect(() => {
-    if (!selected || demo) return;
-    let cancelled = false;
-    setPatch("正在读取提交差异…");
-    void request<string>("commit_diff", {
-      workspaceId: changes.workspace.id,
-      oid: selected.oid,
-      parent,
-    })
-      .then((value) => {
-        if (!cancelled) setPatch(value || "此比较基准下没有文本变化。");
-      })
-      .catch((e) => {
-        if (!cancelled) {
-          setPatch("无法读取提交差异。");
-          onError(e);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [selected, parent, changes.workspace.id, demo]);
   async function switchBranch(name: string, creating: boolean) {
     setBusy(true);
     try {
@@ -146,32 +104,86 @@ export function RepositoryView({
     <main className="repository-view">
       <aside className="repository-nav">
         <span className="sidebar-heading">
-          <strong>Repository</strong>
+          <strong>仓库与引用</strong>
         </span>
-        {(
-          [
-            {
-              key: "history",
-              label: "提交历史",
-              icon: <ClockCounterClockwise size={18} />,
-            },
-            { key: "branches", label: "分支", icon: <GitBranch size={18} /> },
-            {
-              key: "worktrees",
-              label: "工作区",
-              icon: <HardDrives size={18} />,
-            },
-          ] as const
-        ).map((item) => (
-          <button
-            key={item.key}
-            className={section === item.key ? "active" : ""}
-            onClick={() => setSection(item.key)}
-          >
-            {item.icon}
-            {item.label}
-          </button>
-        ))}
+        <button
+          className={section === "worktrees" ? "active" : ""}
+          onClick={() =>
+            onSection(section === "worktrees" ? "history" : "worktrees")
+          }
+        >
+          <HardDrives size={17} />
+          工作区<span className="count-badge">{worktrees.length}</span>
+        </button>
+        {section === "history" && (
+          <div className="repository-refs">
+            <div className="refs-heading">
+              <span>本地分支</span>
+              <span>{branches.filter((branch) => !branch.remote).length}</span>
+            </div>
+            <button
+              className={`repo-ref ${historyScope === "all" ? "active" : ""}`}
+              onClick={() => {
+                setHistoryScope("all");
+                setHistoryRef(null);
+              }}
+            >
+              <GitBranch size={15} />
+              <span>所有分支</span>
+            </button>
+            {branches
+              .filter((branch) => !branch.remote)
+              .map((branch) => (
+                <button
+                  key={branch.name}
+                  className={`repo-ref ${historyRef === `${branch.remote ? "remote" : "local"}:${branch.name}` ? "active" : ""}`}
+                  title={`查看 ${branch.name} 的历史`}
+                  onClick={() => {
+                    setHistoryScope(
+                      `refs/${branch.remote ? "remotes" : "heads"}/${branch.name}`,
+                    );
+                    setHistoryRef(
+                      `${branch.remote ? "remote" : "local"}:${branch.name}`,
+                    );
+                  }}
+                >
+                  <GitBranch size={14} />
+                  <span>{branch.name}</span>
+                  {branch.current && (
+                    <span className="current-ref-dot" aria-label="当前分支" />
+                  )}
+                </button>
+              ))}
+            {branches.some((branch) => branch.remote) && (
+              <>
+                <div className="refs-heading">
+                  <span>远程引用</span>
+                  <span>本地已知</span>
+                </div>
+                {branches
+                  .filter((branch) => branch.remote)
+                  .map((branch) => (
+                    <button
+                      key={branch.name}
+                      className={`repo-ref ${historyRef === `${branch.remote ? "remote" : "local"}:${branch.name}` ? "active" : ""}`}
+                      title={`查看 ${branch.name} 的本地历史`}
+                      onClick={() => {
+                        setHistoryScope(
+                          `refs/${branch.remote ? "remotes" : "heads"}/${branch.name}`,
+                        );
+                        setHistoryRef(
+                          `${branch.remote ? "remote" : "local"}:${branch.name}`,
+                        );
+                      }}
+                    >
+                      <GitBranch size={14} />
+                      <span>{branch.name}</span>
+                    </button>
+                  ))}
+              </>
+            )}
+          </div>
+        )}
         <div className="repository-meta">
           <span>当前 Git</span>
           <code>{changes.gitVersion}</code>
@@ -180,137 +192,46 @@ export function RepositoryView({
           <p>远程引用代表本地已知状态。Proof 不会自动 fetch。</p>
         </div>
       </aside>
-      <section className="repository-content">
-        <header className="repository-header">
-          <div>
-            <h2>
-              {section === "history"
-                ? "提交历史"
-                : section === "branches"
-                  ? "分支"
-                  : "工作区"}
-            </h2>
-            <p>
-              {section === "history"
-                ? "按真实 Git 提交记录核对每一次变化。"
-                : section === "branches"
+      <section
+        className={`repository-content ${section === "history" ? "is-history" : ""}`}
+      >
+        {section !== "history" && (
+          <header className="repository-header">
+            <div>
+              <h2>{section === "branches" ? "分支" : "工作区"}</h2>
+              <p>
+                {section === "branches"
                   ? "本地分支与已知远程引用。"
                   : "每个 worktree 的代码和审查进度独立保存。"}
-            </p>
-          </div>
-          {section === "branches" && (
-            <button
-              className="button compact"
-              disabled={demo || !changes.workspace.trusted || busy}
-              onClick={() => setCreate(true)}
-            >
-              <Plus size={15} />
-              创建分支
-            </button>
-          )}
-        </header>
-        {section === "history" && (
-          <>
-            <div className="history-search">
-              <MagnifyingGlass size={17} />
-              <input
-                aria-label="搜索已加载的提交"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="搜索已加载的提交说明、作者或 ID…"
-              />
-              <span>{commits.length} 条已加载</span>
+              </p>
             </div>
-            <div className={`history-layout ${selected ? "has-detail" : ""}`}>
-              <div className="commit-list">
-                {commits
-                  .filter((c) =>
-                    `${c.subject} ${c.author} ${c.oid}`
-                      .toLowerCase()
-                      .includes(search.toLowerCase()),
-                  )
-                  .map((c) => (
-                    <button
-                      key={c.oid}
-                      className={`commit-row ${selected?.oid === c.oid ? "active" : ""}`}
-                      onClick={() => {
-                        setParent(0);
-                        setSelected(c);
-                      }}
-                    >
-                      <GitCommit size={20} />
-                      <span>
-                        <strong>{c.subject}</strong>
-                        <small>
-                          {c.author}
-                          <span>
-                            {new Date(c.date).toLocaleString("zh-CN")}
-                          </span>
-                        </small>
-                        {c.refs && <span className="ref-label">{c.refs}</span>}
-                      </span>
-                      <code>{c.oid.slice(0, 8)}</code>
-                    </button>
-                  ))}
-                {!commits.length && (
-                  <div className="empty-list">
-                    {busy
-                      ? "正在读取提交…"
-                      : demo
-                        ? "演示未生成虚构提交历史，请打开真实仓库查看。"
-                        : "此仓库尚无提交。"}
-                  </div>
-                )}
-                {more && commits.length > 0 && (
-                  <button
-                    className="button load-more"
-                    disabled={busy}
-                    onClick={() => {
-                      setBusy(true);
-                      void request<CommitEntry[]>("history", {
-                        workspaceId: changes.workspace.id,
-                        offset: commits.length,
-                      })
-                        .then((next) => {
-                          setCommits((c) => [...c, ...next]);
-                          setMore(next.length === 50);
-                        })
-                        .catch(onError)
-                        .finally(() => setBusy(false));
-                    }}
-                  >
-                    加载更多提交
-                  </button>
-                )}
-              </div>
-              {selected && (
-                <div className="commit-detail">
-                  <header>
-                    <strong>{selected.oid.slice(0, 8)}</strong>
-                    {selected.parents.length > 1 ? (
-                      <select
-                        aria-label="比较父提交"
-                        value={parent}
-                        onChange={(e) => setParent(Number(e.target.value))}
-                      >
-                        {selected.parents.map((p, i) => (
-                          <option key={p} value={i}>
-                            父提交 {i + 1} · {p.slice(0, 8)}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <span>
-                        {selected.parents[0]?.slice(0, 8) ?? "空树"} → 当前提交
-                      </span>
-                    )}
-                  </header>
-                  <pre>{patch}</pre>
-                </div>
-              )}
-            </div>
-          </>
+            {section === "branches" && (
+              <button
+                className="button compact"
+                disabled={demo || !changes.workspace.trusted || busy}
+                onClick={() => setCreate(true)}
+              >
+                <Plus size={15} />
+                创建分支
+              </button>
+            )}
+          </header>
         )}
+        <div className="repository-page" hidden={section !== "history"}>
+          {(historyVisited || section === "history") && (
+            <CommitHistory
+              changes={changes}
+              demo={demo}
+              scope={historyScope}
+              scopeLabel={historyRef?.slice(historyRef.indexOf(":") + 1)}
+              onScope={(scope) => {
+                setHistoryScope(scope);
+                setHistoryRef(null);
+              }}
+              onBranches={setBranches}
+            />
+          )}
+        </div>
         {section === "branches" && (
           <div className="branch-list">
             {branches.map((branch) => (

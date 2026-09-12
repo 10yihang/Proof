@@ -2,6 +2,20 @@
 
 本记录描述当前已有证据，不代表 v0.1 已完成。完整范围保持为 PRD 的全部 P0。
 
+## 2026-09-13：界面与 History Graph
+
+按用户参考图及 Fork / GitKraken 的官方界面资料改进单层导航、深浅主题、代码区密度和短时动效。浏览器演示检查覆盖：1440×900 炭灰三栏、1024×720 自适应顶栏与右栏收起、深浅提交图、搜索匹配跳转、Changes / History / Branches 切换后保留所选文件/提交、观察状态按钮直达 Agent 观察设置。两种视口中页面宽度与视口一致，没有全页横向溢出。
+
+图只连接真实 parent OID，100 条分页以捕获 tip 和引用标签为基准；具名分支刷新重新读取当前 tip。9 条新增真实 Git 回归覆盖多分支拓扑/分页、引用移动后的旧页面稳定、祖先标签、1100 条单分支、空仓库/非法游标、具名引用刷新、浅边界/replace/graft 降级、详情快照形态和不执行仓库签名程序。前端 4 条图布局回归覆盖分叉/合并/多父提交、断开的历史和分页前缀稳定。
+
+主工作区完整运行 `cargo test -p proof-observer -p proof-core -p proof-desktop -- --test-threads=4`：108 项通过，1 条本机 CLI opt-in 默认跳过。`npm test` 6 项通过；类型检查、生产构建、三 crate Clippy、Rust 格式及 diff 空白检查通过。前一检查点的桥接启动间歇计时失败仍保留为未定位问题，不以本次单次通过认定 NFR 达标。
+
+独立评审已修复退出动画取消后误提交、虚拟列表活动节点丢失、历史形态变化后旧图与新 Diff 混用等问题，详见 `CODE-REVIEW-05.md`。演示 Context 是明确标注的虚构会话；没有据此认定真实 Agent 证据关联完成。
+
+另创建独立 `.artifacts/history-fixture/demo-service`：14 条真实提交、4 个本地分支、2 次合并、1 个 annotated tag 和本地 origin/main 引用，生成器为 `scripts/create-history-repo.py`。其 HEAD 为 `c3537dc32204225182d75b693bc7a399337c30a4`，期望父提交/原始 Patch/索引和文件哈希写入该夹具的 `expected.json`。该夹具尚待新包原生窗口验收；本轮末段 Mac 再次锁定。原始 `.artifacts/demo-service` 的 Git/Review 验收内容保持不变。
+
+当前界面代码已通过 `npm run tauri -- build --debug --bundles app` 打包，`codesign --verify --deep --strict --verbose=1 target/debug/bundle/macos/Proof.app` 通过。产物仍是本地 ad-hoc 签名的调试 Alpha，不是公证发行包；完整构建来源记录保存在本机 `.artifacts/latest-build.json`。
+
 ## 2026-09-12：Git / Review 首次原生验证
 
 构建命令：`npm run tauri -- build --debug --bundles app`。产物：`target/debug/bundle/macos/Proof.app`，调试构建，内嵌前端资源。前端构建成功；Rust 核心 `cargo test -p proof-core --test git_review -- --test-threads=4` 为 16/16 通过。

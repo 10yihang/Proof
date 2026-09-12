@@ -85,86 +85,88 @@ export function DiffView({
         { "--code-size": `${preferences.fontSize}px` } as React.CSSProperties
       }
     >
-      <header className="diff-file-header">
-        <div className="file-title">
-          <Code size={20} />
-          <div>
-            <strong>{diff.path.split("/").pop()}</strong>
-            <span>
-              {diff.oldPath ? `${diff.oldPath} → ` : ""}
-              {diff.path}
-            </span>
+      <div className="diff-topbar">
+        <header className="diff-file-header">
+          <div className="file-title">
+            <Code size={20} />
+            <div>
+              <strong>{diff.path.split("/").pop()}</strong>
+              <span>
+                {diff.oldPath ? `${diff.oldPath} → ` : ""}
+                {diff.path}
+              </span>
+            </div>
           </div>
-        </div>
-        <div className="diff-tally">
-          <span className="addition">+{diff.additions}</span>
-          <span className="deletion">−{diff.deletions}</span>
-        </div>
-      </header>
-      <div className="diff-toolbar">
-        <div className="segmented small">
+          <div className="diff-tally">
+            <span className="addition">+{diff.additions}</span>
+            <span className="deletion">−{diff.deletions}</span>
+          </div>
+        </header>
+        <div className="diff-toolbar">
+          <div className="segmented small">
+            <button
+              aria-pressed={!split}
+              onClick={() => onPreferences({ diffMode: "unified" })}
+            >
+              统一
+            </button>
+            <button
+              aria-pressed={split}
+              onClick={() => onPreferences({ diffMode: "split" })}
+            >
+              并排
+            </button>
+          </div>
+          <span className="comparison">
+            <span>{diff.side === "staged" ? "HEAD" : "Index"}</span>
+            <span aria-hidden="true">→</span>
+            <span>{diff.side === "staged" ? "Index" : "工作树"}</span>
+          </span>
+          <div className="toolbar-spacer" />
           <button
-            aria-pressed={!split}
-            onClick={() => onPreferences({ diffMode: "unified" })}
+            className="icon-button"
+            title="文件历史与 Blame"
+            aria-label="文件历史与 Blame"
+            disabled={!onHistory || pending}
+            onClick={onHistory}
           >
-            统一
+            <ClockCounterClockwise size={17} />
           </button>
           <button
-            aria-pressed={split}
-            onClick={() => onPreferences({ diffMode: "split" })}
+            className={`icon-button ${preferences.wrapLines ? "selected" : ""}`}
+            aria-label="切换自动换行"
+            title="自动换行"
+            aria-pressed={preferences.wrapLines}
+            onClick={() => onPreferences({ wrapLines: !preferences.wrapLines })}
           >
-            并排
+            <TextAlignLeft size={17} />
+          </button>
+          <button
+            className="icon-button"
+            aria-label="搜索文件内容"
+            title="搜索文件内容"
+            onClick={() => setSearchOpen(!searchOpen)}
+          >
+            <MagnifyingGlass size={17} />
+          </button>
+          <button
+            className={`icon-button ${raw ? "selected" : ""}`}
+            aria-label="查看原始 patch"
+            title="原始 patch"
+            aria-pressed={raw}
+            onClick={() => setRaw(!raw)}
+          >
+            <Code size={17} />
+          </button>
+          <button
+            className="icon-button"
+            aria-label="进入专注审查"
+            title="专注审查"
+            onClick={onFocus}
+          >
+            <ArrowsOutSimple size={17} />
           </button>
         </div>
-        <span className="comparison">
-          <span>{diff.side === "staged" ? "HEAD" : "Index"}</span>
-          <span aria-hidden="true">→</span>
-          <span>{diff.side === "staged" ? "Index" : "工作树"}</span>
-        </span>
-        <div className="toolbar-spacer" />
-        <button
-          className="icon-button"
-          title="文件历史与 Blame"
-          aria-label="文件历史与 Blame"
-          disabled={!onHistory || pending}
-          onClick={onHistory}
-        >
-          <ClockCounterClockwise size={17} />
-        </button>
-        <button
-          className={`icon-button ${preferences.wrapLines ? "selected" : ""}`}
-          aria-label="切换自动换行"
-          title="自动换行"
-          aria-pressed={preferences.wrapLines}
-          onClick={() => onPreferences({ wrapLines: !preferences.wrapLines })}
-        >
-          <TextAlignLeft size={17} />
-        </button>
-        <button
-          className="icon-button"
-          aria-label="搜索文件内容"
-          title="搜索文件内容"
-          onClick={() => setSearchOpen(!searchOpen)}
-        >
-          <MagnifyingGlass size={17} />
-        </button>
-        <button
-          className={`icon-button ${raw ? "selected" : ""}`}
-          aria-label="查看原始 patch"
-          title="原始 patch"
-          aria-pressed={raw}
-          onClick={() => setRaw(!raw)}
-        >
-          <Code size={17} />
-        </button>
-        <button
-          className="icon-button"
-          aria-label="进入专注审查"
-          title="专注审查"
-          onClick={onFocus}
-        >
-          <ArrowsOutSimple size={17} />
-        </button>
       </div>
       {searchOpen && (
         <div className="diff-search">

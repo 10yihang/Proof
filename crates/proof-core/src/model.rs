@@ -132,6 +132,23 @@ pub struct CommitEntry {
     pub date: String,
     pub subject: String,
     pub refs: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boundary: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitGraphPage {
+    pub snapshot_id: String,
+    pub workspace_id: String,
+    pub scope: String,
+    pub commits: Vec<CommitEntry>,
+    pub branches: Vec<BranchEntry>,
+    pub head: Option<String>,
+    pub offset: usize,
+    pub has_more: bool,
+    pub captured_at: u64,
+    pub shallow: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

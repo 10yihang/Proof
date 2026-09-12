@@ -1,4 +1,5 @@
 import type { ChangedFile, Changes, FileDiff, Hunk } from "./types";
+import { DEMO_HEAD } from "./graph-demo";
 
 // All names and code in this fixture are fictional. It is only entered through
 // an explicit demo action or ?demo=1; production IPC never falls back to it.
@@ -12,8 +13,8 @@ export const demoChanges: Changes = {
     commonDir: "",
     trusted: false,
   },
-  head: "9be182c53cf9c79ac5097357692256474f44b2c6",
-  branch: "feat/request-validation",
+  head: DEMO_HEAD,
+  branch: "main",
   operation: null,
   token: "demo-snapshot",
   capturedAt: Date.now(),
@@ -147,7 +148,7 @@ export function demoDiff(file: ChangedFile): FileDiff {
     path: file.path,
     oldPath: null,
     side: file.side,
-    base: "9be182c:feat/request-validation",
+    base: `${DEMO_HEAD}:main`,
     capturedAt: Date.now(),
     token: `demo:${file.path}`,
     patch: hunks

@@ -20,6 +20,7 @@ pub struct Proof {
     snapshots: HashMap<String, FileDiff>,
     snapshot_order: VecDeque<String>,
     previews: HashMap<String, CommitPreview>,
+    pub(crate) graphs: VecDeque<crate::graph::GraphSnapshot>,
 }
 impl Proof {
     pub fn open(data_dir: impl AsRef<Path>) -> Result<Self> {
@@ -29,6 +30,7 @@ impl Proof {
             snapshots: HashMap::new(),
             snapshot_order: VecDeque::new(),
             previews: HashMap::new(),
+            graphs: VecDeque::new(),
         };
         core.maintain_local_data()?;
         Ok(core)
@@ -526,7 +528,16 @@ impl Proof {
                 String::from_utf8_lossy(&output.stderr),
             ));
         }
-        let actual = git::text(git.query(&workspace, &["show", "-s", "--format=%T%n%P", "HEAD"])?)?;
+        let actual = git::text(git.query(
+            &workspace,
+            &[
+                "show",
+                "--no-show-signature",
+                "-s",
+                "--format=%T%n%P",
+                "HEAD",
+            ],
+        )?)?;
         let mut lines = actual.lines();
         let tree = lines.next().unwrap_or("");
         let parents = lines.next().unwrap_or("");
@@ -604,7 +615,10 @@ impl Proof {
         )?)?
         .trim()
         .to_string();
-        let ancestry = git::text(git.query(&workspace, &["show", "-s", "--format=%P", &commit])?)?;
+        let ancestry = git::text(git.query(
+            &workspace,
+            &["show", "--no-show-signature", "-s", "--format=%P", &commit],
+        )?)?;
         let parents: Vec<&str> = ancestry.split_whitespace().collect();
         if parents.is_empty() {
             return git::text(git.query(

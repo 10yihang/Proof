@@ -2,6 +2,7 @@ mod adapter;
 mod data;
 mod error;
 mod git;
+mod graph;
 mod guarded_file;
 mod history;
 mod model;

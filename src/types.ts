@@ -88,6 +88,19 @@ export interface CommitEntry {
   date: string;
   subject: string;
   refs: string;
+  boundary?: "shallow" | null;
+}
+export interface CommitGraphPage {
+  snapshotId: string;
+  workspaceId: string;
+  scope: string;
+  commits: CommitEntry[];
+  branches: BranchEntry[];
+  head: string | null;
+  offset: number;
+  hasMore: boolean;
+  capturedAt: number;
+  shallow: boolean;
 }
 export interface BlameLine {
   oid: string | null;
