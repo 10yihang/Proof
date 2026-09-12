@@ -134,6 +134,218 @@ kbd {
 .muted {
   color: var(--muted);
 }
+.file-history-path {
+  font: 13px var(--font-mono, monospace);
+  overflow-wrap: anywhere;
+}
+.file-history-layout {
+  display: grid;
+  grid-template-columns: 235px minmax(0, 1fr);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-top: 16px;
+}
+.file-history-commits {
+  max-height: 540px;
+  overflow: auto;
+  border-right: 1px solid var(--border);
+  padding: 8px;
+}
+.file-history-current,
+.file-history-commit {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  gap: 5px;
+  padding: 10px;
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+}
+.file-history-commit > span {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--muted);
+}
+.file-history-commit strong {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.file-history-commit small {
+  color: var(--muted);
+}
+.file-history-current.active,
+.file-history-commit.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.file-history-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0;
+}
+.file-history-search input {
+  min-width: 0;
+  width: 100%;
+  font-size: 12px;
+}
+.file-blame {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.blame-header,
+.blame-footer {
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.blame-footer {
+  border-bottom: 0;
+  border-top: 1px solid var(--border);
+}
+.blame-scroll {
+  height: 400px;
+  overflow: auto;
+}
+.blame-row {
+  position: absolute;
+  inset: 0 auto auto 0;
+  height: 34px;
+  display: flex;
+  min-width: 100%;
+  align-items: center;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.blame-author {
+  position: sticky;
+  left: 0;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  width: 200px;
+  flex-shrink: 0;
+  padding: 0 8px;
+  height: 34px;
+  background: var(--surface);
+  z-index: 1;
+}
+.blame-author > span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.blame-author code {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.blame-row.uncommitted .blame-author {
+  background: var(--accent-soft);
+}
+.blame-number {
+  width: 48px;
+  flex-shrink: 0;
+  text-align: right;
+  padding: 0 12px 0 4px;
+  color: var(--muted);
+}
+.blame-source {
+  white-space: pre;
+  padding-right: 20px;
+}
+.historical-path {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+.historical-path input {
+  min-width: 100px;
+  flex: 1;
+}
+@media (max-width: 760px) {
+  .file-history-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .file-history-commits {
+    max-height: 160px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .blame-author {
+    width: 160px;
+  }
+}
+.button.danger {
+  color: var(--deletion, #bd3434);
+  border-color: currentColor;
+}
+.discard-scope {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+.recovery-list {
+  display: grid;
+  gap: 12px;
+  margin: 18px 0;
+}
+.recovery-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.recovery-item > div:first-child {
+  flex: 1;
+  min-width: 240px;
+  overflow-wrap: anywhere;
+}
+.recovery-item span,
+.recovery-item small {
+  display: block;
+  margin-top: 6px;
+}
+.recovery-actions,
+.modal-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.modal-footer {
+  justify-content: flex-end;
+  margin-top: 24px;
+}
+.recovery-content {
+  border-top: 1px solid var(--border);
+  margin-top: 20px;
+  padding-top: 8px;
+  overflow-wrap: anywhere;
+}
+.recovery-content details {
+  margin: 12px 0;
+}
+.recovery-content pre {
+  max-height: 360px;
+  overflow: auto;
+  padding: 12px;
+  background: var(--surface);
+  font: 12px/1.6 var(--font-mono, monospace);
+  white-space: pre;
+}
 .app {
   height: 100dvh;
   display: flex;

@@ -19,7 +19,15 @@ impl Store {
         }
         let connection = Connection::open(path.join("proof.sqlite3"))?;
         connection.busy_timeout(std::time::Duration::from_secs(3))?;
-        connection.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA secure_delete=ON;
+        let version: u32 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        if version > 2 {
+            return Err(Error::new(
+                "DATABASE_VERSION",
+                "本地数据由更新版本的 Proof 创建，请使用对应版本打开。",
+                version,
+            ));
+        }
+        connection.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA secure_delete=ON;
             CREATE TABLE IF NOT EXISTS repositories (id TEXT PRIMARY KEY, identity TEXT UNIQUE NOT NULL, path TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, identity TEXT UNIQUE NOT NULL, repository_id TEXT NOT NULL REFERENCES repositories(id),
                 name TEXT NOT NULL, path TEXT NOT NULL, git_dir TEXT NOT NULL, common_dir TEXT NOT NULL, trusted INTEGER NOT NULL DEFAULT 0, opened_at INTEGER NOT NULL);
@@ -31,7 +39,11 @@ impl Store {
                 unit_id TEXT NOT NULL, reviewed INTEGER NOT NULL, source TEXT NOT NULL, origin_unit_id TEXT, created_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, kind TEXT NOT NULL, result TEXT NOT NULL, created_at INTEGER NOT NULL);
-            PRAGMA user_version=1;")?;
+            CREATE TABLE IF NOT EXISTS recovery_points (id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL REFERENCES workspaces(id), point TEXT NOT NULL,
+                payload TEXT NOT NULL, expires_at INTEGER NOT NULL, reserved_bytes INTEGER NOT NULL,
+                before_data BLOB, after_data BLOB);
+            PRAGMA user_version=2;")?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -68,16 +80,25 @@ impl Store {
                 id
             }
         };
-        let previous: Option<(String, bool)> = tx
+        let previous: Option<(String, bool, String)> = tx
             .query_row(
-                "SELECT id,trusted FROM workspaces WHERE identity=?",
+                "SELECT id,trusted,repository_id FROM workspaces WHERE identity=?",
                 [identity],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()?;
-        if let Some((id, trusted)) = previous {
-            workspace.id = id;
-            workspace.trusted = trusted;
+        if let Some((id, trusted, repository_id)) = previous {
+            if repository_id == workspace.repository_id {
+                workspace.id = id;
+                workspace.trusted = trusted;
+            } else {
+                // Preserve the old worktree's audit/recovery ownership without
+                // transferring authority to a replacement common repository.
+                tx.execute(
+                    "UPDATE workspaces SET identity=?,trusted=0 WHERE id=?",
+                    params![format!("retired:{id}:{identity}"), id],
+                )?;
+            }
         }
         tx.execute("INSERT INTO workspaces VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
             name=excluded.name,path=excluded.path,git_dir=excluded.git_dir,common_dir=excluded.common_dir,opened_at=excluded.opened_at",
@@ -105,8 +126,26 @@ impl Store {
         Ok(rows)
     }
     pub fn workspace(&self, id: &str) -> Result<Workspace> {
-        self.connection.query_row("SELECT id,repository_id,name,path,git_dir,common_dir,trusted FROM workspaces WHERE id=?", [id], Self::read_workspace)
-            .optional()?.ok_or_else(|| Error::new("WORKSPACE_MISSING", "请重新打开仓库。", "Unknown workspace id"))
+        let workspace = self.connection.query_row("SELECT id,repository_id,name,path,git_dir,common_dir,trusted FROM workspaces WHERE id=?", [id], Self::read_workspace)
+            .optional()?.ok_or_else(|| Error::new("WORKSPACE_MISSING", "请重新打开仓库。", "Unknown workspace id"))?;
+        let git = crate::git::Git {
+            executable: self.preferences()?.git_path,
+        };
+        let (actual, repository_identity, identity) = git.discover(&workspace.path)?;
+        let matches: bool = self.connection.query_row("SELECT w.identity=? AND r.identity=? FROM workspaces w JOIN repositories r ON r.id=w.repository_id WHERE w.id=?",
+            params![identity, repository_identity, id], |row| row.get(0))?;
+        if !matches
+            || actual.path != workspace.path
+            || actual.git_dir != workspace.git_dir
+            || actual.common_dir != workspace.common_dir
+        {
+            return Err(Error::new(
+                "WORKSPACE_REPLACED",
+                "仓库或工作区身份已变化，请重新打开并确认信任。",
+                "Git directory identity no longer matches the registered workspace",
+            ));
+        }
+        Ok(workspace)
     }
     pub fn trust(&self, id: &str, trusted: bool) -> Result<()> {
         self.workspace(id)?;

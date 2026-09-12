@@ -1,8 +1,11 @@
 mod error;
 mod git;
+mod guarded_file;
+mod history;
 mod model;
 mod patch;
 mod process;
+mod recovery;
 mod service;
 mod store;
 

@@ -51,6 +51,226 @@ impl Fixture {
 fn baseline() -> String {
     (1..=35).map(|i| format!("line {i}\n")).collect()
 }
+
+#[test]
+fn discarded_hunk_and_restart_undo_preserve_other_hunk_and_index() {
+    let mut f = Fixture::new();
+    f.change();
+    let before = fs::read(f.repo.join("code.txt")).unwrap();
+    let index = fs::read(f.repo.join(".git/index")).unwrap();
+    let diff = f
+        .proof
+        .file_diff(&f.workspace.id, "code.txt", Side::Unstaged)
+        .unwrap();
+    assert!(diff.can_discard_hunks);
+    let preview = f
+        .proof
+        .discard_preview(&diff.id, Some(&diff.hunks[0].id))
+        .unwrap();
+    assert_eq!(fs::read(f.repo.join("code.txt")).unwrap(), before);
+    assert!(f.proof.discard(&preview.id).unwrap().result.ok);
+    assert_eq!(
+        fs::read_to_string(f.repo.join("code.txt")).unwrap(),
+        baseline().replace("line 25\n", "changed 25\n")
+    );
+    assert_eq!(fs::read(f.repo.join(".git/index")).unwrap(), index);
+    drop(f.proof);
+    let mut reopened = Proof::open(&f.data).unwrap();
+    assert_eq!(
+        reopened.recovery_points(&f.workspace.id).unwrap()[0].status,
+        "applied"
+    );
+    assert!(reopened.undo_discard(&preview.id).unwrap().result.ok);
+    assert_eq!(fs::read(f.repo.join("code.txt")).unwrap(), before);
+    assert_eq!(fs::read(f.repo.join(".git/index")).unwrap(), index);
+}
+
+#[test]
+fn discard_and_undo_reject_later_edits_and_deletions() {
+    let mut f = Fixture::new();
+    f.change();
+    let diff = f
+        .proof
+        .file_diff(&f.workspace.id, "code.txt", Side::Unstaged)
+        .unwrap();
+    let preview = f.proof.discard_preview(&diff.id, None).unwrap();
+    fs::write(f.repo.join("code.txt"), "external before discard\n").unwrap();
+    assert_eq!(
+        f.proof.discard(&preview.id).unwrap_err().code,
+        "STALE_CONTENT"
+    );
+    assert_eq!(
+        fs::read_to_string(f.repo.join("code.txt")).unwrap(),
+        "external before discard\n"
+    );
+    f.proof.cancel_discard_preview(&preview.id).unwrap();
+    let diff = f
+        .proof
+        .file_diff(&f.workspace.id, "code.txt", Side::Unstaged)
+        .unwrap();
+    let preview = f.proof.discard_preview(&diff.id, None).unwrap();
+    assert!(f.proof.discard(&preview.id).unwrap().result.ok);
+    fs::write(f.repo.join("code.txt"), "external after discard\n").unwrap();
+    assert_eq!(
+        f.proof.undo_discard(&preview.id).unwrap_err().code,
+        "STALE_CONTENT"
+    );
+    assert_eq!(
+        fs::read_to_string(f.repo.join("code.txt")).unwrap(),
+        "external after discard\n"
+    );
+    fs::remove_file(f.repo.join("code.txt")).unwrap();
+    assert_eq!(
+        f.proof.undo_discard(&preview.id).unwrap_err().code,
+        "RECOVERY_MISSING_PATH"
+    );
+    assert!(!f.repo.join("code.txt").exists());
+}
+
+#[test]
+fn recovery_storage_failure_and_full_quota_leave_source_untouched() {
+    let mut f = Fixture::new();
+    f.change();
+    let before = fs::read(f.repo.join("code.txt")).unwrap();
+    let diff = f
+        .proof
+        .file_diff(&f.workspace.id, "code.txt", Side::Unstaged)
+        .unwrap();
+    let connection = rusqlite::Connection::open(f.data.join("proof.sqlite3")).unwrap();
+    connection.execute_batch("CREATE TRIGGER deny_recovery BEFORE INSERT ON recovery_points BEGIN SELECT RAISE(ABORT, 'disk full simulation'); END;").unwrap();
+    assert_eq!(
+        f.proof.discard_preview(&diff.id, None).unwrap_err().code,
+        "STORAGE_ERROR"
+    );
+    assert_eq!(fs::read(f.repo.join("code.txt")).unwrap(), before);
+    connection
+        .execute_batch("DROP TRIGGER deny_recovery;")
+        .unwrap();
+    let preview = f.proof.discard_preview(&diff.id, None).unwrap();
+    connection
+        .execute(
+            "UPDATE recovery_points SET reserved_bytes=?",
+            [256 * 1024 * 1024],
+        )
+        .unwrap();
+    assert_eq!(
+        f.proof.discard_preview(&diff.id, None).unwrap_err().code,
+        "RECOVERY_FULL"
+    );
+    assert_eq!(fs::read(f.repo.join("code.txt")).unwrap(), before);
+    f.proof.cancel_discard_preview(&preview.id).unwrap();
+    assert!(f.proof.recovery_points(&f.workspace.id).unwrap().is_empty());
+}
+
+#[test]
+fn file_discard_targets_index_including_staged_edits() {
+    let mut f = Fixture::new();
+    let staged = baseline().replace("line 3\n", "staged 3\n");
+    fs::write(f.repo.join("code.txt"), &staged).unwrap();
+    git(&f.repo, &["add", "code.txt"]);
+    let working = staged.replace("line 25\n", "unstaged 25\n");
+    fs::write(f.repo.join("code.txt"), &working).unwrap();
+    let diff = f
+        .proof
+        .file_diff(&f.workspace.id, "code.txt", Side::Unstaged)
+        .unwrap();
+    let preview = f.proof.discard_preview(&diff.id, None).unwrap();
+    assert!(f.proof.discard(&preview.id).unwrap().result.ok);
+    assert_eq!(fs::read_to_string(f.repo.join("code.txt")).unwrap(), staged);
+    assert_eq!(git(&f.repo, &["show", ":code.txt"]), staged);
+    assert!(f.proof.undo_discard(&preview.id).unwrap().result.ok);
+    assert_eq!(
+        fs::read_to_string(f.repo.join("code.txt")).unwrap(),
+        working
+    );
+}
+
+#[test]
+fn tracked_deletion_can_be_recovered_and_undone_without_touching_index() {
+    let mut f = Fixture::new();
+    fs::remove_file(f.repo.join("code.txt")).unwrap();
+    let diff = f
+        .proof
+        .file_diff(&f.workspace.id, "code.txt", Side::Unstaged)
+        .unwrap();
+    let preview = f.proof.discard_preview(&diff.id, None).unwrap();
+    assert!(f.proof.discard(&preview.id).unwrap().result.ok);
+    assert_eq!(
+        fs::read_to_string(f.repo.join("code.txt")).unwrap(),
+        baseline()
+    );
+    assert!(f.proof.undo_discard(&preview.id).unwrap().result.ok);
+    assert!(!f.repo.join("code.txt").exists());
+    assert_eq!(git(&f.repo, &["show", ":code.txt"]), baseline());
+}
+
+#[test]
+fn discard_handles_crlf_and_no_final_newline() {
+    for (ending, autocrlf, final_newline) in [
+        ("\r\n", "true", true),
+        ("\n", "false", false),
+        ("\r\n", "false", false),
+    ] {
+        let mut f = Fixture::new();
+        git(&f.repo, &["config", "core.autocrlf", autocrlf]);
+        let base = if final_newline {
+            baseline()
+        } else {
+            baseline().trim_end_matches('\n').to_string()
+        }
+        .replace('\n', ending);
+        fs::write(f.repo.join("code.txt"), &base).unwrap();
+        git(&f.repo, &["add", "code.txt"]);
+        let changed = base
+            .replace(&format!("line 3{ending}"), &format!("changed 3{ending}"))
+            .replace("line 35", "changed 35");
+        fs::write(f.repo.join("code.txt"), &changed).unwrap();
+        let diff = f
+            .proof
+            .file_diff(&f.workspace.id, "code.txt", Side::Unstaged)
+            .unwrap();
+        let preview = f
+            .proof
+            .discard_preview(&diff.id, Some(&diff.hunks.last().unwrap().id))
+            .unwrap();
+        assert!(f.proof.discard(&preview.id).unwrap().result.ok);
+        assert_eq!(
+            fs::read_to_string(f.repo.join("code.txt")).unwrap(),
+            base.replace(&format!("line 3{ending}"), &format!("changed 3{ending}"))
+        );
+        assert!(f.proof.undo_discard(&preview.id).unwrap().result.ok);
+        assert_eq!(
+            fs::read_to_string(f.repo.join("code.txt")).unwrap(),
+            changed
+        );
+    }
+}
+
+#[test]
+fn discard_refuses_hardlinks_untracked_files_and_unknown_database_versions() {
+    let mut f = Fixture::new();
+    f.change();
+    fs::hard_link(f.repo.join("code.txt"), f.repo.join("other-link")).unwrap();
+    let diff = f
+        .proof
+        .file_diff(&f.workspace.id, "code.txt", Side::Unstaged)
+        .unwrap();
+    assert_eq!(
+        f.proof.discard_preview(&diff.id, None).unwrap_err().code,
+        "UNSUPPORTED_RECOVERY_FILE"
+    );
+    let diff = f
+        .proof
+        .file_diff(&f.workspace.id, "other-link", Side::Unstaged)
+        .unwrap();
+    assert!(!diff.can_discard);
+    drop(f.proof);
+    rusqlite::Connection::open(f.data.join("proof.sqlite3"))
+        .unwrap()
+        .execute_batch("PRAGMA user_version=99")
+        .unwrap();
+    assert!(matches!(Proof::open(&f.data), Err(error) if error.code == "DATABASE_VERSION"));
+}
 fn git(repo: &PathBuf, args: &[&str]) -> String {
     let output = Command::new("git")
         .arg("-C")
@@ -661,5 +881,738 @@ fn stage_and_unstage_preserve_split_index_linked_worktree_semantics() {
         assert!(f.proof.stage(&diff.id, None).unwrap().ok);
         assert_eq!(git(&repo, &["show", ":code.txt"]), baseline());
         assert!(!PathBuf::from(w.git_dir).join("index.lock").exists());
+    }
+}
+
+#[test]
+fn standards_undoing_record_remains_recoverable_after_restart() {
+    let mut f = Fixture::new();
+    f.change();
+    let before = fs::read(f.repo.join("code.txt")).unwrap();
+    let diff = f
+        .proof
+        .file_diff(&f.workspace.id, "code.txt", Side::Unstaged)
+        .unwrap();
+    let point = f.proof.discard_preview(&diff.id, None).unwrap();
+    assert!(f.proof.discard(&point.id).unwrap().result.ok);
+    // The exact durable state immediately after perform_recovery saves
+    // "undoing", before any filesystem move starts.
+    let connection = rusqlite::Connection::open(f.data.join("proof.sqlite3")).unwrap();
+    let (payload, point_json): (String, String) = connection
+        .query_row(
+            "SELECT payload,point FROM recovery_points WHERE id=?",
+            [&point.id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    let mut payload: serde_json::Value = serde_json::from_str(&payload).unwrap();
+    let mut point_json: serde_json::Value = serde_json::from_str(&point_json).unwrap();
+    payload["point"]["status"] = "undoing".into();
+    point_json["status"] = "undoing".into();
+    connection
+        .execute(
+            "UPDATE recovery_points SET payload=?,point=? WHERE id=?",
+            rusqlite::params![payload.to_string(), point_json.to_string(), point.id],
+        )
+        .unwrap();
+    drop(connection);
+    drop(f.proof);
+    let mut reopened = Proof::open(&f.data).unwrap();
+    let action = reopened.undo_discard(&point.id);
+    assert!(
+        action.is_ok(),
+        "persisted undoing state is stranded: {action:?}"
+    );
+    assert_eq!(fs::read(f.repo.join("code.txt")).unwrap(), before);
+}
+
+#[test]
+fn standards_recovery_quota_is_atomic_across_workspaces() {
+    let mut f = Fixture::new();
+    let other = f._temp.path().join("other-repository");
+    git(
+        &f.repo,
+        &[
+            "clone",
+            "--no-hardlinks",
+            f.repo.to_str().unwrap(),
+            other.to_str().unwrap(),
+        ],
+    );
+    let w2 = f.proof.open_workspace(other.to_str().unwrap()).unwrap();
+    f.proof.set_trust(&w2.id, true).unwrap();
+    f.change();
+    fs::write(
+        other.join("code.txt"),
+        baseline().replace("line 3\n", "other change\n"),
+    )
+    .unwrap();
+    let diff = f
+        .proof
+        .file_diff(&f.workspace.id, "code.txt", Side::Unstaged)
+        .unwrap();
+    let point = f.proof.discard_preview(&diff.id, None).unwrap();
+    const CAPACITY: u64 = 256 * 1024 * 1024;
+    let connection = rusqlite::Connection::open(f.data.join("proof.sqlite3")).unwrap();
+    connection
+        .execute(
+            "UPDATE recovery_points SET reserved_bytes=? WHERE id=?",
+            rusqlite::params![CAPACITY - 12000, point.id],
+        )
+        .unwrap();
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let handles: Vec<_> = [f.workspace.id.clone(), w2.id]
+        .into_iter()
+        .map(|id| {
+            let data = f.data.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                let mut proof = Proof::open(data).unwrap();
+                let diff = proof.file_diff(&id, "code.txt", Side::Unstaged).unwrap();
+                barrier.wait();
+                proof.discard_preview(&diff.id, None)
+            })
+        })
+        .collect();
+    let outcomes: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+    let reserved: u64 = connection
+        .query_row("SELECT SUM(reserved_bytes) FROM recovery_points", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert!(
+        reserved <= CAPACITY,
+        "quota exceeded by {} bytes; outcomes: {outcomes:?}",
+        reserved - CAPACITY
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn standards_growing_captured_inode_does_not_hide_durable_recovery_bytes() {
+    let mut f = Fixture::new();
+    f.change();
+    let writer = fs::OpenOptions::new()
+        .write(true)
+        .open(f.repo.join("code.txt"))
+        .unwrap();
+    let diff = f
+        .proof
+        .file_diff(&f.workspace.id, "code.txt", Side::Unstaged)
+        .unwrap();
+    let point = f.proof.discard_preview(&diff.id, None).unwrap();
+    assert!(f.proof.discard(&point.id).unwrap().result.ok);
+    // An editor that kept the original FD now grows the captured inode.
+    writer.set_len(33 * 1024 * 1024).unwrap();
+    let content = f.proof.recovery_content(&point.id);
+    assert!(
+        content.is_ok(),
+        "immutable before/after bytes are hidden by a changed captured inode: {content:?}"
+    );
+    let content = content.unwrap();
+    assert!(content["capturedWarning"].is_string());
+    assert!(content["before"].as_str().unwrap().contains("changed 3"));
+    writer.set_len(257 * 1024 * 1024).unwrap();
+    f.change();
+    let diff = f
+        .proof
+        .file_diff(&f.workspace.id, "code.txt", Side::Unstaged)
+        .unwrap();
+    assert_eq!(
+        f.proof.discard_preview(&diff.id, None).unwrap_err().code,
+        "RECOVERY_FULL"
+    );
+}
+
+fn set_recovery_state(data: &std::path::Path, id: &str, state: &str) {
+    let connection = rusqlite::Connection::open(data.join("proof.sqlite3")).unwrap();
+    let payload: String = connection
+        .query_row(
+            "SELECT payload FROM recovery_points WHERE id=?",
+            [id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let mut value: serde_json::Value = serde_json::from_str(&payload).unwrap();
+    value["point"]["status"] = state.into();
+    connection
+        .execute(
+            "UPDATE recovery_points SET point=?,payload=? WHERE id=?",
+            rusqlite::params![value["point"].to_string(), value.to_string(), id],
+        )
+        .unwrap();
+}
+
+#[test]
+fn recovery_resumes_each_durable_filesystem_boundary_after_restart() {
+    for boundary in [
+        "before-capture",
+        "after-capture",
+        "after-install",
+        "undo-before-capture",
+        "undo-after-capture",
+        "undo-after-install",
+        "failed-capture",
+    ] {
+        let mut f = Fixture::new();
+        f.change();
+        let before = fs::read(f.repo.join("code.txt")).unwrap();
+        let diff = f
+            .proof
+            .file_diff(&f.workspace.id, "code.txt", Side::Unstaged)
+            .unwrap();
+        let point = f.proof.discard_preview(&diff.id, None).unwrap();
+        let directory = f.data.join("recovery").join(&point.id);
+        match boundary {
+            "before-capture" => set_recovery_state(&f.data, &point.id, "applying"),
+            "after-capture" | "failed-capture" => {
+                fs::rename(f.repo.join("code.txt"), directory.join("original")).unwrap();
+                set_recovery_state(
+                    &f.data,
+                    &point.id,
+                    if boundary == "failed-capture" {
+                        "conflict"
+                    } else {
+                        "applying"
+                    },
+                );
+            }
+            _ => {
+                assert!(f.proof.discard(&point.id).unwrap().result.ok);
+                if boundary == "undo-after-capture" {
+                    fs::rename(f.repo.join("code.txt"), directory.join("discarded-version"))
+                        .unwrap();
+                }
+                if boundary == "undo-after-install" {
+                    assert!(f.proof.undo_discard(&point.id).unwrap().result.ok);
+                }
+                set_recovery_state(
+                    &f.data,
+                    &point.id,
+                    if boundary == "after-install" {
+                        "applying"
+                    } else {
+                        "undoing"
+                    },
+                );
+            }
+        }
+        drop(f.proof);
+        let mut reopened = Proof::open(&f.data).unwrap();
+        let mut result = reopened.undo_discard(&point.id);
+        if ["after-capture", "undo-after-capture", "failed-capture"].contains(&boundary) {
+            assert_eq!(result.unwrap_err().code, "RECOVERY_MISSING_PATH");
+            assert!(!f.repo.join("code.txt").exists());
+            result = reopened.restore_missing_recovery(&point.id);
+        }
+        assert!(
+            result.as_ref().is_ok_and(|r| r.result.ok),
+            "boundary {boundary}: {result:?}"
+        );
+        assert_eq!(
+            fs::read(f.repo.join("code.txt")).unwrap(),
+            before,
+            "boundary {boundary}"
+        );
+        assert_eq!(git(&f.repo, &["show", ":code.txt"]), baseline());
+    }
+}
+
+#[test]
+fn expired_recovery_releases_saved_bytes_and_never_changes_source() {
+    let mut f = Fixture::new();
+    f.change();
+    let diff = f
+        .proof
+        .file_diff(&f.workspace.id, "code.txt", Side::Unstaged)
+        .unwrap();
+    let point = f.proof.discard_preview(&diff.id, None).unwrap();
+    assert!(f.proof.discard(&point.id).unwrap().result.ok);
+    let connection = rusqlite::Connection::open(f.data.join("proof.sqlite3")).unwrap();
+    connection
+        .execute(
+            "UPDATE recovery_points SET expires_at=0 WHERE id=?",
+            [&point.id],
+        )
+        .unwrap();
+    assert!(f.proof.recovery_content(&point.id).is_err());
+    assert!(f.proof.recovery_points(&f.workspace.id).unwrap().is_empty());
+    assert!(!f.data.join("recovery").join(point.id).exists());
+    assert_eq!(
+        fs::read_to_string(f.repo.join("code.txt")).unwrap(),
+        baseline()
+    );
+}
+
+#[test]
+fn file_discard_uses_smudge_filter_but_inexact_hunk_transform_is_rejected() {
+    let mut f = Fixture::new();
+    fs::write(f.repo.join(".gitattributes"), "code.txt filter=wrapped\n").unwrap();
+    git(
+        &f.repo,
+        &["config", "filter.wrapped.clean", "sed 's/^WORK://'"],
+    );
+    git(
+        &f.repo,
+        &["config", "filter.wrapped.smudge", "sed 's/^/WORK:/'"],
+    );
+    let working = baseline()
+        .replace("line 3\n", "changed 3\n")
+        .lines()
+        .map(|l| format!("WORK:{l}\n"))
+        .collect::<String>();
+    fs::write(f.repo.join("code.txt"), &working).unwrap();
+    let diff = f
+        .proof
+        .file_diff(&f.workspace.id, "code.txt", Side::Unstaged)
+        .unwrap();
+    assert!(f
+        .proof
+        .discard_preview(&diff.id, Some(&diff.hunks[0].id))
+        .is_err());
+    assert_eq!(
+        fs::read_to_string(f.repo.join("code.txt")).unwrap(),
+        working
+    );
+    let point = f.proof.discard_preview(&diff.id, None).unwrap();
+    assert!(f.proof.discard(&point.id).unwrap().result.ok);
+    let expected = baseline()
+        .lines()
+        .map(|l| format!("WORK:{l}\n"))
+        .collect::<String>();
+    assert_eq!(
+        fs::read_to_string(f.repo.join("code.txt")).unwrap(),
+        expected
+    );
+    assert!(f.proof.undo_discard(&point.id).unwrap().result.ok);
+    assert_eq!(
+        fs::read_to_string(f.repo.join("code.txt")).unwrap(),
+        working
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn external_deletion_after_discard_requires_separate_recreate_consent() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut f = Fixture::new();
+    f.change();
+    let before = fs::read(f.repo.join("code.txt")).unwrap();
+    let diff = f
+        .proof
+        .file_diff(&f.workspace.id, "code.txt", Side::Unstaged)
+        .unwrap();
+    let point = f.proof.discard_preview(&diff.id, None).unwrap();
+    let original = f.data.join("recovery").join(&point.id).join("original");
+    let marker = f._temp.path().join("removed-after-install");
+    let wrapper = f._temp.path().join("git-wrapper");
+    let script=format!("#!/bin/sh\nif [ -e '{}' ] && [ ! -e '{}' ]; then\n  /bin/rm '{}'\n  /usr/bin/touch '{}'\nfi\nexec /usr/bin/git \"$@\"\n",original.display(),marker.display(),f.repo.join("code.txt").display(),marker.display());
+    fs::write(&wrapper, script).unwrap();
+    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o700)).unwrap();
+    let mut prefs = f.proof.preferences().unwrap();
+    prefs.git_path = wrapper.to_str().unwrap().into();
+    f.proof.set_preferences(prefs).unwrap();
+    let result = f.proof.discard(&point.id).unwrap();
+    println!("discard after external deletion: {:?}", result);
+    assert_eq!(result.point.status, "conflict");
+    assert!(!result.result.ok);
+    assert!(marker.exists());
+    assert!(!f.repo.join("code.txt").exists());
+    let result = f.proof.undo_discard(&point.id);
+    println!("undo after external deletion: {:?}", result);
+    assert_eq!(result.unwrap_err().code, "RECOVERY_MISSING_PATH");
+    assert!(!f.repo.join("code.txt").exists());
+    assert!(
+        f.proof
+            .restore_missing_recovery(&point.id)
+            .unwrap()
+            .result
+            .ok
+    );
+    assert_eq!(fs::read(f.repo.join("code.txt")).unwrap(), before);
+}
+
+#[test]
+fn blame_separates_uncommitted_lines_and_selected_commit() {
+    let f = Fixture::new();
+    let oid = git(&f.repo, &["rev-parse", "HEAD"]).trim().to_string();
+    f.change();
+    let current = f
+        .proof
+        .file_blame(&f.workspace.id, "code.txt", None, 0)
+        .unwrap();
+    assert_eq!(current.total_lines, 35);
+    assert_eq!(current.lines.iter().filter(|l| l.uncommitted).count(), 2);
+    assert!(current.lines[2].author.is_none());
+    assert!(current.lines[2].oid.is_none());
+    assert_eq!(current.lines[2].summary, "未提交变化");
+    assert_eq!(current.lines[0].oid.as_deref(), Some(oid.as_str()));
+    let historical = f
+        .proof
+        .file_blame(&f.workspace.id, "code.txt", Some(&oid), 0)
+        .unwrap();
+    assert_eq!(historical.revision.as_deref(), Some(oid.as_str()));
+    assert!(historical.lines.iter().all(|l| !l.uncommitted));
+    assert_eq!(historical.lines[2].content, "line 3");
+    assert_eq!(historical.lines[2].author.as_deref(), Some("Proof Test"));
+    assert!(f
+        .proof
+        .file_blame(&f.workspace.id, "code.txt", Some("--help"), 0)
+        .is_err());
+}
+
+#[test]
+fn blame_paginates_and_untracked_files_have_no_fabricated_author() {
+    let f = Fixture::new();
+    let text: String = (1..=923).map(|n| format!("new {n}\n")).collect();
+    fs::write(f.repo.join("new.txt"), &text).unwrap();
+    for (offset, count, more) in [(0, 400, true), (400, 400, true), (800, 123, false)] {
+        let page = f
+            .proof
+            .file_blame(&f.workspace.id, "new.txt", None, offset)
+            .unwrap();
+        assert_eq!(page.lines.len(), count);
+        assert_eq!(page.has_more, more);
+        assert!(page
+            .lines
+            .iter()
+            .all(|l| l.uncommitted && l.author.is_none()));
+        assert_eq!(page.lines[0].line, offset as u32 + 1);
+    }
+    git(&f.repo, &["add", "new.txt"]);
+    let staged = f
+        .proof
+        .file_blame(&f.workspace.id, "new.txt", None, 400)
+        .unwrap();
+    assert!(staged.lines.iter().all(|l| l.uncommitted));
+    git(&f.repo, &["commit", "-m", "Add many lines"]);
+    let page = f
+        .proof
+        .file_blame(&f.workspace.id, "new.txt", None, 800)
+        .unwrap();
+    assert_eq!(page.lines[0].line, 801);
+    assert!(!page.lines[0].uncommitted);
+    assert_eq!(page.lines.last().unwrap().content, "new 923");
+}
+
+#[test]
+fn file_history_follows_rename_and_blame_preserves_literal_origin_path() {
+    let f = Fixture::new();
+    let old_path = "-旧 文件\nname.txt";
+    fs::write(f.repo.join(old_path), "原来的第一行\nsecond line\n").unwrap();
+    git(&f.repo, &["add", "--", old_path]);
+    git(&f.repo, &["commit", "-m", "Original filename"]);
+    let old_oid = git(&f.repo, &["rev-parse", "HEAD"]).trim().to_string();
+    git(&f.repo, &["mv", "--", old_path, "new-name.txt"]);
+    git(&f.repo, &["commit", "-m", "Rename"]);
+    let history = f
+        .proof
+        .history(&f.workspace.id, 0, Some("new-name.txt"))
+        .unwrap();
+    assert_eq!(history.len(), 2);
+    assert_eq!(history[1].oid, old_oid);
+    let current = f
+        .proof
+        .file_blame(&f.workspace.id, "new-name.txt", None, 0)
+        .unwrap();
+    assert_eq!(current.lines[0].origin_path, old_path);
+    assert_eq!(current.lines[0].oid.as_deref(), Some(old_oid.as_str()));
+    assert!(f
+        .proof
+        .file_blame(&f.workspace.id, "new-name.txt", Some(&old_oid), 0)
+        .is_err());
+    let original = f
+        .proof
+        .file_blame(&f.workspace.id, old_path, Some(&old_oid), 0)
+        .unwrap();
+    assert_eq!(original.lines[0].content, "原来的第一行");
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn discard_and_interrupted_restore_preserve_extended_attributes() {
+    let mut f = Fixture::new();
+    f.change();
+    let source = f.repo.join("code.txt");
+    let attribute = "com.proof.test";
+    let set = Command::new("/usr/bin/xattr")
+        .args(["-w", attribute, "retained-metadata"])
+        .arg(&source)
+        .output()
+        .unwrap();
+    assert!(set.status.success());
+    let diff = f
+        .proof
+        .file_diff(&f.workspace.id, "code.txt", Side::Unstaged)
+        .unwrap();
+    let point = f.proof.discard_preview(&diff.id, None).unwrap();
+    assert!(f.proof.discard(&point.id).unwrap().result.ok);
+    let read_attribute = || {
+        let output = Command::new("/usr/bin/xattr")
+            .args(["-p", attribute])
+            .arg(&source)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap().trim(),
+            "retained-metadata"
+        );
+    };
+    read_attribute();
+    fs::rename(
+        &source,
+        f.data
+            .join("recovery")
+            .join(&point.id)
+            .join("discarded-version"),
+    )
+    .unwrap();
+    set_recovery_state(&f.data, &point.id, "undoing");
+    assert_eq!(
+        f.proof.undo_discard(&point.id).unwrap_err().code,
+        "RECOVERY_MISSING_PATH"
+    );
+    assert!(
+        f.proof
+            .restore_missing_recovery(&point.id)
+            .unwrap()
+            .result
+            .ok
+    );
+    read_attribute();
+}
+
+#[test]
+fn review_cancel_can_retry_after_metadata_delete_fails() {
+    let mut f = Fixture::new();
+    f.change();
+    let diff = f
+        .proof
+        .file_diff(&f.workspace.id, "code.txt", Side::Unstaged)
+        .unwrap();
+    let point = f.proof.discard_preview(&diff.id, None).unwrap();
+    let connection = rusqlite::Connection::open(f.data.join("proof.sqlite3")).unwrap();
+    connection.execute_batch("CREATE TRIGGER fail_delete BEFORE DELETE ON recovery_points BEGIN SELECT RAISE(ABORT, 'injected storage error'); END;").unwrap();
+    assert!(f.proof.cancel_discard_preview(&point.id).is_err());
+    connection
+        .execute_batch("DROP TRIGGER fail_delete;")
+        .unwrap();
+    let retry = f.proof.cancel_discard_preview(&point.id);
+    assert!(
+        retry.is_ok(),
+        "retry cannot release a prepared point after transient metadata failure: {retry:?}"
+    );
+    assert!(f.proof.recovery_points(&f.workspace.id).unwrap().is_empty());
+}
+
+#[test]
+fn blame_does_not_present_clean_filter_output_as_worktree_text() {
+    let f = Fixture::new();
+    fs::write(f.repo.join(".gitattributes"), "code.txt filter=upper\n").unwrap();
+    git(&f.repo, &["config", "filter.upper.clean", "tr a-z A-Z"]);
+    fs::write(f.repo.join("code.txt"), "lower case\n").unwrap();
+    assert_eq!(
+        f.proof
+            .file_blame(&f.workspace.id, "code.txt", None, 0)
+            .unwrap_err()
+            .code,
+        "BLAME_TRANSFORM"
+    );
+    assert_eq!(
+        fs::read_to_string(f.repo.join("code.txt")).unwrap(),
+        "lower case\n"
+    );
+    let oid = git(&f.repo, &["rev-parse", "HEAD"]).trim().to_string();
+    let committed = f
+        .proof
+        .file_blame(&f.workspace.id, "code.txt", Some(&oid), 0)
+        .unwrap();
+    assert_eq!(committed.lines[0].content, "line 1");
+}
+
+#[test]
+fn replaced_git_directory_invalidates_workspace_authority() {
+    let mut f = Fixture::new();
+    f.change();
+    let diff = f
+        .proof
+        .file_diff(&f.workspace.id, "code.txt", Side::Unstaged)
+        .unwrap();
+    let point = f.proof.discard_preview(&diff.id, None).unwrap();
+    fs::rename(f.repo.join(".git"), f.repo.join(".git-previous")).unwrap();
+    git(&f.repo, &["init", "-b", "main"]);
+    assert_eq!(
+        f.proof.changes(&f.workspace.id).unwrap_err().code,
+        "WORKSPACE_REPLACED"
+    );
+    assert_eq!(
+        f.proof.discard(&point.id).unwrap_err().code,
+        "WORKSPACE_REPLACED"
+    );
+    assert_eq!(
+        f.proof.stage(&diff.id, None).unwrap_err().code,
+        "WORKSPACE_REPLACED"
+    );
+    let reopened = f.proof.open_workspace(f.repo.to_str().unwrap()).unwrap();
+    assert_ne!(f.workspace.id, reopened.id);
+    assert!(!reopened.trusted);
+    assert!(fs::read_to_string(f.repo.join("code.txt"))
+        .unwrap()
+        .contains("changed 3"));
+}
+
+#[test]
+fn final_review_existing_recovery_context_remains_usable() {
+    use sha2::{Digest, Sha256};
+    let mut f = Fixture::new();
+    f.change();
+    let diff = f
+        .proof
+        .file_diff(&f.workspace.id, "code.txt", Side::Unstaged)
+        .unwrap();
+    let point = f.proof.discard_preview(&diff.id, None).unwrap();
+    assert!(f.proof.discard(&point.id).unwrap().result.ok);
+    // Persist exactly the context fingerprint produced by the preceding v2
+    // build: workspace UUID, HEAD, branch and index. No repository data changes.
+    let head = git(&f.repo, &["rev-parse", "HEAD"]).trim().to_string();
+    let branch = git(&f.repo, &["branch", "--show-current"])
+        .trim()
+        .to_string();
+    let index = fs::read(f.repo.join(".git/index")).unwrap();
+    let mut digest = Sha256::new();
+    for bytes in [
+        f.workspace.id.as_bytes(),
+        head.as_bytes(),
+        branch.as_bytes(),
+        &index,
+    ] {
+        digest.update((bytes.len() as u64).to_le_bytes());
+        digest.update(bytes);
+    }
+    let legacy_context = format!("{:x}", digest.finalize());
+    let connection = rusqlite::Connection::open(f.data.join("proof.sqlite3")).unwrap();
+    let payload: String = connection
+        .query_row(
+            "SELECT payload FROM recovery_points WHERE id=?",
+            [&point.id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let mut payload: serde_json::Value = serde_json::from_str(&payload).unwrap();
+    payload["context"] = legacy_context.into();
+    payload.as_object_mut().unwrap().remove("schema_version");
+    connection
+        .execute(
+            "UPDATE recovery_points SET payload=? WHERE id=?",
+            rusqlite::params![payload.to_string(), point.id],
+        )
+        .unwrap();
+    drop(connection);
+    drop(f.proof);
+    let mut proof = Proof::open(&f.data).unwrap();
+    let action = proof.undo_discard(&point.id);
+    assert!(
+        action.as_ref().is_ok_and(|a| a.result.ok),
+        "unchanged v2 recovery point becomes unusable: {action:?}"
+    );
+}
+
+#[test]
+fn final_review_reopen_linked_worktree_after_common_directory_replacement() {
+    let mut f = Fixture::new();
+    let linked = f._temp.path().join("linked");
+    git(
+        &f.repo,
+        &["worktree", "add", "-b", "linked", linked.to_str().unwrap()],
+    );
+    let before = f.proof.open_workspace(linked.to_str().unwrap()).unwrap();
+    f.proof.set_trust(&before.id, true).unwrap();
+    // Replace only the common git directory inode while preserving the linked
+    // worktree's own git directory inode and all Git data.
+    let previous = f.repo.join(".git.previous");
+    fs::rename(f.repo.join(".git"), &previous).unwrap();
+    fs::create_dir(f.repo.join(".git")).unwrap();
+    for entry in fs::read_dir(previous).unwrap() {
+        let entry = entry.unwrap();
+        fs::rename(entry.path(), f.repo.join(".git").join(entry.file_name())).unwrap();
+    }
+    assert_eq!(
+        f.proof.changes(&before.id).unwrap_err().code,
+        "WORKSPACE_REPLACED"
+    );
+    let reopened = f.proof.open_workspace(linked.to_str().unwrap()).unwrap();
+    let current = f.proof.changes(&reopened.id);
+    assert!(!reopened.trusted && current.is_ok(), "reopen does not reset authority or resolve the identity mismatch: workspace={reopened:?}, changes={current:?}");
+}
+
+#[test]
+fn legacy_prepared_recovery_migrates_only_when_original_base_matches() {
+    use sha2::{Digest, Sha256};
+    for change_base in [false, true] {
+        let mut f = Fixture::new();
+        f.change();
+        let diff = f
+            .proof
+            .file_diff(&f.workspace.id, "code.txt", Side::Unstaged)
+            .unwrap();
+        let point = f.proof.discard_preview(&diff.id, None).unwrap();
+        let hash = |parts: &[&[u8]]| {
+            let mut digest = Sha256::new();
+            for bytes in parts {
+                digest.update((bytes.len() as u64).to_le_bytes());
+                digest.update(bytes);
+            }
+            format!("{:x}", digest.finalize())
+        };
+        let head = git(&f.repo, &["rev-parse", "HEAD"]).trim().to_string();
+        let index = fs::read(f.repo.join(".git/index")).unwrap();
+        let before = fs::read(f.repo.join("code.txt")).unwrap();
+        let mut worktree = format!(
+            "{:?}:",
+            fs::metadata(f.repo.join("code.txt")).unwrap().permissions()
+        )
+        .into_bytes();
+        worktree.extend_from_slice(&before);
+        let context = hash(&[f.workspace.id.as_bytes(), head.as_bytes(), b"main", &index]);
+        let guard = hash(&[
+            f.workspace.id.as_bytes(),
+            head.as_bytes(),
+            b"main",
+            &index,
+            &worktree,
+            &[],
+        ]);
+        let db = rusqlite::Connection::open(f.data.join("proof.sqlite3")).unwrap();
+        let payload: String = db
+            .query_row(
+                "SELECT payload FROM recovery_points WHERE id=?",
+                [&point.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let mut payload: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        payload.as_object_mut().unwrap().remove("schema_version");
+        payload["context"] = context.into();
+        payload["guard"] = guard.into();
+        db.execute(
+            "UPDATE recovery_points SET payload=? WHERE id=?",
+            rusqlite::params![payload.to_string(), point.id],
+        )
+        .unwrap();
+        if change_base {
+            git(&f.repo, &["add", "code.txt"]);
+        }
+        let result = f.proof.discard(&point.id);
+        if change_base {
+            assert_eq!(result.unwrap_err().code, "STALE_CONTENT");
+            assert_eq!(fs::read(f.repo.join("code.txt")).unwrap(), before);
+        } else {
+            assert!(result.unwrap().result.ok);
+            assert_eq!(
+                fs::read_to_string(f.repo.join("code.txt")).unwrap(),
+                baseline()
+            );
+        }
     }
 }

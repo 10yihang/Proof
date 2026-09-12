@@ -201,6 +201,7 @@ impl Git {
         path: &str,
         old_path: Option<&str>,
     ) -> Result<String> {
+        let (_, repository_identity, workspace_identity) = self.discover(&workspace.path)?;
         let head = self.head(workspace)?.unwrap_or_default();
         let branch = self.branch(workspace)?.unwrap_or_default();
         let index = self.index_bytes(workspace)?;
@@ -211,12 +212,52 @@ impl Git {
             .unwrap_or_default();
         Ok(fingerprint(&[
             workspace.id.as_bytes(),
+            repository_identity.as_bytes(),
+            workspace_identity.as_bytes(),
             head.as_bytes(),
             branch.as_bytes(),
             &index,
             &content,
             &old,
         ]))
+    }
+
+    pub fn context_guard(&self, workspace: &Workspace) -> Result<String> {
+        let (_, repository_identity, workspace_identity) = self.discover(&workspace.path)?;
+        Ok(fingerprint(&[
+            workspace.id.as_bytes(),
+            repository_identity.as_bytes(),
+            workspace_identity.as_bytes(),
+            self.head(workspace)?.unwrap_or_default().as_bytes(),
+            self.branch(workspace)?.unwrap_or_default().as_bytes(),
+            &self.index_bytes(workspace)?,
+        ]))
+    }
+
+    // Compatibility for recovery payload format 0. Callers first validate the
+    // registered physical repository identity before accepting this older hash.
+    pub fn legacy_recovery_context(&self, workspace: &Workspace) -> Result<String> {
+        Ok(fingerprint(&[
+            workspace.id.as_bytes(),
+            self.head(workspace)?.unwrap_or_default().as_bytes(),
+            self.branch(workspace)?.unwrap_or_default().as_bytes(),
+            &self.index_bytes(workspace)?,
+        ]))
+    }
+    pub fn legacy_recovery_guard(&self, workspace: &Workspace, path: &str) -> Result<String> {
+        Ok(fingerprint(&[
+            workspace.id.as_bytes(),
+            self.head(workspace)?.unwrap_or_default().as_bytes(),
+            self.branch(workspace)?.unwrap_or_default().as_bytes(),
+            &self.index_bytes(workspace)?,
+            &worktree_bytes(workspace, path)?,
+            &[],
+        ]))
+    }
+
+    pub fn index_worktree_content(&self, workspace: &Workspace, path: &str) -> Result<Vec<u8>> {
+        checked_path(workspace, path)?;
+        self.query(workspace, &["cat-file", "--filters", &format!(":{path}")])
     }
     pub fn patch(&self, workspace: &Workspace, file: &ChangedFile) -> Result<String> {
         checked_path(workspace, &file.path)?;

@@ -172,5 +172,8 @@ export function demoDiff(file: ChangedFile): FileDiff {
     notice: null,
     canStage: false,
     canStageHunks: false,
+    canDiscard: false,
+    canDiscardHunks: false,
+    discardReason: "演示数据不可执行丢弃",
   };
 }

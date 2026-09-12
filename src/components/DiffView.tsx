@@ -14,6 +14,8 @@ import {
   MagnifyingGlass,
   Code,
   Warning,
+  Trash,
+  ClockCounterClockwise,
 } from "@phosphor-icons/react";
 import type { DiffLine, FileDiff, Preferences } from "../types";
 
@@ -26,6 +28,8 @@ export function DiffView({
   pending,
   onMark,
   onStage,
+  onDiscard,
+  onHistory,
   onPreferences,
   onFocus,
 }: {
@@ -34,6 +38,8 @@ export function DiffView({
   pending: boolean;
   onMark: (hunkId: string | null, reviewed: boolean) => void;
   onStage: (hunkId: string | null) => void;
+  onDiscard: (hunkId: string | null) => void;
+  onHistory?: () => void;
   onPreferences: (p: Partial<Preferences>) => void;
   onFocus: () => void;
 }) {
@@ -116,6 +122,15 @@ export function DiffView({
           <span>{diff.side === "staged" ? "Index" : "工作树"}</span>
         </span>
         <div className="toolbar-spacer" />
+        <button
+          className="icon-button"
+          title="文件历史与 Blame"
+          aria-label="文件历史与 Blame"
+          disabled={!onHistory || pending}
+          onClick={onHistory}
+        >
+          <ClockCounterClockwise size={17} />
+        </button>
         <button
           className={`icon-button ${preferences.wrapLines ? "selected" : ""}`}
           aria-label="切换自动换行"
@@ -298,6 +313,25 @@ export function DiffView({
                         )}
                         {diff.side === "staged" ? "撤销暂存" : "暂存"}
                       </button>
+                      {diff.side === "unstaged" && (
+                        <button
+                          className="icon-button"
+                          disabled={
+                            pending ||
+                            !diff.canDiscardHunks ||
+                            !row.hunk.lines.length
+                          }
+                          title={
+                            diff.canDiscardHunks
+                              ? "预览丢弃此 Hunk"
+                              : (diff.discardReason ?? "此 Hunk 不支持丢弃")
+                          }
+                          aria-label={`预览丢弃 Hunk：第 ${row.hunk.newStart} 行`}
+                          onClick={() => onDiscard(row.hunk.id)}
+                        >
+                          <Trash size={15} />
+                        </button>
+                      )}
                     </div>
                   ) : split ? (
                     <div className="split-row">

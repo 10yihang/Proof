@@ -116,6 +116,9 @@ pub struct FileDiff {
     pub notice: Option<String>,
     pub can_stage: bool,
     pub can_stage_hunks: bool,
+    pub can_discard: bool,
+    pub can_discard_hunks: bool,
+    pub discard_reason: Option<String>,
     #[serde(skip)]
     pub guard: String,
 }
@@ -129,6 +132,34 @@ pub struct CommitEntry {
     pub date: String,
     pub subject: String,
     pub refs: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlameLine {
+    pub oid: Option<String>,
+    pub original_line: u32,
+    pub line: u32,
+    pub author: Option<String>,
+    pub author_time: Option<i64>,
+    pub summary: String,
+    pub content: String,
+    pub origin_path: String,
+    pub uncommitted: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileBlame {
+    pub workspace_id: String,
+    pub path: String,
+    pub revision: Option<String>,
+    pub head: Option<String>,
+    pub lines: Vec<BlameLine>,
+    pub total_lines: usize,
+    pub offset: usize,
+    pub has_more: bool,
+    pub notice: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -171,6 +202,27 @@ pub struct OperationResult {
     pub actual_head: Option<String>,
     pub actual_branch: Option<String>,
     pub warning: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryPoint {
+    pub id: String,
+    pub workspace_id: String,
+    pub path: String,
+    pub scope: String,
+    pub status: String,
+    pub created_at: u64,
+    pub expires_at: u64,
+    pub bytes: u64,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryAction {
+    pub point: RecoveryPoint,
+    pub result: OperationResult,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -57,6 +57,9 @@ export interface FileDiff {
   notice: string | null;
   canStage: boolean;
   canStageHunks: boolean;
+  canDiscard: boolean;
+  canDiscardHunks: boolean;
+  discardReason: string | null;
 }
 export interface Preferences {
   theme: "light" | "dark" | "system";
@@ -86,6 +89,28 @@ export interface CommitEntry {
   subject: string;
   refs: string;
 }
+export interface BlameLine {
+  oid: string | null;
+  originalLine: number;
+  line: number;
+  author: string | null;
+  authorTime: number | null;
+  summary: string;
+  content: string;
+  originPath: string;
+  uncommitted: boolean;
+}
+export interface FileBlame {
+  workspaceId: string;
+  path: string;
+  revision: string | null;
+  head: string | null;
+  lines: BlameLine[];
+  totalLines: number;
+  offset: number;
+  hasMore: boolean;
+  notice: string;
+}
 export interface BranchEntry {
   name: string;
   current: boolean;
@@ -104,6 +129,21 @@ export interface OperationResult {
   actualHead: string | null;
   actualBranch: string | null;
   warning: string | null;
+}
+export interface RecoveryPoint {
+  id: string;
+  workspaceId: string;
+  path: string;
+  scope: string;
+  status: string;
+  createdAt: number;
+  expiresAt: number;
+  bytes: number;
+  message: string | null;
+}
+export interface RecoveryAction {
+  point: RecoveryPoint;
+  result: OperationResult;
 }
 export interface ProofError {
   code: string;

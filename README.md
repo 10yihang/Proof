@@ -2,7 +2,7 @@
 
 面向 AI 编码场景、以人工 Diff / Code Review 为核心的本地 Git 客户端。
 
-**当前状态：正在实现的 v0.1 Alpha，尚未达到 PRD 的发布完成条件。** Git 与 Review 核心已有真实仓库测试及 macOS 原生流程证据；Agent 观察、安全丢弃、完整数据管理与性能验收仍在推进。
+**当前状态：正在实现的 v0.1 Alpha，尚未达到 PRD 的发布完成条件。** Git 与 Review 核心已有真实仓库测试及 macOS 原生流程证据。安全丢弃/恢复点、文件历史与 Blame 已接入，新增原生交互仍待复验；Agent 观察、完整数据管理与性能验收仍在推进。
 
 ## 运行
 
@@ -28,9 +28,9 @@ npm run tauri -- build --debug --bundles app
 
 ## 结构
 
-- `crates/proof-core`：Git 查询、受校验的写操作、内容绑定的 Review 和 SQLite。
+- `crates/proof-core`：Git 查询、受校验的写操作、恢复点、文件 Blame、内容绑定的 Review 和 SQLite。
 - `src-tauri`：原生窗口与受限 IPC。前端没有通用 shell 或文件系统入口。
-- `src`：Changes、Repository、Diff、提交预览、设置和可关闭的证据面板。
+- `src`：Changes、Repository、Diff、丢弃/恢复确认、文件历史、提交预览、设置和可关闭的证据面板。
 - `docs`：完整 PRD、实施记录、设计约定和验收证据。
 - `scripts/create-demo-repo.py`：创建一次性的真实验收仓库，不覆盖既有目录。
 

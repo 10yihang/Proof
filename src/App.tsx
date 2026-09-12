@@ -19,6 +19,8 @@ import {
   ShieldCheck,
   Warning,
   X,
+  Trash,
+  ClockCounterClockwise,
 } from "@phosphor-icons/react";
 import { asError, isDesktop, request } from "./api";
 import { demoChanges, demoDiff } from "./demo";
@@ -32,6 +34,8 @@ import type {
   Preferences,
   ProofError,
   Workspace,
+  RecoveryPoint,
+  RecoveryAction,
 } from "./types";
 import { DiffView } from "./components/DiffView";
 import { FileTree } from "./components/FileTree";
@@ -39,9 +43,20 @@ import { ContextInspector } from "./components/ContextInspector";
 import { Modal } from "./components/Modal";
 import { RepositoryView } from "./components/RepositoryView";
 import { Settings } from "./components/Settings";
+import { RecoveryDialog } from "./components/RecoveryDialog";
+import { FileHistory } from "./components/FileHistory";
 
 type Dialog =
-  "open" | "settings" | "trust" | "commit" | "commands" | "mark-file" | null;
+  | "open"
+  | "settings"
+  | "trust"
+  | "commit"
+  | "commands"
+  | "mark-file"
+  | "discard"
+  | "recovery"
+  | "file-history"
+  | null;
 export default function App() {
   const [preferences, setPreferences] = useState(defaultPreferences);
   const [recent, setRecent] = useState<Workspace[]>([]);
@@ -63,6 +78,7 @@ export default function App() {
     [contextDrawer, setContextDrawer] = useState(false);
   const [preview, setPreview] = useState<CommitPreview | null>(null),
     [draft, setDraft] = useState("");
+  const [discardPoint, setDiscardPoint] = useState<RecoveryPoint | null>(null);
   const [path, setPath] = useState(""),
     [notification, setNotification] = useState("");
   const sequence = useRef(0),
@@ -372,6 +388,78 @@ export default function App() {
         current.current?.workspace.id === workspaceId
       )
         setError(asError(e));
+    } finally {
+      if (epoch === workspaceEpoch.current) setBusy(false);
+    }
+  }
+  async function prepareDiscard(hunkId: string | null) {
+    if (!diff || busy) return;
+    const epoch = workspaceEpoch.current;
+    const workspaceId = diff.workspaceId;
+    setBusy(true);
+    setError(null);
+    try {
+      const point = await request<RecoveryPoint>("discard_preview", {
+        snapshotId: diff.id,
+        hunkId,
+      });
+      if (
+        epoch !== workspaceEpoch.current ||
+        current.current?.workspace.id !== workspaceId
+      )
+        return;
+      setDiscardPoint(point);
+      setDialog("discard");
+    } catch (e) {
+      if (epoch === workspaceEpoch.current) setError(asError(e));
+    } finally {
+      if (epoch === workspaceEpoch.current) setBusy(false);
+    }
+  }
+  async function cancelDiscard() {
+    if (busy || !discardPoint) return;
+    const epoch = workspaceEpoch.current;
+    setBusy(true);
+    setError(null);
+    try {
+      await request("cancel_discard_preview", { recoveryId: discardPoint.id });
+      if (epoch === workspaceEpoch.current) {
+        setDiscardPoint(null);
+        setDialog(null);
+      }
+    } catch (e) {
+      if (epoch === workspaceEpoch.current) setError(asError(e));
+    } finally {
+      if (epoch === workspaceEpoch.current) setBusy(false);
+    }
+  }
+  async function confirmDiscard() {
+    if (busy || !discardPoint) return;
+    const epoch = workspaceEpoch.current;
+    const workspaceId = discardPoint.workspaceId;
+    setBusy(true);
+    setError(null);
+    try {
+      const action = await request<RecoveryAction>("discard", {
+        recoveryId: discardPoint.id,
+      });
+      if (
+        epoch !== workspaceEpoch.current ||
+        current.current?.workspace.id !== workspaceId
+      )
+        return;
+      setNotification(action.result.message);
+      if (action.result.warning)
+        setError({
+          code: "RECOVERY_WARNING",
+          message: action.result.message,
+          detail: action.result.warning,
+        });
+      setDiscardPoint(null);
+      setDialog(action.result.ok ? null : "recovery");
+      await refresh();
+    } catch (e) {
+      if (epoch === workspaceEpoch.current) setError(asError(e));
     } finally {
       if (epoch === workspaceEpoch.current) setBusy(false);
     }
@@ -805,6 +893,10 @@ export default function App() {
                 onStage={(h) => {
                   void stage(h);
                 }}
+                onDiscard={(h) => {
+                  void prepareDiscard(h);
+                }}
+                onHistory={demo ? undefined : () => setDialog("file-history")}
                 onPreferences={(p) => {
                   void updatePreferences(p);
                 }}
@@ -923,6 +1015,33 @@ export default function App() {
             </button>
           )}
           <button
+            className="icon-button"
+            aria-label="打开丢弃恢复点"
+            title="丢弃恢复点"
+            disabled={busy || demo}
+            onClick={() => {
+              setError(null);
+              setDialog("recovery");
+            }}
+          >
+            <ClockCounterClockwise size={18} />
+          </button>
+          {diff?.side === "unstaged" && (
+            <button
+              className="icon-button"
+              aria-label="预览丢弃文件"
+              title={
+                diff.canDiscard
+                  ? "预览丢弃整个文件的未暂存变化"
+                  : (diff.discardReason ?? "当前不能丢弃")
+              }
+              disabled={busy || !diff.canDiscard}
+              onClick={() => void prepareDiscard(null)}
+            >
+              <Trash size={18} />
+            </button>
+          )}
+          <button
             className="button primary compact"
             disabled={
               busy || demo || !stagedCount || !changes.workspace.trusted
@@ -941,6 +1060,58 @@ export default function App() {
           <Check size={16} />
           {notification}
         </div>
+      )}
+      {dialog === "file-history" && diff && (
+        <FileHistory
+          key={`${diff.workspaceId}:${diff.path}`}
+          workspaceId={diff.workspaceId}
+          path={diff.path}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog === "recovery" && changes && (
+        <RecoveryDialog
+          key={changes.workspace.id}
+          workspaceId={changes.workspace.id}
+          onClose={() => setDialog(null)}
+          onChanged={() => {
+            void refresh();
+          }}
+        />
+      )}
+      {dialog === "discard" && discardPoint && (
+        <Modal
+          title="确认丢弃未暂存变化"
+          error={error}
+          onClose={() => void cancelDiscard()}
+        >
+          <div className="discard-scope">
+            <strong>{discardPoint.path}</strong>
+            <p>{discardPoint.scope}</p>
+          </div>
+          <p>恢复点已经保存。确认后，所选工作树内容会还原到索引中的版本。</p>
+          <p className="inline-help">
+            恢复内容保留至 {new Date(discardPoint.expiresAt).toLocaleString()}
+            ，总计上限 256 MiB。撤销时若文件已有新改动，Proof
+            会停止恢复并保留副本。
+          </p>
+          <div className="modal-actions">
+            <button
+              className="button"
+              disabled={busy}
+              onClick={() => void cancelDiscard()}
+            >
+              取消
+            </button>
+            <button
+              className="button danger"
+              disabled={busy}
+              onClick={() => void confirmDiscard()}
+            >
+              {busy ? "正在核对…" : "确认丢弃所选变化"}
+            </button>
+          </div>
+        </Modal>
       )}
       {dialog === "open" && (
         <Modal title="打开仓库" error={error} onClose={() => setDialog(null)}>

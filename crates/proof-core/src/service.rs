@@ -15,23 +15,25 @@ use std::{
 };
 
 pub struct Proof {
-    store: Store,
-    data_dir: PathBuf,
+    pub(crate) store: Store,
+    pub(crate) data_dir: PathBuf,
     snapshots: HashMap<String, FileDiff>,
     snapshot_order: VecDeque<String>,
     previews: HashMap<String, CommitPreview>,
 }
 impl Proof {
     pub fn open(data_dir: impl AsRef<Path>) -> Result<Self> {
-        Ok(Self {
+        let core = Self {
             store: Store::open(data_dir.as_ref())?,
             data_dir: data_dir.as_ref().to_path_buf(),
             snapshots: HashMap::new(),
             snapshot_order: VecDeque::new(),
             previews: HashMap::new(),
-        })
+        };
+        core.expire_recovery()?;
+        Ok(core)
     }
-    fn git(&self) -> Result<Git> {
+    pub(crate) fn git(&self) -> Result<Git> {
         Ok(Git {
             executable: self.store.preferences()?.git_path,
         })
@@ -166,6 +168,12 @@ impl Proof {
             && kind != FileKind::Submodule
             && !raw_patch.starts_with("Untracked symbolic link")
             && changes.operation.is_none();
+        let can_discard = can_stage
+            && side == Side::Unstaged
+            && kind == FileKind::Text
+            && ["M", "D"].contains(&file.status.as_str())
+            && !metadata.mode_changed()
+            && cfg!(any(target_os = "macos", target_os = "linux"));
         let diff = FileDiff {
             id: uuid::Uuid::new_v4().to_string(),
             workspace_id: workspace_id.into(),
@@ -189,6 +197,9 @@ impl Proof {
                 && file.status != "?"
                 && file.status != "A"
                 && file.status != "D",
+            can_discard,
+            can_discard_hunks: can_discard && file.status == "M",
+            discard_reason: (!can_discard).then(|| "仅支持已信任仓库中，已跟踪的普通文本变化；暂存、重命名和属性变化不在丢弃范围内。".into()),
             guard: before,
         };
         self.snapshot_order.push_back(diff.id.clone());
@@ -200,13 +211,13 @@ impl Proof {
         }
         Ok(diff)
     }
-    fn snapshot(&self, id: &str) -> Result<FileDiff> {
+    pub(crate) fn snapshot(&self, id: &str) -> Result<FileDiff> {
         self.snapshots
             .get(id)
             .cloned()
             .ok_or_else(|| Error::new("SNAPSHOT_EXPIRED", "阅读快照已释放，请重新打开文件。", id))
     }
-    fn validate(&self, diff: &FileDiff) -> Result<Workspace> {
+    pub(crate) fn validate(&self, diff: &FileDiff) -> Result<Workspace> {
         let workspace = self.store.workspace(&diff.workspace_id)?;
         if self
             .git()?
@@ -378,7 +389,7 @@ impl Proof {
         }
         Ok(())
     }
-    fn require_write(&self, workspace: &Workspace) -> Result<()> {
+    pub(crate) fn require_write(&self, workspace: &Workspace) -> Result<()> {
         if !workspace.trusted {
             return Err(Error::new(
                 "TRUST_REQUIRED",
@@ -681,13 +692,13 @@ fn selected_units(diff: &FileDiff, hunk_id: Option<&str>) -> Result<Vec<String>>
     }
 }
 
-struct IndexLock {
+pub(crate) struct IndexLock {
     path: PathBuf,
     file: fs::File,
     published: bool,
 }
 impl IndexLock {
-    fn acquire(git_dir: &Path) -> Result<Self> {
+    pub(crate) fn acquire(git_dir: &Path) -> Result<Self> {
         let path = git_dir.join("index.lock");
         let file = OpenOptions::new()
             .write(true)

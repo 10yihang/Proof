@@ -58,6 +58,23 @@ fn dispatch(
         "stage" => serde_json::to_value(
             proof.stage(string(&args, "snapshotId")?, args["hunkId"].as_str())?,
         ),
+        "discard_preview" => serde_json::to_value(
+            proof.discard_preview(string(&args, "snapshotId")?, args["hunkId"].as_str())?,
+        ),
+        "cancel_discard_preview" => {
+            serde_json::to_value(proof.cancel_discard_preview(string(&args, "recoveryId")?)?)
+        }
+        "discard" => serde_json::to_value(proof.discard(string(&args, "recoveryId")?)?),
+        "undo_discard" => serde_json::to_value(proof.undo_discard(string(&args, "recoveryId")?)?),
+        "restore_missing_recovery" => {
+            serde_json::to_value(proof.restore_missing_recovery(string(&args, "recoveryId")?)?)
+        }
+        "recovery_points" => {
+            serde_json::to_value(proof.recovery_points(string(&args, "workspaceId")?)?)
+        }
+        "recovery_content" => {
+            serde_json::to_value(proof.recovery_content(string(&args, "recoveryId")?)?)
+        }
         "commit_preview" => {
             serde_json::to_value(proof.commit_preview(string(&args, "workspaceId")?)?)
         }
@@ -68,6 +85,12 @@ fn dispatch(
             string(&args, "workspaceId")?,
             args["offset"].as_u64().unwrap_or(0) as usize,
             args["path"].as_str(),
+        )?),
+        "file_blame" => serde_json::to_value(proof.file_blame(
+            string(&args, "workspaceId")?,
+            string(&args, "path")?,
+            args["revision"].as_str(),
+            args["offset"].as_u64().unwrap_or(0) as usize,
         )?),
         "commit_diff" => serde_json::to_value(proof.commit_diff(
             string(&args, "workspaceId")?,
