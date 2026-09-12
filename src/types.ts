@@ -174,6 +174,26 @@ export interface DataCleanup {
   walCheckpointComplete: boolean;
   databaseCompactionPending: boolean;
 }
+export interface ObserverProgramLocation {
+  agent: "codex" | "claude";
+  executablePath: string | null;
+}
+export interface ObserverProbe {
+  agent: "codex" | "claude";
+  executablePath: string;
+  executableIdentity: string;
+  version: string;
+  status: "candidate_unverified" | "unsupported_version";
+  checkedAt: number;
+  profile: {
+    adapterVersion: string;
+    registeredEvents: string[];
+    asyncHandlers: boolean;
+    fixtureStatus: string;
+    runtimeVerified: boolean;
+    trustReviewRequired: boolean;
+  } | null;
+}
 export const defaultPreferences: Preferences = {
   theme: "light",
   fontSize: 13,

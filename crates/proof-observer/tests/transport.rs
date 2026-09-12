@@ -129,10 +129,15 @@ fn bridge_bounds_never_closed_stdin_and_missing_service() {
     let path = registration(temp.path(), &temp.path().join("absent.sock"));
     let started = Instant::now();
     let mut child = bridge(&path).spawn().unwrap();
+    let launch_time = started.elapsed();
     let input = child.stdin.take().unwrap();
     let output = child.wait_with_output().unwrap();
     drop(input);
-    assert!(started.elapsed() < Duration::from_millis(500));
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < Duration::from_millis(500),
+        "bridge total {elapsed:?}; process spawn {launch_time:?}"
+    );
     assert!(output.status.success() && output.stdout.is_empty() && output.stderr.is_empty());
     let mut child = bridge(&path).spawn().unwrap();
     child.stdin.take().unwrap().write_all(b"{}").unwrap();
@@ -148,13 +153,18 @@ fn slow_receiver_large_input_and_bad_config_are_neutral_and_bounded() {
     let path = registration(temp.path(), &socket);
     let started = Instant::now();
     let mut child = bridge(&path).spawn().unwrap();
+    let launch_time = started.elapsed();
     let mut input = child.stdin.take().unwrap();
     let writer = std::thread::spawn(move || {
         let _ = input.write_all(&vec![b'x'; MAX_INPUT]);
     });
     let output = child.wait_with_output().unwrap();
     writer.join().unwrap();
-    assert!(started.elapsed() < Duration::from_millis(500));
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < Duration::from_millis(500),
+        "bridge total {elapsed:?}; process spawn {launch_time:?}"
+    );
     assert!(output.status.success() && output.stdout.is_empty() && output.stderr.is_empty());
     fs::set_permissions(&path, fs::Permissions::from_mode(0o666)).unwrap();
     let output = bridge(&path).output().unwrap();

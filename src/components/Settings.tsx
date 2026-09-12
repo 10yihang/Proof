@@ -12,6 +12,7 @@ import {
 import type { Preferences, ProofError, Workspace } from "../types";
 import { Modal } from "./Modal";
 import { DataSettings } from "./DataSettings";
+import { ObserverSettings } from "./ObserverSettings";
 
 export function Settings({
   preferences,
@@ -186,44 +187,7 @@ export function Settings({
               </p>
             </>
           )}
-          {tab === "observer" && (
-            <>
-              <h3>保持你的开发方式</h3>
-              <p className="muted">
-                用户授权后，Proof 才会观察指定仓库的活动。Git
-                和人工审查可独立使用。
-              </p>
-              {["Claude Code", "Codex"].map((agent) => (
-                <div className="agent-setting" key={agent}>
-                  <div className="agent-icon">
-                    <Plug size={20} />
-                  </div>
-                  <div>
-                    <strong>{agent}</strong>
-                    <small>未配置</small>
-                  </div>
-                  <span className="tag">待兼容验证</span>
-                </div>
-              ))}
-              <div className="setting-callout">
-                <ShieldCheck size={18} />
-                <p>
-                  当前 Alpha
-                  尚未启用观察安装。适配器完成真实版本验证后，接入流程会展示配置差异、允许仓库和采集字段，再由你确认安装。
-                </p>
-              </div>
-              <dl className="privacy-defaults">
-                <dt>当前采集等级</dt>
-                <dd>L0 · 关闭</dd>
-                <dt>后台观察</dt>
-                <dd>关闭</dd>
-                <dt>模型调用</dt>
-                <dd>关闭</dd>
-                <dt>诊断上传</dt>
-                <dd>关闭</dd>
-              </dl>
-            </>
-          )}
+          {tab === "observer" && <ObserverSettings demo={demo} />}
         </div>
       </div>
       <div className="settings-version">

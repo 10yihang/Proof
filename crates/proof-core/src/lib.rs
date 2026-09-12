@@ -1,3 +1,5 @@
+mod adapter;
+mod data;
 mod error;
 mod git;
 mod guarded_file;
@@ -10,6 +12,7 @@ mod recovery;
 mod service;
 mod store;
 
+pub use adapter::*;
 pub use data::*;
 pub use error::{Error, Result};
 pub use model::*;
@@ -32,4 +35,3 @@ pub(crate) fn now() -> u64 {
         .unwrap_or_default()
         .as_millis() as u64
 }
-mod data;

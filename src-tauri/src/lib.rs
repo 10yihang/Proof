@@ -21,18 +21,32 @@ fn dispatch(
     command: &str,
     args: serde_json::Value,
 ) -> Result<serde_json::Value, Error> {
-    let mut proof = core.lock().map_err(|_| {
+    fn unavailable() -> Error {
         Error::new(
             "CORE_UNAVAILABLE",
             "本地核心暂时不可用，请重启应用。",
             "Mutex poisoned",
         )
-    })?;
+    }
     fn string<'a>(args: &'a serde_json::Value, key: &str) -> Result<&'a str, Error> {
         args.get(key)
             .and_then(|v| v.as_str())
             .ok_or_else(|| Error::new("INVALID_REQUEST", "请求字段缺失。", key))
     }
+    if command == "observer_program_locations" {
+        return serde_json::to_value(proof_core::observer_program_locations()).map_err(Error::from);
+    }
+    if command == "probe_observer" {
+        let job = core
+            .lock()
+            .map_err(|_| unavailable())?
+            .prepare_observer_probe(
+                serde_json::from_value(args["agent"].clone())?,
+                string(&args, "executablePath")?,
+            )?;
+        return serde_json::to_value(job.run()?).map_err(Error::from);
+    }
+    let mut proof = core.lock().map_err(|_| unavailable())?;
     let value = match command {
         "recent_workspaces" => serde_json::to_value(proof.recent_workspaces()?),
         "open_workspace" => serde_json::to_value(proof.open_workspace(string(&args, "path")?)?),
@@ -128,4 +142,47 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![proof_command])
         .run(tauri::generate_context!())
         .expect("Proof could not start");
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::{
+        fs,
+        os::unix::fs::PermissionsExt,
+        time::{Duration, Instant},
+    };
+
+    #[test]
+    fn slow_version_query_does_not_hold_the_git_core_mutex() {
+        let temp = tempfile::tempdir().unwrap();
+        let data = temp.path().join("data");
+        let executable = temp.path().join("slow-agent");
+        fs::write(
+            &executable,
+            b"#!/bin/sh\nprintf started > probe-started\nexec /bin/sleep 30\n",
+        )
+        .unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+        let core = Arc::new(Mutex::new(Proof::open(&data).unwrap()));
+        let worker = core.clone();
+        let query = std::thread::spawn(move || {
+            dispatch(
+                &worker,
+                "probe_observer",
+                serde_json::json!({"agent":"codex","executablePath":executable}),
+            )
+        });
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !data.join("probe-started").exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let started = data.join("probe-started").exists();
+        let available = core.try_lock().is_ok();
+        let result = query.join().unwrap();
+        assert!(started, "version fixture was not started");
+        assert!(available, "version process kept the Git mutex");
+        assert_eq!(result.unwrap_err().code, "PROCESS_TIMEOUT");
+        assert!(dispatch(&core, "preferences", serde_json::json!({})).is_ok());
+    }
 }

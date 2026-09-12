@@ -464,3 +464,21 @@
   flex-wrap: wrap;
   margin-top: 15px;
 }
+.observer-version-card {
+  padding-bottom: 18px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.observer-version-card .agent-setting {
+  margin-bottom: 0;
+}
+.observer-version-card > input {
+  display: block;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  margin-bottom: 10px;
+}
