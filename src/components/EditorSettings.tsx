@@ -7,7 +7,7 @@ import {
   FolderOpen,
   Warning,
 } from "@phosphor-icons/react";
-import { asError, isDesktop, request } from "../api";
+import { asError, isDesktop, useRequest } from "../api";
 import type {
   EditorApplication,
   EditorChoice,
@@ -31,6 +31,7 @@ export function EditorSettings({
   demo: boolean;
   onSaveError: (error: unknown) => void;
 }) {
+  const request = useRequest();
   const [settings, setSettings] = useState<Settings | null>(null),
     [applications, setApplications] = useState<EditorApplication[]>([]);
   const [scope, setScope] = useState<"application" | "repository">(

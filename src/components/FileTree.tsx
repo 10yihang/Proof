@@ -17,6 +17,7 @@ import {
 import { fileKey } from "../types";
 import type { ChangedFile, FileDiff, Side } from "../types";
 import { treeRows, type TreeRow } from "../file-tree";
+import { useClientStorage } from "../api";
 
 export function FileTree({
   files,
@@ -41,12 +42,11 @@ export function FileTree({
   disabled: boolean;
   onStage: (files: ChangedFile[], side: Side) => void;
 }) {
+  const clientStorage = useClientStorage();
   const parent = useRef<HTMLDivElement>(null);
   const [mode, setMode] = useState<"tree" | "list">(() => {
     try {
-      return localStorage.getItem("proof:file-view") === "list"
-        ? "list"
-        : "tree";
+      return clientStorage.readFileView() === "list" ? "list" : "tree";
     } catch {
       return "tree";
     }
@@ -86,7 +86,7 @@ export function FileTree({
   function chooseView(value: "tree" | "list") {
     setMode(value);
     try {
-      localStorage.setItem("proof:file-view", value);
+      clientStorage.writeFileView(value);
     } catch {
       /* View remains usable for this session. */
     }

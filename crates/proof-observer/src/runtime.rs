@@ -62,6 +62,9 @@ pub fn serve(data_dir: &Path) -> Result<()> {
     let path = socket_path(&data_dir)?;
     let server = Server::bind(&path)?;
     let metadata = Proof::open(&data_dir).map_err(|_| TransportError::Configuration)?;
+    let storage_generation = metadata
+        .observer_storage_generation()
+        .map_err(|_| TransportError::Configuration)?;
     let start = now();
     let epoch = uuid::Uuid::new_v4().to_string();
     let gap = if prior
@@ -72,7 +75,9 @@ pub fn serve(data_dir: &Path) -> Result<()> {
     } else {
         "collector_started"
     };
-    let _ = metadata.record_observer_gap(None, gap, None);
+    let _ = metadata.with_observer_storage_generation(storage_generation, || {
+        metadata.record_observer_gap(None, gap, None)
+    });
     STOP.store(false, Ordering::Relaxed);
     let running = Arc::new(AtomicBool::new(true));
     let watchdog_running = running.clone();
@@ -114,7 +119,10 @@ pub fn serve(data_dir: &Path) -> Result<()> {
     server.run(running,||Some(ReceiptPolicy { revision: metadata.observer_policy_revision().ok()?, foreground_lease_until:foreground_lease(&lease_path) }),move |envelope| {
         let h=envelope.header;
         if h.fault.is_some() {
-            if journal.observer_transport_authorized(&h.installation_id,&h.token,h.agent,&h.agent_version).unwrap_or(false) { let _=journal.record_observer_gap(Some(&h.installation_id),"transport_input_limit",Some(1)); }
+            let _=journal.with_observer_storage_generation(storage_generation,||{
+                if journal.observer_transport_authorized(&h.installation_id,&h.token,h.agent,&h.agent_version)? {journal.record_observer_gap(Some(&h.installation_id),"transport_input_limit",Some(1))?;}
+                Ok(())
+            });
             return false;
         }
         match journal.ingest_observer_event(ObserverInput {installation_id:&h.installation_id,token:&h.token,agent:h.agent,agent_version:&h.agent_version,payload:&envelope.payload,
@@ -123,22 +131,29 @@ pub fn serve(data_dir: &Path) -> Result<()> {
             Err(error)=>{if ["STORAGE_ERROR","IO_ERROR","OBSERVER_STORAGE_LIMIT","OBSERVER_STORAGE_MEASUREMENT_LIMIT"].contains(&error.code.as_str()) {ingestion_metrics.note_storage_rejection();} false}
         }
     },|snapshot| {
+        if metadata.observer_storage_generation().ok()!=Some(storage_generation) {STOP.store(true,Ordering::Relaxed);control.store(false,Ordering::Release);return;}
         if last_cleanup.elapsed()>=std::time::Duration::from_secs(60) {
-            if metadata.maintain_local_data().is_err() {let _=metadata.record_observer_gap(None,"storage_rejected",None);}
+            if metadata.maintain_local_data().is_err() {let _=metadata.with_observer_storage_generation(storage_generation,||metadata.record_observer_gap(None,"storage_rejected",None));}
             last_cleanup=std::time::Instant::now();
         }
+        let _=metadata.with_observer_storage_generation(storage_generation,||{
         for (value,previous,code) in [(snapshot.queue_full,&mut last_queue,"transport_queue_full"),(snapshot.invalid,&mut last_invalid,"transport_invalid"),(snapshot.expired,&mut last_expired,"transport_expired"),(snapshot.storage_rejected,&mut last_storage,"storage_rejected")] {
             if value>*previous {let _=metadata.record_observer_gap(None,code,Some(value-*previous));*previous=value;}
         }
         let _=server::write_health(&health,&json!({"schemaVersion":1,"adapterVersion":OBSERVER_VERSION,"epoch":epoch,"pid":std::process::id(),"startedAt":start,"heartbeatAt":now(),"cleanShutdown":false,"socketPath":socket,"metrics":snapshot}));
+        Ok(())
+        });
         if STOP.load(Ordering::Relaxed) {control.store(false,Ordering::Release);}
         if foreground_lease(&lease_path).is_none() && !metadata.observer_consents().unwrap_or_default().iter().any(|c|c.enabled && c.background) {STOP.store(true,Ordering::Relaxed);control.store(false,Ordering::Release);}
     })?;
-    let _ = metadata.record_observer_gap(None, "collector_stopped", None);
+    metadata.with_observer_storage_generation(storage_generation,|| {
+    metadata.record_observer_gap(None, "collector_stopped", None)?;
     server::write_health(
         &health,
         &json!({"schemaVersion":1,"adapterVersion":OBSERVER_VERSION,"epoch":epoch,"pid":std::process::id(),"startedAt":start,"heartbeatAt":now(),"cleanShutdown":true,"socketPath":socket,"metrics":metrics.snapshot()}),
-    )?;
+    ).map_err(|error|proof_core::Error::new("OBSERVER_HEALTH_WRITE","运行状态未能保存。",format!("{error:?}")))?;
+    Ok(())
+    }).map_err(|_|TransportError::Io)?;
     finished.store(true, Ordering::Release);
     Ok(())
 }

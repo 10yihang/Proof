@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { request } from "./api";
+import { useRequest } from "./api";
 import type { RepositoryLayout, Workspace } from "./types";
 import {
   defaultRepositoryLayout,
@@ -10,6 +10,7 @@ export function useRepositoryLayout(
   workspace: Workspace | undefined,
   demo: boolean,
 ) {
+  const request = useRequest();
   const [store] = useState(
     () =>
       new RepositoryLayouts({

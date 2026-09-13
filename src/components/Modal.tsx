@@ -9,12 +9,14 @@ export function Modal({
   onClose,
   wide = false,
   error,
+  className = "",
 }: {
   title: string;
   children: ReactNode;
   onClose: () => void;
   wide?: boolean;
   error?: ProofError | null;
+  className?: string;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const [closing, setClosing] = useState(false);
@@ -44,7 +46,7 @@ export function Modal({
   return (
     <dialog
       ref={ref}
-      className={`modal ${wide ? "modal-wide" : ""} ${closing ? "is-closing" : ""}`}
+      className={`modal ${wide ? "modal-wide" : ""} ${closing ? "is-closing" : ""} ${className}`}
       aria-label={title}
       onSubmitCapture={(event) => {
         if (closingRef.current) {

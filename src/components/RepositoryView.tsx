@@ -7,7 +7,7 @@ import {
   HardDrives,
   Plus,
 } from "@phosphor-icons/react";
-import { request } from "../api";
+import { useRequest } from "../api";
 import type { BranchEntry, Changes, WorktreeEntry, ProofError } from "../types";
 import { Modal } from "./Modal";
 import { CommitHistory } from "./CommitHistory";
@@ -34,6 +34,7 @@ export function RepositoryView({
   onError: (e: unknown) => void;
   onChanged: () => Promise<void>;
 }) {
+  const request = useRequest();
   const [historyVisited, setHistoryVisited] = useState(section === "history");
   useEffect(() => {
     if (section === "history") setHistoryVisited(true);

@@ -12,7 +12,7 @@ import {
   MagnifyingGlass,
   X,
 } from "@phosphor-icons/react";
-import { request, asError } from "../api";
+import { useRequest, asError } from "../api";
 import type {
   BranchEntry,
   Changes,
@@ -43,6 +43,7 @@ export function CommitHistory({
   onScope: (scope: string) => void;
   onBranches: (branches: BranchEntry[]) => void;
 }) {
+  const request = useRequest();
   const [page, setPage] = useState<CommitGraphPage | null>(null);
   const [commits, setCommits] = useState<CommitEntry[]>([]);
   const [selected, setSelected] = useState<CommitEntry | null>(null);
@@ -475,6 +476,7 @@ function CommitDetail({
   snapshotId: string;
   demo: boolean;
 }) {
+  const request = useRequest();
   const [parent, setParent] = useState(0),
     [patch, setPatch] = useState(""),
     [busy, setBusy] = useState(true),

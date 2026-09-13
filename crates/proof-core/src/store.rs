@@ -20,7 +20,7 @@ impl Store {
         let connection = Connection::open(path.join("proof.sqlite3"))?;
         connection.busy_timeout(std::time::Duration::from_secs(3))?;
         let version: u32 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        if version > 4 {
+        if version > 5 {
             return Err(Error::new(
                 "DATABASE_VERSION",
                 "本地数据由更新版本的 Proof 创建，请使用对应版本打开。",
@@ -39,6 +39,11 @@ impl Store {
                 unit_id TEXT NOT NULL, reviewed INTEGER NOT NULL, source TEXT NOT NULL, origin_unit_id TEXT, created_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS repository_layouts (repository_id TEXT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE, value TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS hidden_recent_workspaces (workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE);
+            CREATE TABLE IF NOT EXISTS data_client_deletions (workspace_id TEXT PRIMARY KEY);
+            CREATE TABLE IF NOT EXISTS data_file_deletions (kind TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY(kind,id));
+            INSERT OR IGNORE INTO settings VALUES('data_epoch','0');
+            INSERT OR IGNORE INTO settings VALUES('data_client_wipe_epoch','0');
             INSERT OR IGNORE INTO settings VALUES('observer_revision','0');
             CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, kind TEXT NOT NULL, result TEXT NOT NULL, created_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS recovery_points (id TEXT PRIMARY KEY,
@@ -66,7 +71,7 @@ impl Store {
                 payload TEXT NOT NULL, created_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS observer_gaps (id TEXT PRIMARY KEY, installation_id TEXT, workspace_id TEXT, code TEXT NOT NULL,
                 count INTEGER, started_at INTEGER NOT NULL, ended_at INTEGER);
-            PRAGMA user_version=4;")?;
+            PRAGMA user_version=5;")?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -126,6 +131,10 @@ impl Store {
         tx.execute("INSERT INTO workspaces VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
             name=excluded.name,path=excluded.path,git_dir=excluded.git_dir,common_dir=excluded.common_dir,opened_at=excluded.opened_at",
             params![workspace.id, identity, workspace.repository_id, workspace.name, workspace.path, workspace.git_dir, workspace.common_dir, workspace.trusted, now()])?;
+        tx.execute(
+            "DELETE FROM hidden_recent_workspaces WHERE workspace_id=?",
+            [&workspace.id],
+        )?;
         tx.commit()?;
         Ok(workspace)
     }
@@ -340,8 +349,8 @@ impl Store {
         Ok(())
     }
     pub fn record_operation(&self, workspace: &str, kind: &str, result: &str) -> Result<()> {
-        self.connection.execute(
-            "INSERT INTO operations VALUES(?,?,?,?,?)",
+        let changed=self.connection.execute(
+            "INSERT INTO operations SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM workspaces WHERE id=?2)",
             params![
                 uuid::Uuid::new_v4().to_string(),
                 workspace,
@@ -350,6 +359,13 @@ impl Store {
                 now()
             ],
         )?;
+        if changed == 0 {
+            return Err(Error::new(
+                "DATA_RECORDS_DELETED",
+                "Git 操作已完成；本地仓库记录已删除，因此未保存操作记录。",
+                "Workspace was removed before operation recording",
+            ));
+        }
         Ok(())
     }
 }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { ArrowCounterClockwise, Copy } from "@phosphor-icons/react";
-import { asError, request } from "../api";
+import { asError, useRequest } from "../api";
 import type { ProofError, RecoveryAction, RecoveryPoint } from "../types";
 import { Modal } from "./Modal";
 
@@ -30,6 +30,7 @@ export function RecoveryDialog({
   onClose: () => void;
   onChanged: () => void;
 }) {
+  const request = useRequest();
   const [points, setPoints] = useState<RecoveryPoint[]>([]);
   const [content, setContent] = useState<Content | null>(null);
   const [error, setError] = useState<ProofError | null>(null);

@@ -4,8 +4,27 @@ use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
 
 fn dispatch(proof: &mut Proof, command: &str, a: &Value) -> Result<Value, Error> {
+    proof.synchronize_data_epoch()?;
     let s = |name: &str| a[name].as_str().unwrap_or("");
+    if command != "data_session" {
+        proof.check_data_epoch(a["_dataEpoch"].as_u64().unwrap_or(0))?;
+    }
     Ok(match command {
+        "data_session" => json!(proof.data_session()?),
+        "data_workspaces" => json!(proof.data_workspaces()?),
+        "data_usage" => json!(proof.data_usage(a["workspaceId"].as_str())?),
+        "clear_observer_data" => json!(proof.clear_observer_data(s("workspaceId"))?),
+        "pause_observer_scope" => json!(proof.pause_observer_scope(a["workspaceId"].as_str())?),
+        "maintain_local_data" => json!(proof.maintain_local_data()?),
+        "remove_recent_workspace" => json!(proof.remove_recent_workspace(s("workspaceId"))?),
+        "prepare_data_deletion" => {
+            json!(proof.prepare_data_deletion(serde_json::from_value(a["scope"].clone())?)?)
+        }
+        "cancel_data_deletion" => {
+            proof.cancel_data_deletion(s("previewId"));
+            Value::Null
+        }
+        "delete_local_data" => json!(proof.delete_local_data(s("previewId"))?),
         "open_workspace" => json!(proof.open_workspace(s("path"))?),
         "recent_workspaces" => json!(proof.recent_workspaces()?),
         "preferences" => json!(proof.preferences()?),

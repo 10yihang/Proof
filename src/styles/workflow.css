@@ -505,3 +505,60 @@
   overflow: auto;
   font-size: 10px;
 }
+.data-deletion-targets {
+  max-height: 160px;
+  overflow: auto;
+  margin: 12px 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+.data-deletion-targets li {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+}
+.data-deletion-targets li + li {
+  border-top: 1px solid var(--border);
+}
+.data-deletion-targets code {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+.settings-modal {
+  height: min(800px, calc(100dvh - 80px));
+  overflow: hidden;
+}
+.settings-modal .modal-content {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.settings-modal .modal-header {
+  flex-shrink: 0;
+}
+.settings-modal .settings-layout {
+  flex: 1;
+  min-height: 0;
+}
+.settings-modal .settings-content {
+  overflow: auto;
+  min-height: 0;
+  padding-right: 8px;
+  overscroll-behavior: contain;
+}
+.settings-modal .settings-nav {
+  overflow: auto;
+  min-height: 0;
+}
+@media (max-width: 640px) {
+  .settings-modal .modal-content {
+    padding: 16px;
+  }
+  .settings-modal .settings-layout {
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+}

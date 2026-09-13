@@ -180,6 +180,9 @@ export interface ProofError {
   detail: string;
 }
 export interface DataUsage {
+  activeObserverScopes: number;
+  pendingContentDeletions: number;
+  contentCleanupError: string | null;
   applicationBytes: number;
   applicationBytesLowerBound: boolean;
   softLimitBytes: number;
@@ -194,6 +197,8 @@ export interface DataUsage {
   reviewRetentionDays: number;
 }
 export interface DataCleanup {
+  pendingContentDeletions: number;
+  contentCleanupError: string | null;
   redactedOutputs: number;
   deletedEvents: number;
   deletedSessions: number;
@@ -202,6 +207,38 @@ export interface DataCleanup {
   deletedOperations: number;
   walCheckpointComplete: boolean;
   databaseCompactionPending: boolean;
+}
+
+export interface DataSession {
+  epoch: number;
+  wipeEpoch: number;
+  deletedWorkspaceIds: string[];
+}
+export interface DataWorkspace {
+  workspace: Workspace;
+  recent: boolean;
+}
+export type DataScope =
+  { kind: "repository"; repositoryId: string } | { kind: "all" };
+export interface DataDeletionPreview {
+  id: string;
+  scope: DataScope;
+  workspaces: Workspace[];
+  capturedAt: number;
+  counts: {
+    observerEvents: number;
+    reviewRecords: number;
+    operations: number;
+    recoveryPoints: number;
+    recoveryBytes: number;
+  };
+}
+export interface DataDeletionResult {
+  session: DataSession;
+  deletedWorkspaceIds: string[];
+  all: boolean;
+  cleanup: DataCleanup;
+  cleanupError: ProofError | null;
 }
 export interface ObserverProgramLocation {
   agent: "codex" | "claude";

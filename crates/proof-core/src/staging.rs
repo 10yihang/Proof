@@ -73,7 +73,7 @@ impl Proof {
         }
         let guard = selection_guard(&git, &workspace, &targets)?;
         let untouched = unselected_entries(&git, &workspace, None, &targets)?;
-        let private = tempfile::TempDir::new_in(&self.data_dir)?;
+        let private = self.temporary_index(&workspace.id)?;
         let index_path = private.path().join("index");
         let bytes = git.index_bytes(&workspace)?;
         if !bytes.is_empty() {

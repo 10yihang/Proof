@@ -8,7 +8,7 @@ import {
   Globe,
   ArrowClockwise,
 } from "@phosphor-icons/react";
-import { asError, request } from "../api";
+import { asError, useRequest } from "../api";
 import { demoGraphPage } from "../graph-demo";
 import type { BranchEntry, Changes, ProofError } from "../types";
 
@@ -27,6 +27,7 @@ export function BranchPicker({
     remote?: string,
   ) => Promise<boolean>;
 }) {
+  const request = useRequest();
   const [opened, setOpened] = useState(false),
     [search, setSearch] = useState("");
   const [branches, setBranches] = useState<BranchEntry[]>([]),

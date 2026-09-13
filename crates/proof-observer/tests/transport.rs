@@ -183,6 +183,83 @@ fn another_service_cannot_replace_the_live_socket() {
 }
 
 #[test]
+fn full_data_deletion_stops_collector_without_recreating_old_health_or_gaps() {
+    use proof_core::{DataScope, ObserverAgent, ObserverConsent, Proof};
+    let temp = temporary_directory();
+    let data = temp.path().join("data");
+    let repo = temp.path().join("repo");
+    fs::create_dir(&repo).unwrap();
+    assert!(Command::new("git")
+        .arg("-C")
+        .arg(&repo)
+        .args(["init", "-b", "main"])
+        .output()
+        .unwrap()
+        .status
+        .success());
+    let mut proof = Proof::open(&data).unwrap();
+    let workspace = proof.open_workspace(repo.to_str().unwrap()).unwrap();
+    proof.set_trust(&workspace.id, true).unwrap();
+    let registration = proof
+        .create_observer_registration(ObserverAgent::Claude, "2.1.236")
+        .unwrap();
+    proof
+        .set_observer_consent(&ObserverConsent {
+            installation_id: registration.installation.id,
+            workspace_id: workspace.id,
+            enabled: true,
+            prompt: false,
+            command: false,
+            reply: false,
+            output: false,
+            background: true,
+        })
+        .unwrap();
+    let mut service = CollectorChild(Some(
+        Command::new(env!("CARGO_BIN_EXE_proof-observer"))
+            .args(["serve", "--data-dir"])
+            .arg(&data)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    ));
+    let health = data.join("observer/runtime.json");
+    let started = Instant::now();
+    while !health.exists() {
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(service.try_wait().unwrap().is_none());
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let preview = proof.prepare_data_deletion(DataScope::All).unwrap();
+    let deleted = proof.delete_local_data(&preview.id).unwrap();
+    assert_eq!(deleted.cleanup.pending_content_deletions, 0);
+    let started = Instant::now();
+    while service.try_wait().unwrap().is_none() {
+        assert!(started.elapsed() < Duration::from_secs(5));
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(service.finish().status.success());
+    assert!(!health.exists());
+    assert!(!health.with_extension("pending").exists());
+    assert!(proof.observer_gaps(None).unwrap().is_empty());
+    assert!(proof.data_workspaces().unwrap().is_empty());
+    assert_eq!(
+        String::from_utf8(
+            Command::new("git")
+                .arg("-C")
+                .arg(repo)
+                .args(["status", "--porcelain"])
+                .output()
+                .unwrap()
+                .stdout
+        )
+        .unwrap(),
+        ""
+    );
+}
+
+#[test]
 fn standalone_collector_persists_authorized_fields_and_stops_cleanly() {
     use proof_core::{ObserverAgent, ObserverConsent, Proof};
     let temp = tempfile::tempdir_in("/private/tmp").unwrap();

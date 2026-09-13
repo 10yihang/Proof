@@ -34,6 +34,7 @@ export function Settings({
   layout,
   initialSection = "appearance",
   onError,
+  onRecentChanged,
 }: {
   preferences: Preferences;
   error: ProofError | null;
@@ -52,12 +53,19 @@ export function Settings({
   };
   initialSection?: "appearance" | "review" | "observer" | "data" | "editor";
   onError: (error: unknown) => void;
+  onRecentChanged?: () => Promise<void>;
 }) {
   const [tab, setTab] = useState<
     "appearance" | "review" | "observer" | "data" | "editor"
   >(initialSection);
   return (
-    <Modal title="设置" error={error} onClose={onClose} wide>
+    <Modal
+      title="设置"
+      error={error}
+      onClose={onClose}
+      wide
+      className="settings-modal"
+    >
       <div className="settings-layout">
         <nav className="settings-nav" aria-label="设置分类">
           <button
@@ -114,6 +122,8 @@ export function Settings({
               workspaces={workspaces}
               workspaceId={workspaceId}
               demo={demo}
+              onError={onError}
+              onRecentChanged={onRecentChanged}
             />
           )}
           {tab === "appearance" && (

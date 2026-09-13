@@ -22,7 +22,13 @@ import {
   List,
   ArrowSquareOut,
 } from "@phosphor-icons/react";
-import { asError, isDesktop, request, watchWorkspace } from "./api";
+import {
+  asError,
+  isDesktop,
+  useRequest,
+  useClientStorage,
+  watchWorkspace,
+} from "./api";
 import { demoChanges, demoDiff, demoDiffContext } from "./demo";
 import { hiddenWhitespace } from "./diff-reading";
 import { defaultPreferences, fileKey } from "./types";
@@ -69,7 +75,17 @@ type Dialog =
   | "recovery"
   | "file-history"
   | null;
-export default function App() {
+export default function App({
+  initialWorkspaceId,
+  initialDataNotice,
+  onWorkspaceChange,
+}: {
+  initialWorkspaceId?: string;
+  initialDataNotice?: string;
+  onWorkspaceChange?: (id?: string) => void;
+} = {}) {
+  const request = useRequest();
+  const clientStorage = useClientStorage();
   const [preferences, setPreferences] = useState(defaultPreferences);
   const preferenceState = useRef(defaultPreferences);
   const savedPreferences = useRef(defaultPreferences);
@@ -96,12 +112,14 @@ export default function App() {
   const [error, setError] = useState<ProofError | null>(null);
   const [busy, setBusyState] = useState(false),
     [loadingDiff, setLoadingDiff] = useState(false);
-  const [dialog, setDialog] = useState<Dialog>(null),
+  const [dialog, setDialog] = useState<Dialog>(
+      initialDataNotice ? "settings" : null,
+    ),
     [tab, setTab] = useState<"changes" | "repository">("changes");
   const [repositoryVisited, setRepositoryVisited] = useState(false);
   const [settingsSection, setSettingsSection] = useState<
     "appearance" | "review" | "observer" | "data" | "editor"
-  >("appearance");
+  >(initialDataNotice ? "data" : "appearance");
   const [repositorySection, setRepositorySection] =
     useState<RepositorySection>("history");
   useEffect(() => {
@@ -125,13 +143,16 @@ export default function App() {
   const normalDraft = useRef("");
   const [discardPoint, setDiscardPoint] = useState<RecoveryPoint | null>(null);
   const [path, setPath] = useState(""),
-    [notification, setNotification] = useState("");
+    [notification, setNotification] = useState(initialDataNotice ?? "");
   const [openingEditor, setOpeningEditor] = useState(false);
   const sequence = useRef(0),
     workspaceEpoch = useRef(0),
     current = useRef<Changes | null>(null),
     polling = useRef(false);
   current.current = changes;
+  useEffect(() => {
+    onWorkspaceChange?.(changes?.workspace.id);
+  }, [changes?.workspace.id, onWorkspaceChange]);
   selectedRef.current = selected;
   function setBusy(value: boolean) {
     busyRef.current = value;
@@ -160,6 +181,25 @@ export default function App() {
       void request<Workspace[]>("recent_workspaces")
         .then(setRecent)
         .catch((e) => setError(asError(e)));
+      if (initialWorkspaceId) {
+        const restoreEpoch = workspaceEpoch.current;
+        void request<Changes>("changes", { workspaceId: initialWorkspaceId })
+          .then(async (next) => {
+            if (restoreEpoch !== workspaceEpoch.current) return;
+            current.current = next;
+            setChanges(next);
+            try {
+              setDraft(clientStorage.readDraft(next.workspace.id));
+            } catch {
+              setDraft("");
+            }
+            if (next.files.length)
+              await loadFile(next.files[0], next.workspace);
+          })
+          .catch((e) => {
+            if (restoreEpoch === workspaceEpoch.current) setError(asError(e));
+          });
+      }
     } else if (
       new URLSearchParams(window.location.search).get("demo") === "1"
     ) {
@@ -405,7 +445,7 @@ export default function App() {
       setRecent(projects);
       setDialog(null);
       try {
-        setDraft(localStorage.getItem(`proof:draft:${workspace.id}`) ?? "");
+        setDraft(clientStorage.readDraft(workspace.id));
       } catch {
         setDraft("");
       }
@@ -794,7 +834,7 @@ export default function App() {
         setDraft("");
         setAmendTarget(null);
         try {
-          localStorage.removeItem(`proof:draft:${prepared.workspaceId}`);
+          clientStorage.removeDraft(prepared.workspaceId);
         } catch {
           /* Draft is already cleared in memory. */
         }
@@ -822,7 +862,7 @@ export default function App() {
     setDraft(message);
     if (!changes) return;
     try {
-      localStorage.setItem(`proof:draft:${changes.workspace.id}`, message);
+      clientStorage.writeDraft(changes.workspace.id, message);
     } catch (error) {
       setError({
         code: "DRAFT_STORAGE",
@@ -1982,10 +2022,7 @@ export default function App() {
             onChange={(e) => {
               setDraft(e.target.value);
               try {
-                localStorage.setItem(
-                  `proof:draft:${preview.workspaceId}`,
-                  e.target.value,
-                );
+                clientStorage.writeDraft(preview.workspaceId, e.target.value);
               } catch (error) {
                 setError({
                   code: "DRAFT_STORAGE",
@@ -2042,6 +2079,9 @@ export default function App() {
       {dialog === "settings" && (
         <Settings
           onError={(error) => setError(asError(error))}
+          onRecentChanged={async () =>
+            setRecent(await request<Workspace[]>("recent_workspaces"))
+          }
           initialSection={settingsSection}
           workspaces={recent}
           workspaceId={changes?.workspace.id}

@@ -1,6 +1,14 @@
 # Proof 验收记录
 
-## 最新验收检查点 · 2026-09-13 External editor
+## 最新验收检查点 · 2026-09-13 Local data
+
+本地数据管理已接入暂停观察、隐藏最近项目、按仓库删除（覆盖 linked Worktree、隔离 clone）及全局清理。schema 升至 5；恢复副本、临时 Index、WAL 和采集运行文件使用可重试清理流程。旧请求、排队设置与跨窗口草稿写入不能重建已删记录。详见 `DATA-MANAGEMENT.md`、`CODE-REVIEW-10.md`。
+
+原生独立应用已验证仓库删除及重新打开：隐藏入口不删记录，确认框仅含 main/linked，删除后 clone 保留，旧 Diff/草稿清空，重新登记的身份未继承信任/Review。SQLite 和三个测试仓库的文件、Index、HEAD、配置核对一致。原生全部记录删除、Windows 清理和诊断导出仍待验收或实现；完整 P0 未完成。
+
+完整 Rust 150 项通过、1 项既有 Observer 启动计时失败、2 条 opt-in 跳过；失败测得总耗时 548.722125 ms，原二进制定向重试通过，但未关闭原因。前端模型 29 项、页面流程 23 项通过，含实际 core/Git 的 Commit、Amend、全部提交和记录删除。类型检查、Clippy、格式检查和前端/Tauri 构建通过；新包是独立 ad-hoc 调试包，构建输入和来源归档于 `.artifacts/latest-build.json`，不是公证发布包。
+
+## 此前验收检查点 · 2026-09-13 External editor
 
 Changes Diff 工具栏及 Command 可将当前 Worktree 文件交给用户配置的外部编辑器；设置支持应用默认、仓库继承/覆盖/禁用，保存不会启动应用。文件目标从原生 snapshot 确定；应用、设置、信任或文件身份在排队后改变则拒绝。History 禁用该命令；已有菜单中的文件目标不跟随后台选择变化。实现边界见 `EXTERNAL-EDITOR.md`。
 

@@ -6,7 +6,7 @@ import {
   GitCommit,
   MagnifyingGlass,
 } from "@phosphor-icons/react";
-import { asError, request } from "../api";
+import { asError, useRequest } from "../api";
 import type { CommitEntry, FileBlame, ProofError } from "../types";
 import { Modal } from "./Modal";
 
@@ -19,6 +19,7 @@ export function FileHistory({
   path: string;
   onClose: () => void;
 }) {
+  const request = useRequest();
   const [commits, setCommits] = useState<CommitEntry[]>([]);
   const [more, setMore] = useState(false);
   const [historyBusy, setHistoryBusy] = useState(false);

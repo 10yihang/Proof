@@ -44,6 +44,8 @@ async function openFixture(page: Page) {
             if (_ === "watch_workspace") return true;
             state.calls.push(command + (args.path ? ":" + args.path : ""));
             state.actions.push({ command, args: structuredClone(args) });
+            if (command === "data_session")
+              return { epoch: 0, wipeEpoch: 0, deletedWorkspaceIds: [] };
             if (command === "preferences") return preferences;
             if (command === "recent_workspaces") return [changes.workspace];
             if (command === "open_workspace") return changes.workspace;
@@ -805,4 +807,550 @@ test("editor Command keeps its displayed file target when live Changes moves to 
     ),
   );
   expect(request.args.snapshotId).toContain("src/api/requests.ts");
+});
+
+async function dataFixture(page: Page) {
+  await openFixture(page);
+  await page.evaluate((defaults) => {
+    const w = window as any,
+      original = w.__TAURI_INTERNALS__.invoke,
+      base = w.fixture.changes.workspace;
+    const cleanup = {
+      pendingContentDeletions: 0,
+      contentCleanupError: null,
+      walCheckpointComplete: true,
+      databaseCompactionPending: false,
+    };
+    const state = (w.dataFixture = {
+      epoch: 0,
+      wipeEpoch: 0,
+      deleted: [] as string[],
+      hidden: [] as string[],
+      calls: [] as any[],
+      holdDelete: false,
+      plan: null as any,
+      catalog: [
+        base,
+        {
+          ...base,
+          id: "linked-workspace",
+          name: "linked",
+          path: "/fixture/linked",
+        },
+        {
+          ...base,
+          id: "other-workspace",
+          repositoryId: "other-repository",
+          name: "Other project",
+          path: "/fixture/other",
+        },
+      ],
+    });
+    const session = () => ({
+      epoch: state.epoch,
+      wipeEpoch: state.wipeEpoch,
+      deletedWorkspaceIds: state.deleted,
+    });
+    w.__TAURI_INTERNALS__.invoke = async (name: string, payload: any) => {
+      if (name !== "proof_command") return original(name, payload);
+      const { command, args } = payload;
+      if (command === "data_session") return session();
+      if (args._dataEpoch !== state.epoch)
+        throw {
+          code: "DATA_EPOCH_CHANGED",
+          message: "Records changed",
+          detail: "fixture",
+        };
+      const known = [
+        "preferences",
+        "recent_workspaces",
+        "data_workspaces",
+        "data_usage",
+        "remove_recent_workspace",
+        "prepare_data_deletion",
+        "cancel_data_deletion",
+        "delete_local_data",
+        "maintain_local_data",
+      ];
+      if (!known.includes(command)) return original(name, payload);
+      state.calls.push({ command, args: structuredClone(args) });
+      if (command === "preferences") return defaults;
+      if (command === "recent_workspaces")
+        return state.catalog.filter(
+          (item: any) => !state.hidden.includes(item.id),
+        );
+      if (command === "data_workspaces")
+        return state.catalog.map((workspace: any) => ({
+          workspace,
+          recent: !state.hidden.includes(workspace.id),
+        }));
+      if (command === "data_usage")
+        return {
+          applicationBytes: 1048576,
+          applicationBytesLowerBound: false,
+          softLimitBytes: 2147483648,
+          observerEvents: state.catalog.length ? 12 : 0,
+          observerSessions: 3,
+          observationPayloadBytes: 1024,
+          contentCollectionPaused: false,
+          cleanupPending: false,
+          databaseCompactionPending: false,
+          outputRetentionDays: 7,
+          observationRetentionDays: 30,
+          reviewRetentionDays: 180,
+          activeObserverScopes: 0,
+          pendingContentDeletions: 0,
+          contentCleanupError: null,
+        };
+      if (command === "remove_recent_workspace") {
+        state.hidden.push(args.workspaceId);
+        return;
+      }
+      if (command === "prepare_data_deletion")
+        return (state.plan = {
+          id: "data-preview",
+          scope: args.scope,
+          workspaces: state.catalog.filter(
+            (item: any) =>
+              args.scope.kind === "all" ||
+              item.repositoryId === args.scope.repositoryId,
+          ),
+          capturedAt: Date.now(),
+          counts: {
+            observerEvents: 12,
+            reviewRecords: 4,
+            operations: 2,
+            recoveryPoints: 1,
+            recoveryBytes: 4096,
+          },
+        });
+      if (command === "cancel_data_deletion") {
+        state.plan = null;
+        return;
+      }
+      if (command === "delete_local_data") {
+        if (state.holdDelete)
+          await new Promise<void>((resolve) => {
+            state.finishDelete = resolve;
+          });
+        const all = state.plan.scope.kind === "all",
+          removed = state.plan.workspaces.map((item: any) => item.id);
+        ++state.epoch;
+        state.deleted = all ? [] : [...state.deleted, ...removed];
+        if (all) state.wipeEpoch = state.epoch;
+        state.catalog = state.catalog.filter(
+          (item: any) => !removed.includes(item.id),
+        );
+        return {
+          session: session(),
+          deletedWorkspaceIds: removed,
+          all,
+          cleanup,
+          cleanupError: null,
+        };
+      }
+      return cleanup;
+    };
+  }, defaultPreferences);
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page
+    .locator(".settings-nav")
+    .getByRole("button", { name: "本地数据", exact: true })
+    .click();
+  await expect(page.locator(".data-usage-card")).toBeVisible();
+}
+
+test("data: removing a recent project keeps its records and current diff", async ({
+  page,
+}) => {
+  await dataFixture(page);
+  await page.evaluate(() =>
+    localStorage.setItem("proof:draft:workflow-test", "keep draft"),
+  );
+  await page
+    .getByRole("button", { name: "从最近项目移除", exact: true })
+    .click();
+  await expect(page.locator(".data-notice")).toContainText("保留");
+  await expect(
+    page.getByRole("button", { name: "从最近项目移除", exact: true }),
+  ).toBeDisabled();
+  expect(
+    await page.evaluate(() => ({
+      draft: localStorage.getItem("proof:draft:workflow-test"),
+      count: (window as any).dataFixture.catalog.length,
+      epoch: (window as any).dataFixture.epoch,
+    })),
+  ).toEqual({ draft: "keep draft", count: 3, epoch: 0 });
+  await page.getByRole("button", { name: "关闭", exact: true }).click();
+  await expect(page.locator(".diff-file-header")).toContainText("requests.ts");
+});
+
+test("data: repository deletion previews linked Worktrees, cancels, and clears only their drafts", async ({
+  page,
+}) => {
+  await dataFixture(page);
+  await page.evaluate(() => {
+    localStorage.setItem("proof:draft:workflow-test", "PRIVATE draft");
+    localStorage.setItem("proof:draft:linked-workspace", "PRIVATE linked");
+    localStorage.setItem("proof:draft:other-workspace", "keep other");
+  });
+  await page
+    .getByRole("button", { name: "查看此仓库的删除范围…", exact: true })
+    .click();
+  const confirmation = page.getByRole("group", {
+    name: "确认删除 Proof 记录",
+    exact: true,
+  });
+  await expect(confirmation).toContainText("/fixture/linked");
+  await expect(confirmation).not.toContainText("/fixture/other");
+  await confirmation.getByRole("button", { name: "取消", exact: true }).click();
+  await expect(confirmation).toHaveCount(0);
+  expect(await page.evaluate(() => (window as any).dataFixture.epoch)).toBe(0);
+  await page
+    .getByRole("button", { name: "查看此仓库的删除范围…", exact: true })
+    .click();
+  await page.screenshot({
+    path: ".artifacts/data-delete-preview-light.png",
+    animations: "disabled",
+  });
+  await confirmation
+    .getByRole("button", { name: "删除 Proof 记录", exact: true })
+    .click();
+  await expect(page.locator(".diff-file-header")).toHaveCount(0);
+  await expect(page.getByLabel("查看范围", { exact: true })).toContainText(
+    "Other project",
+  );
+  expect(
+    await page.evaluate(() => [
+      localStorage.getItem("proof:draft:workflow-test"),
+      localStorage.getItem("proof:draft:linked-workspace"),
+      localStorage.getItem("proof:draft:other-workspace"),
+    ]),
+  ).toEqual([null, null, "keep other"]);
+});
+
+test("data: completing deletion after Settings closes still clears the renderer and all Proof drafts", async ({
+  page,
+}) => {
+  await dataFixture(page);
+  await page.evaluate(() => {
+    (window as any).dataFixture.holdDelete = true;
+    localStorage.setItem("proof:draft:orphan", "PRIVATE orphan");
+    localStorage.setItem("unrelated-key", "keep unrelated");
+    localStorage.setItem("proof:file-view", "list");
+  });
+  await page.getByLabel("查看范围", { exact: true }).selectOption("");
+  await page
+    .getByRole("button", { name: "查看全部删除范围…", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "删除 Proof 记录", exact: true })
+    .click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => typeof (window as any).dataFixture.finishDelete),
+    )
+    .toBe("function");
+  await page.getByRole("button", { name: "关闭", exact: true }).click();
+  await expect(page.locator(".diff-file-header")).toBeVisible();
+  await page.evaluate(() => (window as any).dataFixture.finishDelete());
+  await expect(page.locator(".diff-file-header")).toHaveCount(0);
+  await expect(page.locator(".data-usage-card")).toBeVisible();
+  expect(
+    await page.evaluate(() => [
+      localStorage.getItem("proof:draft:orphan"),
+      localStorage.getItem("unrelated-key"),
+      localStorage.getItem("proof:data-wipe:1"),
+      localStorage.getItem("proof:file-view"),
+    ]),
+  ).toEqual([null, "keep unrelated", "1", null]);
+});
+
+test("data: startup completes a deletion whose renderer never acknowledged it", async ({
+  page,
+}) => {
+  await openFixture(page);
+  await page.evaluate(() => {
+    localStorage.setItem("proof:draft:workflow-test", "PRIVATE old draft");
+    localStorage.setItem("proof:draft:other-workspace", "keep other");
+  });
+  await page.addInitScript(() => {
+    const w = window as any;
+    const wrap = (bridge: any) => {
+      const original = bridge.invoke;
+      bridge.invoke = (name: string, payload: any) => {
+        if (name === "proof_command" && payload.command === "data_session")
+          return Promise.resolve({
+            epoch: 1,
+            wipeEpoch: 0,
+            deletedWorkspaceIds: ["workflow-test"],
+          });
+        if (name === "proof_command" && payload.command === "recent_workspaces")
+          return Promise.resolve([]);
+        return original(name, payload);
+      };
+      return bridge;
+    };
+    let bridge = w.__TAURI_INTERNALS__;
+    if (bridge) bridge = wrap(bridge);
+    Object.defineProperty(w, "__TAURI_INTERNALS__", {
+      configurable: true,
+      get: () => bridge,
+      set: (value) => {
+        bridge = wrap(value);
+      },
+    });
+  });
+  await page.reload();
+  await expect(page.locator(".recent-projects button")).toHaveCount(0);
+  await expect
+    .poll(() =>
+      page.evaluate(() => localStorage.getItem("proof:draft:workflow-test")),
+    )
+    .toBeNull();
+  expect(
+    await page.evaluate(() =>
+      localStorage.getItem("proof:draft:other-workspace"),
+    ),
+  ).toBe("keep other");
+});
+
+test("standards old queued preferences cannot borrow the deletion epoch", async ({
+  page,
+}) => {
+  await dataFixture(page);
+  await page.evaluate(() => {
+    const w = window as any,
+      orig = w.__TAURI_INTERNALS__.invoke;
+    w.prefWrites = [];
+    w.__TAURI_INTERNALS__.invoke = async (name: string, payload: any) => {
+      if (name === "proof_command" && payload.command === "set_preferences") {
+        if (payload.args._dataEpoch !== w.dataFixture.epoch)
+          throw {
+            code: "DATA_EPOCH_CHANGED",
+            message: "stale",
+            detail: "fixture",
+          };
+        w.prefWrites.push(structuredClone(payload.args));
+        if (w.prefWrites.length === 1)
+          return new Promise((resolve) => {
+            w.finishOldPreferences = resolve;
+          });
+        return null;
+      }
+      return orig(name, payload);
+    };
+  });
+  await page
+    .locator(".settings-nav")
+    .getByRole("button", { name: "外观与阅读", exact: true })
+    .click();
+  await page.getByRole("button", { name: "深色", exact: true }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => typeof (window as any).finishOldPreferences),
+    )
+    .toBe("function");
+  await page.getByRole("button", { name: "浅色", exact: true }).click();
+  await page
+    .locator(".settings-nav")
+    .getByRole("button", { name: "本地数据", exact: true })
+    .click();
+  await page.getByLabel("查看范围", { exact: true }).selectOption("");
+  await page
+    .getByRole("button", { name: "查看全部删除范围…", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "删除 Proof 记录", exact: true })
+    .click();
+  await expect
+    .poll(() => page.evaluate(() => (window as any).dataFixture.epoch))
+    .toBe(1);
+  await expect(page.locator(".diff-file-header")).toHaveCount(0);
+  await page.evaluate(async () => {
+    (window as any).finishOldPreferences(null);
+    await new Promise((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(resolve)),
+    );
+  });
+  const writes = await page.evaluate(() => (window as any).prefWrites);
+  console.log("old queued preference writes", JSON.stringify(writes));
+  expect(writes).toHaveLength(1);
+});
+
+test("standards delayed deletion cannot roll back the session and erase new drafts", async ({
+  page,
+}) => {
+  await openFixture(page);
+  const actual = await page.evaluate(async () => {
+    const w = window as any,
+      original = w.__TAURI_INTERNALS__.invoke;
+    let epoch = 0,
+      firstResolve: any;
+    const session = () => ({
+      epoch,
+      wipeEpoch: epoch === 2 ? 2 : 0,
+      deletedWorkspaceIds: [],
+    });
+    const cleanup = {
+      pendingContentDeletions: 0,
+      walCheckpointComplete: true,
+      databaseCompactionPending: false,
+    };
+    w.__TAURI_INTERNALS__.invoke = async (name: string, payload: any) => {
+      if (name !== "proof_command") return original(name, payload);
+      if (payload.command === "data_session") return session();
+      if (payload.args._dataEpoch !== epoch)
+        throw {
+          code: "DATA_EPOCH_CHANGED",
+          message: "stale",
+          detail: "fixture",
+        };
+      if (payload.command === "delete_local_data") {
+        epoch++;
+        const result = {
+          session: session(),
+          deletedWorkspaceIds: [],
+          all: epoch === 2,
+          cleanup,
+          cleanupError: null,
+        };
+        if (epoch === 1)
+          return new Promise((resolve) => {
+            firstResolve = () => resolve(result);
+          });
+        return result;
+      }
+      if (payload.command === "recent_workspaces") return [];
+      return original(name, payload);
+    };
+    const { request } = await import("/src/api.ts");
+    const first = request("delete_local_data", { previewId: "first" });
+    while (!firstResolve)
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    try {
+      await request("preferences");
+    } catch {}
+    await request("delete_local_data", { previewId: "second" });
+    localStorage.setItem("proof:draft:v2:fresh-after-delete", "new user work");
+    firstResolve();
+    await first.catch(() => {});
+    return {
+      draft: localStorage.getItem("proof:draft:v2:fresh-after-delete"),
+      wipe: (await import("/src/client-storage.ts")).readClientWipeEpoch(),
+    };
+  });
+  console.log("delayed deletion state", JSON.stringify(actual));
+  expect(actual).toEqual({ draft: "new user work", wipe: 2 });
+});
+
+test("standards automatic restoration after deletion must not replace a newer workspace selection", async ({
+  page,
+}) => {
+  await dataFixture(page);
+  await page.evaluate(() => {
+    const w = window as any,
+      original = w.__TAURI_INTERNALS__.invoke;
+    let held = false;
+    w.__TAURI_INTERNALS__.invoke = async (name: string, payload: any) => {
+      if (name !== "proof_command") return original(name, payload);
+      const { command, args } = payload;
+      if (
+        command === "changes" &&
+        args._dataEpoch === 1 &&
+        args.workspaceId === "workflow-test" &&
+        !held
+      ) {
+        held = true;
+        const value = structuredClone(w.fixture.changes);
+        return new Promise((resolve) => {
+          w.finishOldRestore = () => resolve(value);
+        });
+      }
+      if (command === "open_workspace" && args.path === "/fixture/linked")
+        return w.dataFixture.catalog.find(
+          (entry: any) => entry.id === "linked-workspace",
+        );
+      if (command === "changes" && args.workspaceId === "linked-workspace")
+        return {
+          ...structuredClone(w.fixture.changes),
+          workspace: w.dataFixture.catalog.find(
+            (entry: any) => entry.id === "linked-workspace",
+          ),
+        };
+      const value = await original(name, payload);
+      if (command === "file_diff") value.workspaceId = args.workspaceId;
+      return value;
+    };
+  });
+  await page
+    .getByLabel("查看范围", { exact: true })
+    .selectOption("other-workspace");
+  await page
+    .getByRole("button", { name: "查看此仓库的删除范围…", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "删除 Proof 记录", exact: true })
+    .click();
+  await expect
+    .poll(() => page.evaluate(() => typeof (window as any).finishOldRestore))
+    .toBe("function");
+  await page.getByRole("button", { name: "关闭", exact: true }).click();
+  await page
+    .locator(".recent-projects button")
+    .filter({ hasText: "/fixture/linked" })
+    .click();
+  await expect(page.locator(".workspace-picker")).toContainText("linked");
+  await expect(page.locator(".diff-file-header")).toContainText("requests.ts");
+  await page.evaluate(async () => {
+    (window as any).finishOldRestore();
+    await new Promise((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(resolve)),
+    );
+  });
+  await expect(page.locator(".workspace-picker")).toContainText("linked");
+});
+
+test("standards peer window wipe marker must not be rolled back by a late session", async ({
+  page,
+}) => {
+  await openFixture(page);
+  const actual = await page.evaluate(async () => {
+    const w = window as any,
+      original = w.__TAURI_INTERNALS__.invoke;
+    let provideSession: any,
+      first = true;
+    w.__TAURI_INTERNALS__.invoke = async (name: string, payload: any) => {
+      if (name !== "proof_command") return original(name, payload);
+      if (payload.command === "preferences" && first) {
+        first = false;
+        throw {
+          code: "DATA_EPOCH_CHANGED",
+          message: "deleted",
+          detail: "fixture",
+        };
+      }
+      if (payload.command === "data_session")
+        return new Promise((resolve) => {
+          provideSession = () =>
+            resolve({ epoch: 1, wipeEpoch: 1, deletedWorkspaceIds: [] });
+        });
+      return original(name, payload);
+    };
+    const { request } = await import("/src/api.ts");
+    const pending = request("preferences").catch(() => {});
+    while (!provideSession)
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    // A peer renderer has already handled the later global wipe and saved new work.
+    localStorage.setItem("proof:data-wipe-epoch", "2");
+    localStorage.setItem("proof:draft:peer-new-work", "new work after wipe 2");
+    provideSession();
+    await pending;
+    return {
+      wipe: localStorage.getItem("proof:data-wipe-epoch"),
+      draft: localStorage.getItem("proof:draft:peer-new-work"),
+    };
+  });
+  console.log("peer wipe after late session", JSON.stringify(actual));
+  expect(actual).toEqual({ wipe: "2", draft: "new work after wipe 2" });
 });

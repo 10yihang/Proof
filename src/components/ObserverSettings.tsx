@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { ArrowClockwise, Plug, ShieldCheck } from "@phosphor-icons/react";
-import { asError, isDesktop, request } from "../api";
+import { asError, isDesktop, useRequest } from "../api";
 import type {
   ObserverProbe,
   ObserverProgramLocation,
@@ -8,6 +8,7 @@ import type {
 } from "../types";
 
 export function ObserverSettings({ demo }: { demo: boolean }) {
+  const request = useRequest();
   const [locations, setLocations] = useState<ObserverProgramLocation[]>([]);
   const [error, setError] = useState<ProofError | null>(null);
   useEffect(() => {
@@ -80,6 +81,7 @@ function AgentVersion({
   executable: string;
   available: boolean;
 }) {
+  const request = useRequest();
   const [path, setPath] = useState(executable);
   const [edited, setEdited] = useState(false);
   const [probe, setProbe] = useState<ObserverProbe | null>(null);

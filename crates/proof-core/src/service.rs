@@ -22,19 +22,26 @@ pub struct Proof {
     pub(crate) contexts: VecDeque<DiffContext>,
     previews: HashMap<String, CommitPreview>,
     pub(crate) graphs: VecDeque<crate::graph::GraphSnapshot>,
+    pub(crate) data_previews: VecDeque<crate::local_data::DataDeletionPreview>,
+    pub(crate) cached_data_epoch: u64,
 }
 impl Proof {
     pub fn open(data_dir: impl AsRef<Path>) -> Result<Self> {
-        let core = Self {
-            store: Store::open(data_dir.as_ref())?,
-            data_dir: data_dir.as_ref().to_path_buf(),
+        let store = Store::open(data_dir.as_ref())?;
+        let data_dir = fs::canonicalize(data_dir.as_ref())?;
+        let mut core = Self {
+            store,
+            data_dir,
             snapshots: HashMap::new(),
             snapshot_order: VecDeque::new(),
             contexts: VecDeque::new(),
             previews: HashMap::new(),
             graphs: VecDeque::new(),
+            data_previews: VecDeque::new(),
+            cached_data_epoch: 0,
         };
         core.maintain_local_data()?;
+        core.synchronize_data_epoch()?;
         Ok(core)
     }
     pub(crate) fn git(&self) -> Result<Git> {
@@ -47,7 +54,27 @@ impl Proof {
         self.store.register(&repo_key, &key, workspace)
     }
     pub fn recent_workspaces(&self) -> Result<Vec<Workspace>> {
-        self.store.workspaces()
+        let mut statement = self
+            .store
+            .connection
+            .prepare("SELECT workspace_id FROM hidden_recent_workspaces")?;
+        let hidden = statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<std::collections::HashSet<_>>>()?;
+        Ok(self
+            .store
+            .workspaces()?
+            .into_iter()
+            .filter(|workspace| !hidden.contains(&workspace.id))
+            .collect())
+    }
+    pub(crate) fn clear_reading_cache(&mut self) {
+        self.snapshots.clear();
+        self.snapshot_order.clear();
+        self.contexts.clear();
+        self.previews.clear();
+        self.graphs.clear();
+        self.data_previews.clear();
     }
     pub fn set_trust(&self, id: &str, trusted: bool) -> Result<()> {
         self.store.trust(id, trusted)
@@ -302,7 +329,7 @@ impl Proof {
         let lock = IndexLock::acquire(Path::new(&workspace.git_dir))?;
         self.validate(&diff)?;
         let bytes = git.index_bytes(&workspace)?;
-        let private = tempfile::TempDir::new_in(&self.data_dir)?;
+        let private = self.temporary_index(&workspace.id)?;
         let private_index = private.path().join("index");
         if !bytes.is_empty() {
             fs::write(&private_index, &bytes)?;
@@ -576,12 +603,17 @@ impl Proof {
                 ));
             }
         }
-        let mut index = tempfile::NamedTempFile::new_in(&self.data_dir)?;
+        let private = self.temporary_index(&workspace.id)?;
+        let index_path = private.path().join("index");
+        let mut index = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&index_path)?;
         index.write_all(&bytes)?;
         index.flush()?;
         let mut tree_cmd = git.command(&workspace)?;
         tree_cmd.arg("write-tree");
-        git::index_override(&mut tree_cmd, index.path());
+        git::index_override(&mut tree_cmd, &index_path);
         let expected_tree = git::text(process::checked(process::run(
             tree_cmd,
             None,
@@ -594,7 +626,7 @@ impl Proof {
         if preview.amend {
             command.arg("--amend");
         }
-        git::index_override(&mut command, index.path());
+        git::index_override(&mut command, &index_path);
         let output = process::run(command, Some(message.as_bytes()), Duration::from_secs(120))?;
         let actual_head = git.head(&workspace)?;
         if output.code != 0 {

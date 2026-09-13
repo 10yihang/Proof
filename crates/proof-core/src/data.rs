@@ -15,6 +15,8 @@ const OBSERVATION_RESERVE: u64 = 2 * crate::OBSERVER_INPUT_LIMIT as u64 + 8192;
 #[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DataCleanup {
+    pub pending_content_deletions: u64,
+    pub content_cleanup_error: Option<String>,
     pub redacted_outputs: usize,
     pub deleted_events: usize,
     pub deleted_sessions: usize,
@@ -30,6 +32,9 @@ pub struct DataCleanup {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DataUsage {
+    pub active_observer_scopes: u64,
+    pub pending_content_deletions: u64,
+    pub content_cleanup_error: Option<String>,
     pub application_bytes: u64,
     pub application_bytes_lower_bound: bool,
     pub soft_limit_bytes: u64,
@@ -49,11 +54,14 @@ impl Proof {
     /// deletes and output redaction share one transaction; secure_delete plus a
     /// completed WAL checkpoint removes the application's old database copies.
     pub fn maintain_local_data(&self) -> Result<DataCleanup> {
+        let (pending_content_deletions, content_cleanup_error) =
+            self.finish_pending_file_deletions()?;
         self.expire_recovery()?;
         let current = now();
         let tx =
             Transaction::new_unchecked(&self.store.connection, TransactionBehavior::Immediate)?;
         let mut report = DataCleanup {
+            pending_content_deletions,content_cleanup_error,
             redacted_outputs: tx.execute("UPDATE observer_events SET payload=json_set(payload,'$.output',NULL,'$.fieldStatus.output','expired') WHERE content_expires_at<=? AND json_type(payload,'$.output')='text'",[current])?,
             deleted_events: tx.execute("DELETE FROM observer_events WHERE expires_at<=?",[current])?,
             ..DataCleanup::default()
@@ -122,6 +130,10 @@ impl Proof {
         }
         tx.execute("UPDATE observer_permissions SET enabled=0,generation=generation+1 WHERE workspace_id=?",[workspace_id])?;
         tx.execute(
+            "UPDATE settings SET value=CAST(value AS INTEGER)+1 WHERE key='data_epoch'",
+            [],
+        )?;
+        tx.execute(
             "UPDATE settings SET value=CAST(value AS INTEGER)+1 WHERE key='observer_revision'",
             [],
         )?;
@@ -171,6 +183,9 @@ impl Proof {
         )?;
         let (application_bytes, complete) = application_data_bytes(&self.data_dir)?;
         Ok(DataUsage {
+            active_observer_scopes:self.store.connection.query_row("SELECT count(*) FROM observer_permissions WHERE enabled=1 AND (? IS NULL OR workspace_id=?)",params![workspace_id,workspace_id],|r|r.get(0))?,
+            pending_content_deletions: cleanup.pending_content_deletions,
+            content_cleanup_error: cleanup.content_cleanup_error,
             application_bytes,
             application_bytes_lower_bound: !complete,
             soft_limit_bytes: DATA_SOFT_LIMIT,

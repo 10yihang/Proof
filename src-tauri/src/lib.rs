@@ -79,31 +79,65 @@ fn dispatch(
             .and_then(|v| v.as_str())
             .ok_or_else(|| Error::new("INVALID_REQUEST", "请求字段缺失。", key))
     }
+    fn session(core: &Mutex<Proof>, epoch: u64) -> Result<std::sync::MutexGuard<'_, Proof>, Error> {
+        let mut proof = core.lock().map_err(|_| unavailable())?;
+        proof.synchronize_data_epoch()?;
+        proof.check_data_epoch(epoch)?;
+        Ok(proof)
+    }
+    if command == "data_session" {
+        let mut proof = core.lock().map_err(|_| unavailable())?;
+        proof.synchronize_data_epoch()?;
+        return serde_json::to_value(proof.data_session()?).map_err(Error::from);
+    }
+    let data_epoch = args["_dataEpoch"].as_u64().ok_or_else(|| {
+        Error::new(
+            "DATA_SESSION_REQUIRED",
+            "请重新载入 Proof 后重试。",
+            "Missing renderer data generation",
+        )
+    })?;
     if command == "observer_program_locations" {
+        drop(session(core, data_epoch)?);
         return serde_json::to_value(proof_core::observer_program_locations()).map_err(Error::from);
     }
     if command == "editor_applications" {
+        drop(session(core, data_epoch)?);
         return serde_json::to_value(proof_core::editor_applications()).map_err(Error::from);
     }
     if command == "open_in_editor" {
-        let job = core
-            .lock()
-            .map_err(|_| unavailable())?
-            .prepare_editor_open(string(&args, "snapshotId")?)?;
+        let job = {
+            let proof = session(core, data_epoch)?;
+            proof.prepare_editor_open(string(&args, "snapshotId")?)?
+        };
         return serde_json::to_value(job.run()?).map_err(Error::from);
     }
     if command == "probe_observer" {
-        let job = core
-            .lock()
-            .map_err(|_| unavailable())?
-            .prepare_observer_probe(
+        let job = {
+            let proof = session(core, data_epoch)?;
+            proof.prepare_observer_probe(
                 serde_json::from_value(args["agent"].clone())?,
                 string(&args, "executablePath")?,
-            )?;
+            )?
+        };
         return serde_json::to_value(job.run()?).map_err(Error::from);
     }
-    let mut proof = core.lock().map_err(|_| unavailable())?;
+    let mut proof = session(core, data_epoch)?;
     let value = match command {
+        "data_workspaces" => serde_json::to_value(proof.data_workspaces()?),
+        "remove_recent_workspace" => {
+            serde_json::to_value(proof.remove_recent_workspace(string(&args, "workspaceId")?)?)
+        }
+        "prepare_data_deletion" => serde_json::to_value(
+            proof.prepare_data_deletion(serde_json::from_value(args["scope"].clone())?)?,
+        ),
+        "cancel_data_deletion" => {
+            proof.cancel_data_deletion(string(&args, "previewId")?);
+            Ok(serde_json::Value::Null)
+        }
+        "delete_local_data" => {
+            serde_json::to_value(proof.delete_local_data(string(&args, "previewId")?)?)
+        }
         "recent_workspaces" => serde_json::to_value(proof.recent_workspaces()?),
         "open_workspace" => serde_json::to_value(proof.open_workspace(string(&args, "path")?)?),
         "set_trust" => serde_json::to_value(proof.set_trust(
@@ -132,6 +166,9 @@ fn dispatch(
         "maintain_local_data" => serde_json::to_value(proof.maintain_local_data()?),
         "clear_observer_data" => {
             serde_json::to_value(proof.clear_observer_data(string(&args, "workspaceId")?)?)
+        }
+        "pause_observer_scope" => {
+            serde_json::to_value(proof.pause_observer_scope(args["workspaceId"].as_str())?)
         }
         "changes" => serde_json::to_value(proof.changes(string(&args, "workspaceId")?)?),
         "file_diff" => serde_json::to_value(proof.file_diff(
@@ -262,6 +299,46 @@ mod tests {
     };
 
     #[test]
+    fn deletion_epoch_rejects_stale_renderer_settings_including_delayed_writes() {
+        let temp = tempfile::tempdir().unwrap();
+        let core = Mutex::new(Proof::open(temp.path()).unwrap());
+        let preview = dispatch(
+            &core,
+            "prepare_data_deletion",
+            serde_json::json!({"_dataEpoch":0,"scope":{"kind":"all"}}),
+        )
+        .unwrap();
+        let deleted = dispatch(
+            &core,
+            "delete_local_data",
+            serde_json::json!({"_dataEpoch":0,"previewId":preview["id"]}),
+        )
+        .unwrap();
+        let preferences = proof_core::Preferences {
+            font_size: 25,
+            ..proof_core::Preferences::default()
+        };
+        let stale = dispatch(
+            &core,
+            "set_preferences",
+            serde_json::json!({"_dataEpoch":0,"preferences":preferences}),
+        )
+        .unwrap_err();
+        assert_eq!(stale.code, "DATA_EPOCH_CHANGED");
+        assert_eq!(
+            core.lock().unwrap().preferences().unwrap().font_size,
+            proof_core::Preferences::default().font_size
+        );
+        assert!(dispatch(&core, "preferences", serde_json::json!({})).is_err());
+        assert!(dispatch(
+            &core,
+            "set_preferences",
+            serde_json::json!({"_dataEpoch":deleted["session"]["epoch"],"preferences":preferences})
+        )
+        .is_ok());
+    }
+
+    #[test]
     fn slow_version_query_does_not_hold_the_git_core_mutex() {
         let temp = tempfile::tempdir().unwrap();
         let data = temp.path().join("data");
@@ -278,7 +355,7 @@ mod tests {
             dispatch(
                 &worker,
                 "probe_observer",
-                serde_json::json!({"agent":"codex","executablePath":executable}),
+                serde_json::json!({"agent":"codex","executablePath":executable,"_dataEpoch":0}),
             )
         });
         let deadline = Instant::now() + Duration::from_secs(3);
@@ -291,6 +368,6 @@ mod tests {
         assert!(started, "version fixture was not started");
         assert!(available, "version process kept the Git mutex");
         assert_eq!(result.unwrap_err().code, "PROCESS_TIMEOUT");
-        assert!(dispatch(&core, "preferences", serde_json::json!({})).is_ok());
+        assert!(dispatch(&core, "preferences", serde_json::json!({"_dataEpoch":0})).is_ok());
     }
 }

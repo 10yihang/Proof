@@ -163,12 +163,66 @@ test("actual Git workflow: live save, branch, selected hunk Commit, Amend and Co
     expect(git("status", "--porcelain")).toBe("");
     expect(git("show", "HEAD:extra.txt")).toBe("Unselected file");
     expect(git("show", "HEAD:src/api/client.ts")).toContain("keep-unstaged");
+    const preservedHead = git("rev-parse", "HEAD"),
+      preservedIndex = readFileSync(join(repo, ".git/index")),
+      preservedConfig = readFileSync(join(repo, ".git/config")),
+      preservedSource = readFileSync(join(repo, "src/api/client.ts"));
+    await page.getByLabel("Commit message").fill("Private draft to remove");
+    expect(
+      await page.evaluate(
+        (id) => localStorage.getItem(`proof:draft:v0:e0:${id}`),
+        workspace.id,
+      ),
+    ).toBe("Private draft to remove");
+    await page.getByRole("button", { name: "设置", exact: true }).click();
+    await page
+      .locator(".settings-nav")
+      .getByRole("button", { name: "本地数据", exact: true })
+      .click();
+    await expect(page.locator(".data-usage-card")).toBeVisible();
+    await page
+      .getByRole("button", { name: "从最近项目移除", exact: true })
+      .click();
+    expect(await invoke("recent_workspaces")).toHaveLength(0);
+    expect(await invoke("data_workspaces")).toHaveLength(1);
+    await page
+      .getByRole("button", { name: "查看此仓库的删除范围…", exact: true })
+      .click();
+    await expect(
+      page.getByRole("group", { name: "确认删除 Proof 记录", exact: true }),
+    ).toContainText(repo);
+    await page
+      .getByRole("button", { name: "删除 Proof 记录", exact: true })
+      .click();
+    await expect(page.locator(".data-usage-card")).toBeVisible();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          (id) => localStorage.getItem(`proof:draft:v0:e0:${id}`),
+          workspace.id,
+        ),
+      )
+      .toBeNull();
+    const session = await invoke("data_session");
+    expect(
+      await invoke("data_workspaces", { _dataEpoch: session.epoch }),
+    ).toHaveLength(0);
+    expect(git("rev-parse", "HEAD")).toBe(preservedHead);
+    expect(readFileSync(join(repo, ".git/index"))).toEqual(preservedIndex);
+    expect(readFileSync(join(repo, ".git/config"))).toEqual(preservedConfig);
+    expect(readFileSync(join(repo, "src/api/client.ts"))).toEqual(
+      preservedSource,
+    );
+    await page.reload();
+    await expect(page.locator(".recent-projects button")).toHaveCount(0);
     console.log(
       JSON.stringify({
         fixture: repo,
         selectedCommit,
         finalHead: git("rev-parse", "HEAD"),
         status: "clean",
+        dataDeletion:
+          "UI removed recent and repository records; source/index/HEAD/config preserved; renderer reload stayed empty",
         transport: "test NDJSON; actual core/Git, not Tauri IPC",
       }),
     );
