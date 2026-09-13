@@ -3,6 +3,8 @@ use std::sync::{Arc, Mutex};
 use tauri::Manager;
 
 struct AppState(Arc<Mutex<Proof>>);
+#[cfg(unix)]
+mod observer;
 mod watcher;
 
 #[tauri::command]
@@ -53,13 +55,22 @@ async fn watch_workspace(
 #[tauri::command]
 async fn proof_command(
     state: tauri::State<'_, AppState>,
+    #[cfg(unix)] observer: tauri::State<'_, observer::ObserverState>,
     command: String,
     args: serde_json::Value,
 ) -> Result<serde_json::Value, Error> {
     let core = state.0.clone();
-    tauri::async_runtime::spawn_blocking(move || dispatch(&core, &command, args))
-        .await
-        .map_err(|e| Error::new("CORE_UNAVAILABLE", "本地核心任务未完成。", e))?
+    #[cfg(unix)]
+    let observer = observer.inner.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        #[cfg(unix)]
+        if observer::handles(&command) {
+            return observer::dispatch(&core, &observer, &command, args);
+        }
+        dispatch(&core, &command, args)
+    })
+    .await
+    .map_err(|e| Error::new("CORE_UNAVAILABLE", "本地核心任务未完成。", e))?
 }
 
 fn dispatch(
@@ -259,6 +270,30 @@ fn dispatch(
             string(&args, "oid")?,
             args["parent"].as_u64().unwrap_or(0) as usize,
         )?),
+        "compare_commit" => serde_json::to_value(proof.compare_commit(
+            string(&args, "workspaceId")?,
+            string(&args, "oid")?,
+            args["parent"].as_u64().unwrap_or(0) as usize,
+        )?),
+        "compare_refs" => serde_json::to_value(proof.compare_refs(
+            string(&args, "workspaceId")?,
+            string(&args, "base")?,
+            string(&args, "target")?,
+        )?),
+        "compare_file" => serde_json::to_value(proof.compare_file(
+            string(&args, "workspaceId")?,
+            string(&args, "base")?,
+            string(&args, "target")?,
+            string(&args, "path")?,
+        )?),
+        "observer_file_context" => serde_json::to_value(
+            proof.observer_file_context(string(&args, "workspaceId")?, string(&args, "path")?)?,
+        ),
+        "observer_events" => serde_json::to_value(proof.observer_events(
+            string(&args, "workspaceId")?,
+            args["path"].as_str(),
+            args["offset"].as_u64().unwrap_or(0) as usize,
+        )?),
         "branches" => serde_json::to_value(proof.branches(string(&args, "workspaceId")?)?),
         "worktrees" => serde_json::to_value(proof.worktrees(string(&args, "workspaceId")?)?),
         "switch_branch" => serde_json::to_value(proof.switch_branch_from(
@@ -280,9 +315,25 @@ pub fn run() {
             let data_dir = std::env::var_os("PROOF_DATA_DIR")
                 .map(std::path::PathBuf::from)
                 .unwrap_or(app.path().app_data_dir()?);
-            app.manage(AppState(Arc::new(Mutex::new(Proof::open(data_dir)?))));
+            let core = Arc::new(Mutex::new(Proof::open(&data_dir)?));
+            #[cfg(unix)]
+            {
+                let observer = observer::ObserverState::new(data_dir, app.path().home_dir()?)?;
+                observer.start(core.clone());
+                app.manage(observer);
+            }
+            app.manage(AppState(core));
             app.manage(Mutex::new(watcher::WorkspaceWatch::default()));
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                #[cfg(unix)]
+                window
+                    .state::<observer::ObserverState>()
+                    .running
+                    .store(false, std::sync::atomic::Ordering::Release);
+            }
         })
         .invoke_handler(tauri::generate_handler![proof_command, watch_workspace])
         .run(tauri::generate_context!())

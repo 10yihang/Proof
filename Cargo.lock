@@ -2537,6 +2537,7 @@ version = "0.1.0-alpha.1"
 dependencies = [
  "notify",
  "proof-core",
+ "proof-observer",
  "serde",
  "serde_json",
  "tauri",

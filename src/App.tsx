@@ -46,6 +46,7 @@ import type {
   RecoveryAction,
   EditorOpenResult,
 } from "./types";
+import { HistoryDiff, type HistoryComparison } from "./components/HistoryDiff";
 import { DiffView } from "./components/DiffView";
 import { FileTree } from "./components/FileTree";
 import { ContextInspector } from "./components/ContextInspector";
@@ -60,6 +61,7 @@ import { useRepositoryLayout } from "./use-repository-layout";
 import { DiffCache } from "./diff-cache";
 import { BranchPicker } from "./components/BranchPicker";
 import { CommitComposer } from "./components/CommitComposer";
+import { CommitWorkspace } from "./components/CommitWorkspace";
 import { shouldDismissDrawer } from "./components/panel-focus";
 
 type EditorTarget = Pick<FileDiff, "id" | "workspaceId" | "path" | "side">;
@@ -115,8 +117,64 @@ export default function App({
   const [dialog, setDialog] = useState<Dialog>(
       initialDataNotice ? "settings" : null,
     ),
-    [tab, setTab] = useState<"changes" | "repository">("changes");
+    [tab, setTab] = useState<
+      "changes" | "commit" | "repository" | `diff:${string}`
+    >("changes");
+  const [diffTabs, setDiffTabs] = useState<
+    {
+      id: `diff:${string}`;
+      workspaceId: string;
+      selection: HistoryComparison;
+    }[]
+  >([]);
+  function openHistoryDiff(selection: HistoryComparison) {
+    if (!changes) return;
+    const id =
+      `diff:${selection.base ?? "commit"}:${selection.target}` as const;
+    setDiffTabs((previous) =>
+      previous.some(
+        (t) => t.id === id && t.workspaceId === changes.workspace.id,
+      )
+        ? previous.map((t) =>
+            t.id === id && t.workspaceId === changes.workspace.id
+              ? { ...t, selection }
+              : t,
+          )
+        : [
+            ...previous
+              .filter((t) => t.workspaceId === changes.workspace.id)
+              .slice(-7),
+            { id, workspaceId: changes.workspace.id, selection },
+          ],
+    );
+    setFocused(false);
+    setTab(id);
+    requestAnimationFrame(() => {
+      const button = document.querySelector<HTMLButtonElement>(
+        ".diff-tab-item.active .diff-tab-button",
+      );
+      button?.focus();
+      button?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    });
+  }
+  function closeDiffTab(id: string) {
+    setDiffTabs((previous) => previous.filter((t) => t.id !== id));
+    if (tab === id) {
+      setTab("repository");
+      setRepositorySection("history");
+    }
+  }
+  useEffect(() => {
+    setDiffTabs((previous) =>
+      previous.filter((t) => t.workspaceId === changes?.workspace.id),
+    );
+    if (tab.startsWith("diff:")) {
+      setTab("repository");
+      setRepositorySection("history");
+    }
+  }, [changes?.workspace.id]);
   const [repositoryVisited, setRepositoryVisited] = useState(false);
+  const [commitVisited, setCommitVisited] = useState(false);
   const [settingsSection, setSettingsSection] = useState<
     "appearance" | "review" | "observer" | "data" | "editor"
   >(initialDataNotice ? "data" : "appearance");
@@ -124,6 +182,7 @@ export default function App({
     useState<RepositorySection>("history");
   useEffect(() => {
     if (tab === "repository") setRepositoryVisited(true);
+    if (tab === "commit") setCommitVisited(true);
   }, [tab]);
   const [search, setSearch] = useState(""),
     [scope, setScope] = useState<"all" | "unstaged" | "staged">("all");
@@ -1043,7 +1102,9 @@ export default function App({
               ".workspace-page:not([hidden]) .graph-search input",
             )
             ?.focus();
-        } else showFileSearch();
+        } else if (tab === "commit")
+          document.getElementById("commit-file-search")?.focus();
+        else showFileSearch();
       }
       if (
         (event.metaKey || event.ctrlKey) &&
@@ -1088,6 +1149,13 @@ export default function App({
       : (repositoryLayout.value.contextOpen ?? preferences.contextOpen));
   const sidebarVisible =
     !focused && (compact ? filesDrawer : repositoryLayout.value.sidebarOpen);
+  function showCommit() {
+    setFocused(false);
+    setTab("commit");
+    requestAnimationFrame(() =>
+      document.getElementById("quick-commit-message")?.focus(),
+    );
+  }
   function showFileSearch() {
     setFocused(false);
     setTab("changes");
@@ -1209,9 +1277,11 @@ export default function App({
                 "--nav-index":
                   tab === "changes"
                     ? 0
-                    : repositorySection === "history"
+                    : tab === "commit"
                       ? 1
-                      : 2,
+                      : repositorySection === "history"
+                        ? 2
+                        : 3,
               } as React.CSSProperties
             }
           >
@@ -1221,6 +1291,13 @@ export default function App({
               onClick={() => setTab("changes")}
             >
               Changes<span className="tab-count">{changes.files.length}</span>
+            </button>
+            <button
+              className={tab === "commit" ? "active" : ""}
+              aria-current={tab === "commit" ? "page" : undefined}
+              onClick={showCommit}
+            >
+              Commit<span className="tab-count">{stagedCount}</span>
             </button>
             <button
               className={
@@ -1252,6 +1329,42 @@ export default function App({
             >
               Branches
             </button>
+            <span className="diff-tab-strip">
+              {diffTabs
+                .filter((t) => t.workspaceId === changes.workspace.id)
+                .map((item) => (
+                  <span
+                    key={item.id}
+                    className={`diff-tab-item ${tab === item.id ? "active" : ""}`}
+                  >
+                    <button
+                      className="diff-tab-button"
+                      aria-current={tab === item.id ? "page" : undefined}
+                      title={
+                        item.selection.base
+                          ? `${item.selection.base} ↔ ${item.selection.target}`
+                          : (item.selection.targetLabel ??
+                            item.selection.target)
+                      }
+                      onClick={() => setTab(item.id)}
+                    >
+                      Diff{" "}
+                      <code>
+                        {item.selection.base
+                          ? `${item.selection.base.slice(0, 5)} ↔ ${item.selection.target.slice(0, 5)}`
+                          : item.selection.target.slice(0, 8)}
+                      </code>
+                    </button>
+                    <button
+                      className="diff-tab-close"
+                      aria-label={`关闭 Diff ${item.selection.target.slice(0, 8)}`}
+                      onClick={() => closeDiffTab(item.id)}
+                    >
+                      <X size={12} />
+                    </button>
+                  </span>
+                ))}
+            </span>
           </nav>
         )}
         <div className="toolbar-spacer" />
@@ -1274,7 +1387,7 @@ export default function App({
           onClick={() => openSettings("observer")}
         >
           <span className="status-dot neutral" />
-          Connect agent
+          Agent Hook
         </button>
         <button
           className="command-trigger"
@@ -1441,10 +1554,79 @@ export default function App({
         </main>
       ) : (
         <>
+          {diffTabs
+            .filter((t) => t.workspaceId === changes.workspace.id)
+            .map((item) => (
+              <div
+                key={item.id}
+                className="workspace-page diff-tab-page"
+                hidden={tab !== item.id}
+              >
+                <header className="diff-tab-heading">
+                  <div>
+                    <strong>
+                      {item.selection.base
+                        ? "Compare commits"
+                        : (item.selection.targetLabel ?? "Commit diff")}
+                    </strong>
+                    <span>
+                      {item.selection.base
+                        ? `${item.selection.base.slice(0, 12)} ↔ ${item.selection.target.slice(0, 12)}`
+                        : item.selection.target}
+                    </span>
+                  </div>
+                  {!item.selection.base &&
+                    (item.selection.parents?.length ?? 0) > 1 && (
+                      <select
+                        aria-label="Diff 比较父提交"
+                        value={item.selection.parent ?? 0}
+                        onChange={(e) =>
+                          setDiffTabs((tabs) =>
+                            tabs.map((t) =>
+                              t.id === item.id
+                                ? {
+                                    ...t,
+                                    selection: {
+                                      ...t.selection,
+                                      parent: Number(e.target.value),
+                                    },
+                                  }
+                                : t,
+                            ),
+                          )
+                        }
+                      >
+                        {item.selection.parents!.map((oid, index) => (
+                          <option key={oid} value={index}>
+                            Parent {index + 1} · {oid.slice(0, 8)}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  <button
+                    className="button compact"
+                    onClick={() => {
+                      setTab("repository");
+                      setRepositorySection("history");
+                    }}
+                  >
+                    返回 History
+                  </button>
+                </header>
+                <HistoryDiff
+                  changes={changes}
+                  demo={demo}
+                  preferences={preferences}
+                  onPreferences={(value) => void updatePreferences(value)}
+                  selection={item.selection}
+                />
+              </div>
+            ))}
           <div className="workspace-page" hidden={tab !== "repository"}>
             {(repositoryVisited || tab === "repository") && (
               <RepositoryView
                 key={changes.workspace.id}
+                onOpenDiff={openHistoryDiff}
                 section={repositorySection}
                 onSection={setRepositorySection}
                 error={error}
@@ -1457,6 +1639,48 @@ export default function App({
                 }}
                 onChanged={refresh}
               />
+            )}
+          </div>
+          <div className="workspace-page" hidden={tab !== "commit"}>
+            {(commitVisited || tab === "commit") && (
+              <CommitWorkspace
+                key={changes.workspace.id}
+                changes={changes}
+                loaded={loaded}
+                disabled={
+                  busy ||
+                  demo ||
+                  !changes.workspace.trusted ||
+                  !!changes.operation
+                }
+                onStage={(files, side) => void stageFiles(files, side)}
+                onOpenDiff={(file) => {
+                  setTab("changes");
+                  void loadFile(file);
+                }}
+              >
+                <CommitComposer
+                  message={draft}
+                  onMessage={editDraft}
+                  amend={!!amendTarget}
+                  onAmend={(value) => void toggleAmend(value)}
+                  head={changes.head}
+                  branch={changes.branch}
+                  staged={stagedCount}
+                  unstaged={
+                    changes.files.filter((file) => file.side === "unstaged")
+                      .length
+                  }
+                  busy={busy}
+                  disabled={
+                    demo || !changes.workspace.trusted || !!changes.operation
+                  }
+                  demo={demo}
+                  strictReview={preferences.strictReview}
+                  onReviewSettings={() => openSettings("review")}
+                  onCommit={(all) => void quickCommit(all)}
+                />
+              </CommitWorkspace>
             )}
           </div>
           <div className="workspace-page" hidden={tab !== "changes"}>
@@ -1521,27 +1745,6 @@ export default function App({
                     loaded={loaded}
                     scope={scope}
                     onScope={setScope}
-                  />
-                  <CommitComposer
-                    message={draft}
-                    onMessage={editDraft}
-                    amend={!!amendTarget}
-                    onAmend={(value) => void toggleAmend(value)}
-                    head={changes.head}
-                    branch={changes.branch}
-                    staged={stagedCount}
-                    unstaged={
-                      changes.files.filter((file) => file.side === "unstaged")
-                        .length
-                    }
-                    busy={busy}
-                    disabled={
-                      demo || !changes.workspace.trusted || !!changes.operation
-                    }
-                    demo={demo}
-                    strictReview={preferences.strictReview}
-                    onReviewSettings={() => openSettings("review")}
-                    onCommit={(all) => void quickCommit(all)}
                   />
                 </aside>
               }
@@ -1761,19 +1964,6 @@ export default function App({
               <Trash size={18} />
             </button>
           )}
-          <button
-            className="button primary compact"
-            disabled={busy}
-            onClick={() => {
-              showFileSearch();
-              requestAnimationFrame(() =>
-                document.getElementById("quick-commit-message")?.focus(),
-              );
-            }}
-          >
-            <GitCommit size={16} />
-            Commit<span className="button-count">{stagedCount}</span>
-          </button>
         </footer>
       )}
       {notification && (
@@ -2141,13 +2331,22 @@ export default function App({
                 disabled: !changes,
               },
               {
+                label: "打开 Commit",
+                icon: <GitCommit size={19} />,
+                run: () => {
+                  setDialog(null);
+                  showCommit();
+                },
+                disabled: !changes,
+              },
+              {
                 label: "提交预览",
                 icon: <GitCommit size={19} />,
                 run: () => {
                   setDialog(null);
                   void prepareCommit();
                 },
-                disabled: !stagedCount || demo,
+                disabled: tab !== "commit" || !stagedCount || demo,
               },
               {
                 label: focused ? "退出专注审查" : "进入专注审查",

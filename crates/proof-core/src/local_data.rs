@@ -247,6 +247,43 @@ impl Proof {
     pub fn cancel_data_deletion(&mut self, id: &str) {
         self.data_previews.retain(|p| p.id != id);
     }
+    /// Also used inside the Hook installer's SQL writer transaction, before
+    /// any external configuration is changed as part of record deletion.
+    pub fn validate_data_deletion_preview(&self, id: &str) -> Result<()> {
+        let preview = self
+            .data_previews
+            .iter()
+            .find(|p| p.id == id)
+            .ok_or_else(|| {
+                Error::new(
+                    "DATA_PREVIEW_EXPIRED",
+                    "删除确认已过期，请重新查看删除范围。",
+                    "Unknown deletion preview",
+                )
+            })?;
+        if now().saturating_sub(preview.captured_at) > 300_000 {
+            return Err(Error::new(
+                "DATA_PREVIEW_EXPIRED",
+                "删除确认已过期，请重新查看删除范围。",
+                "Expired deletion preview",
+            ));
+        }
+        self.check_data_epoch(preview.epoch)?;
+        let (repositories, workspaces) = self.deletion_scope(&preview.scope)?;
+        if repositories != preview.repository_ids
+            || workspaces
+                .iter()
+                .map(|w| &w.id)
+                .ne(preview.workspaces.iter().map(|w| &w.id))
+        {
+            return Err(Error::new(
+                "DATA_SCOPE_CHANGED",
+                "仓库列表已变化，请重新查看删除范围。",
+                "Repository membership changed",
+            ));
+        }
+        Ok(())
+    }
     pub fn delete_local_data(&mut self, id: &str) -> Result<DataDeletionResult> {
         let preview = self
             .data_previews
@@ -291,6 +328,28 @@ impl Proof {
             DataScope::Repository { repository_id } => Some(repository_id),
             DataScope::All => None,
         };
+        let hook_scope = "(?1 IS NULL OR (EXISTS(SELECT 1 FROM observer_permissions p JOIN workspaces w ON w.id=p.workspace_id WHERE p.installation_id=h.installation_id AND w.repository_id=?1) AND NOT EXISTS(SELECT 1 FROM observer_permissions p JOIN workspaces w ON w.id=p.workspace_id WHERE p.installation_id=h.installation_id AND w.repository_id!=?1)))";
+        let active_hooks: bool = tx.query_row(&format!("SELECT EXISTS(SELECT 1 FROM observer_hook_configs h WHERE h.state!='uninstalled' AND {hook_scope})"), [repository], |r|r.get(0))?;
+        if active_hooks {
+            return Err(Error::new(
+                "OBSERVER_UNINSTALL_REQUIRED",
+                "仍有 Proof Hook 配置，需要先移除接入后再删除记录。",
+                "Active hook receipts must be reconciled before data deletion",
+            ));
+        }
+        let mut hooks = tx.prepare(&format!(
+            "SELECT h.installation_id FROM observer_hook_configs h WHERE {hook_scope}"
+        ))?;
+        let hook_ids = hooks
+            .query_map([repository], |r| r.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(hooks);
+        for id in &hook_ids {
+            tx.execute(
+                "INSERT OR IGNORE INTO data_file_deletions VALUES('hook_installation',?)",
+                [id],
+            )?;
+        }
         let mut statement=tx.prepare("SELECT id FROM recovery_points WHERE (? IS NULL OR workspace_id IN(SELECT id FROM workspaces WHERE repository_id=?))")?;
         let mut recovery_ids = statement
             .query_map(params![repository, repository], |r| r.get::<_, String>(0))?
@@ -392,6 +451,13 @@ impl Proof {
             "observer_permissions",
         ] {
             tx.execute(&format!("DELETE FROM {table} WHERE (? IS NULL OR workspace_id IN(SELECT id FROM workspaces WHERE repository_id=?))"),params![repository,repository])?;
+        }
+        for id in &hook_ids {
+            tx.execute(
+                "DELETE FROM observer_hook_configs WHERE installation_id=?",
+                [id],
+            )?;
+            tx.execute("DELETE FROM observer_installations WHERE id=? AND NOT EXISTS(SELECT 1 FROM observer_events WHERE installation_id=?) AND NOT EXISTS(SELECT 1 FROM observer_sessions WHERE installation_id=?) AND NOT EXISTS(SELECT 1 FROM observer_permissions WHERE installation_id=?)", params![id,id,id,id])?;
         }
         for workspace in &ids {
             tx.execute(
@@ -519,6 +585,10 @@ impl Proof {
                     .and_then(|folder| folder.map_or(Ok(()), |f| f.delete_index())),
                 "legacy_index" => owned_data::remove_legacy_index(&self.data_dir, &id),
                 "index_workspace" => owned_data::remove_index_workspace(&self.data_dir, &id),
+                "hook_installation" => {
+                    owned_data::RecoveryFolder::acquire_hook_installation(&self.data_dir, &id)
+                        .and_then(|folder| folder.map_or(Ok(()), |f| f.delete_hook_installation()))
+                }
                 _ => Err(Error::new(
                     "DATA_CLEANUP_PATH",
                     "清理记录无效，磁盘清理尚未完成。",

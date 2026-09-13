@@ -6,7 +6,7 @@
 
 - 顶部 Branch 打开就地搜索面板，支持切换本地 Branch、创建 Branch、从本地已有 Remote ref 建立 tracking branch。不会自动 fetch、stash 或 force checkout；失败保留当前文件和草稿。
 - Changes 默认嵌套文件树，可折叠、搜索和切换 List。按 Unstaged/Staged 分组，勾选多文件或对文件/目录直接 Stage/Unstage。过滤时目录和组动作只包含当前匹配文件。
-- 文件栏底部常驻 Commit message、Amend 和 Commit。无 Staged 文件时主按钮明确为 Stage all & Commit；更多操作中可显式把全部 Unstaged 加入。Amend 载入上一条说明，可只改说明，也可包含所选 Index 内容。未暂存的 Hunk 保留在 Worktree。
+- 独立 Commit tab 中提供文件 Stage/Unstage、Commit message、Amend 和 Commit。Changes 只保留 Diff 阅读与相关文件操作。无 Staged 文件时主按钮明确为 Stage all & Commit；更多操作中可显式把全部 Unstaged 加入。Amend 载入上一条说明，可只改说明，也可包含所选 Index 内容。未暂存的 Hunk 保留在 Worktree。
 - 用户点击 Commit 后，核心捕获并校验 Index；普通入口无需弹出 Review 步骤。原有完整提交预览保留在 Command，设置中的 strict Review 仍只约束本应用。
 - 缓存最多保留 24 个 Diff，并合并同版本的并发读取。文件版本由 HEAD、Branch、Index、操作/信任状态、有效 Git 配置/attributes 和该路径（含当前 side 的重命名旧路径）的文件元数据确定。不同文件的普通保存不会清空全部缓存。缓存不是写授权，Stage/Review/Discard 的原生快照仍做内容核验。
 - 原生 notify 监听当前 Worktree 及其实际 Git/common 目录；事件合并后触发检查，1200 ms 定时检查与窗口聚焦兜底。当前文件自动更新，同文件保留阅读锚点；无法唯一对应原行时已有定位提示。监听失败显示降级并继续定时检查。浏览器 Demo 不执行本地 Git。
@@ -15,11 +15,13 @@
 
 批量 Stage 使用用户明确选中的真实 ChangedFile 列表，字面 NUL 分隔 pathspec，保留 rename 的旧路径。持有真实 index.lock，在私有 Index 上执行，再核对所选 Worktree 内容与仓库状态，发布前逐条核对未选择的 Index entry 保持不变，再整体发布一次。无效/过期列表不产生部分暂存。冲突、Submodule 和超过现有读取上限的内容明确拒绝，不自动处理。
 
-Commit all 先得到批量 Stage 的实际状态 token，再用这个 token 捕获提交；外部 Stage/checkout 不应被静默纳入。Commit 继续使用原有私有 Index、Hooks/签名以及实际 tree/ref 核对。Amend 的父提交取被替换提交的父集合，根提交没有父节点；准备后 HEAD 改变时拒绝。没有 Push、模型调用或 Agent 配置写入。
+Commit all 先得到批量 Stage 的实际状态 token，再用这个 token 捕获提交；外部 Stage/checkout 不应被静默纳入。Commit 继续使用原有私有 Index、Hooks/签名以及实际 tree/ref 核对。Amend 的父提交取被替换提交的父集合，根提交没有父节点；准备后 HEAD 改变时拒绝。上述 Git 提交操作不触发 Push、模型调用或 Agent 配置写入。
 
-SQLite schema 仍为 4。新增 notify 8.2.0 及其平台监听依赖，原有 lockfile 版本保留。
+本轮 Hook 管理使 SQLite schema 升级到 6；Git 工作流本身不新增 Git 元数据。新增 notify 8.2.0 及其平台监听依赖，原有 lockfile 版本保留。
 
-## 验证（持续更新）
+History → 新 Diff tab 的最终交互与边界见 [HISTORY-DIFF.md](HISTORY-DIFF.md)。
+
+## 此前 Git 工作流验证记录
 
 - UI 复现用例在修改前分别失败：返回已加载文件 300 ms 内仍显示前一文件；外部编辑 5500 ms 后当前 Diff 仍旧。修改后两项均通过，虚构 IPC 只用于 UI 路径验证。
 - 核心 Git 集成：59 条通过，另 1 条延迟样本显式 opt-in。覆盖批量字面路径、全部或选中 Stage/Unstage、unborn、部分 Hunk Commit、根提交/说明-only Amend、过期 HEAD 拒绝、远程 tracking 与失败保留。

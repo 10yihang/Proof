@@ -15,7 +15,9 @@
     "tauri": "tauri",
     "desktop": "tauri dev",
     "bundle": "tauri build",
-    "check": "npm run typecheck && npm test && cargo test -p proof-core"
+    "check": "npm run typecheck && npm test && cargo test -p proof-core",
+    "prepare:observer": "node scripts/prepare-observer.mjs",
+    "prepare:observer:dev": "node scripts/prepare-observer.mjs --dev"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",

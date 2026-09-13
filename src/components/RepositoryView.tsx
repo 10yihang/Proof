@@ -10,6 +10,7 @@ import {
 import { useRequest } from "../api";
 import type { BranchEntry, Changes, WorktreeEntry, ProofError } from "../types";
 import { Modal } from "./Modal";
+import type { HistoryComparison } from "./HistoryDiff";
 import { CommitHistory } from "./CommitHistory";
 import { demoGraphPage } from "../graph-demo";
 
@@ -24,6 +25,7 @@ export function RepositoryView({
   onOpen,
   onError,
   onChanged,
+  onOpenDiff,
 }: {
   section: RepositorySection;
   onSection: (section: RepositorySection) => void;
@@ -33,8 +35,66 @@ export function RepositoryView({
   onOpen: (path: string) => Promise<void>;
   onError: (e: unknown) => void;
   onChanged: () => Promise<void>;
+  onOpenDiff: (value: HistoryComparison) => void;
 }) {
   const request = useRequest();
+  const [comparison, setComparison] = useState<HistoryComparison | null>(null);
+  const [branchAnchor, setBranchAnchor] = useState<BranchEntry | null>(null);
+  const [branchMenu, setBranchMenu] = useState<{
+    branch: BranchEntry;
+    x: number;
+    y: number;
+  } | null>(null);
+  useEffect(() => {
+    if (!branchMenu) return;
+    const close = () => setBranchMenu(null);
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    document.addEventListener("pointerdown", close);
+    document.addEventListener("keydown", key);
+    return () => {
+      document.removeEventListener("pointerdown", close);
+      document.removeEventListener("keydown", key);
+    };
+  }, [branchMenu]);
+  function compareBranches(base: BranchEntry, target: BranchEntry) {
+    setComparison({
+      base: base.oid,
+      target: target.oid,
+      baseLabel: base.name,
+      targetLabel: target.name,
+    });
+    setHistoryScope("all");
+    setHistoryRef(null);
+    onSection("history");
+    onOpenDiff({
+      base: base.oid,
+      target: target.oid,
+      baseLabel: base.name,
+      targetLabel: target.name,
+    });
+  }
+  function chooseBranch(branch: BranchEntry, compare: boolean) {
+    if (compare && branchAnchor) {
+      compareBranches(branchAnchor, branch);
+      return;
+    }
+    setBranchAnchor(branch);
+    setComparison(null);
+    setHistoryScope(
+      `refs/${branch.remote ? "remotes" : "heads"}/${branch.name}`,
+    );
+    setHistoryRef(`${branch.remote ? "remote" : "local"}:${branch.name}`);
+  }
+  function branchContext(event: React.MouseEvent, branch: BranchEntry) {
+    event.preventDefault();
+    setBranchMenu({
+      branch,
+      x: Math.min(event.clientX, window.innerWidth - 240),
+      y: Math.min(event.clientY, window.innerHeight - 160),
+    });
+  }
   const [historyVisited, setHistoryVisited] = useState(section === "history");
   useEffect(() => {
     if (section === "history") setHistoryVisited(true);
@@ -139,14 +199,13 @@ export function RepositoryView({
                   key={branch.name}
                   className={`repo-ref ${historyRef === `${branch.remote ? "remote" : "local"}:${branch.name}` ? "active" : ""}`}
                   title={`查看 ${branch.name} 的历史`}
-                  onClick={() => {
-                    setHistoryScope(
-                      `refs/${branch.remote ? "remotes" : "heads"}/${branch.name}`,
-                    );
-                    setHistoryRef(
-                      `${branch.remote ? "remote" : "local"}:${branch.name}`,
-                    );
-                  }}
+                  onClick={(event) =>
+                    chooseBranch(
+                      branch,
+                      event.metaKey || event.ctrlKey || event.shiftKey,
+                    )
+                  }
+                  onContextMenu={(event) => branchContext(event, branch)}
                 >
                   <GitBranch size={14} />
                   <span>{branch.name}</span>
@@ -168,14 +227,13 @@ export function RepositoryView({
                       key={branch.name}
                       className={`repo-ref ${historyRef === `${branch.remote ? "remote" : "local"}:${branch.name}` ? "active" : ""}`}
                       title={`查看 ${branch.name} 的本地历史`}
-                      onClick={() => {
-                        setHistoryScope(
-                          `refs/${branch.remote ? "remotes" : "heads"}/${branch.name}`,
-                        );
-                        setHistoryRef(
-                          `${branch.remote ? "remote" : "local"}:${branch.name}`,
-                        );
-                      }}
+                      onClick={(event) =>
+                        chooseBranch(
+                          branch,
+                          event.metaKey || event.ctrlKey || event.shiftKey,
+                        )
+                      }
+                      onContextMenu={(event) => branchContext(event, branch)}
                     >
                       <GitBranch size={14} />
                       <span>{branch.name}</span>
@@ -223,9 +281,12 @@ export function RepositoryView({
             <CommitHistory
               changes={changes}
               demo={demo}
+              onOpenDiff={onOpenDiff}
+              requestedComparison={comparison}
               scope={historyScope}
               scopeLabel={historyRef?.slice(historyRef.indexOf(":") + 1)}
               onScope={(scope) => {
+                setComparison(null);
                 setHistoryScope(scope);
                 setHistoryRef(null);
               }}
@@ -239,6 +300,7 @@ export function RepositoryView({
               <div
                 className="branch-row"
                 key={`${branch.remote}:${branch.name}`}
+                onContextMenu={(event) => branchContext(event, branch)}
               >
                 <GitBranch size={19} />
                 <div>
@@ -301,6 +363,53 @@ export function RepositoryView({
           </div>
         )}
       </section>
+      {branchMenu && (
+        <div
+          className="history-context-menu"
+          role="menu"
+          style={{ left: branchMenu.x, top: branchMenu.y }}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <button
+            role="menuitem"
+            disabled={!changes.head}
+            onClick={() => {
+              compareBranches(branchMenu.branch, {
+                name: changes.branch ?? "HEAD",
+                oid: changes.head!,
+                current: true,
+                remote: false,
+              });
+              setBranchMenu(null);
+            }}
+          >
+            与当前 Branch 比较
+          </button>
+          <button
+            role="menuitem"
+            disabled={
+              !branchAnchor || branchAnchor.name === branchMenu.branch.name
+            }
+            onClick={() => {
+              if (branchAnchor)
+                compareBranches(branchAnchor, branchMenu.branch);
+              setBranchMenu(null);
+            }}
+          >
+            与所选 Branch 比较
+          </button>
+          <button
+            role="menuitem"
+            onClick={() => {
+              chooseBranch(branchMenu.branch, false);
+              onSection("history");
+              setBranchMenu(null);
+            }}
+          >
+            查看此 Branch 的历史
+          </button>
+        </div>
+      )}
       {create && (
         <Modal
           title="创建并切换分支"

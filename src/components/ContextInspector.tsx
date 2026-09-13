@@ -1,7 +1,6 @@
+import { RealContext } from "./RealContext";
 import {
   Fingerprint,
-  Info,
-  Plug,
   ShieldCheck,
   Terminal,
   X,
@@ -54,55 +53,7 @@ export function ContextInspector({
         {demo && diff && diff.path !== "README.md" ? (
           <DemoContext path={diff.path} />
         ) : (
-          <>
-            <div className="context-section">
-              <div className="section-title">
-                <Fingerprint size={16} />
-                <h3>修改来源</h3>
-              </div>
-              <span className="evidence-label">
-                <span className="status-dot neutral" />
-                来源未知
-              </span>
-              <p>没有关联的 Agent 会话。</p>
-              <div className="context-explanation">
-                <Info size={14} />
-                <span>关联会话后可查看任务和执行记录。</span>
-              </div>
-            </div>
-            <div className="context-section">
-              <div className="section-title">
-                <Terminal size={16} />
-                <h3>任务与执行记录</h3>
-              </div>
-              <div className="observer-empty">
-                <div className="observer-illustration">
-                  <Terminal size={23} />
-                  <span className="connection-line" />
-                  <Plug size={23} />
-                </div>
-                <strong>
-                  {demo ? "演示中未接入 Agent" : "尚未接入 Agent"}
-                </strong>
-                <p>
-                  继续在终端使用你喜欢的
-                  Agent。授权观察后，在这里核对相关任务和执行记录。
-                </p>
-                <button className="button compact" onClick={onSettings}>
-                  <Plug size={14} />
-                  查看观察设置
-                </button>
-              </div>
-            </div>
-            <div className="context-section">
-              <div className="section-title">
-                <ShieldCheck size={16} />
-                <h3>验证记录</h3>
-              </div>
-              <div className="evidence-value">未观察到结果</div>
-              <p>命令成功、测试通过与代码版本关系会分别显示。</p>
-            </div>
-          </>
+          <RealContext diff={diff} demo={demo} onSettings={onSettings} />
         )}
         {diff && (
           <div className="context-section snapshot-info">
@@ -124,10 +75,6 @@ export function ContextInspector({
               <dt>基准提交</dt>
               <dd>
                 <code>{diff.base.split(":")[0].slice(0, 8)}</code>
-              </dd>
-              <dt>关联粒度</dt>
-              <dd>
-                {demo && diff.path !== "README.md" ? "文件级示例" : "暂无证据"}
               </dd>
             </dl>
             <p className="snapshot-note">文件保存后自动更新 Diff。</p>

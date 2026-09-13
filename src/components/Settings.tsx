@@ -249,7 +249,14 @@ export function Settings({
               </p>
             </>
           )}
-          {tab === "observer" && <ObserverSettings demo={demo} />}
+          {tab === "observer" && (
+            <ObserverSettings
+              demo={demo}
+              workspaces={workspaces}
+              workspaceId={workspaceId}
+              onError={onError}
+            />
+          )}
         </div>
       </div>
       <div className="settings-version">

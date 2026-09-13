@@ -7,6 +7,7 @@ use serde_json::{json, Value};
 use std::{ops::Range, path::Path};
 
 const MAX_CONFIG: usize = 1024 * 1024;
+const OWNERSHIP_SCHEMA: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -65,11 +66,15 @@ impl HookSpec {
             quote(&self.registration_path)
         )
     }
-    fn handler(&self) -> Value {
-        json!({"type":"command","command":self.command(),"async":true,"timeout":1})
+    fn handler(&self, event: &str, schema: u32) -> Value {
+        // A real Codex exec run cancelled its async Stop at session shutdown.
+        // Terminal handlers wait only for our self-bounded, silent bridge.
+        let asynchronous =
+            !(schema >= 2 && self.agent == Agent::Codex && ["Stop", "SessionEnd"].contains(&event));
+        json!({"type":"command","command":self.command(),"async":asynchronous,"timeout":1})
     }
-    fn group(&self) -> Value {
-        json!({"hooks":[self.handler()]})
+    fn group(&self, event: &str, schema: u32) -> Value {
+        json!({"hooks":[self.handler(event, schema)]})
     }
 }
 
@@ -111,9 +116,15 @@ pub fn install_plan(
     }
     let before = before.map(decode).transpose()?;
     let mut document = Document::parse(before.clone().unwrap_or_else(|| "{}\n".into()))?;
-    validate_existing_definition(&document.value, previous.map(|p| &p.spec).unwrap_or(spec))?;
+    validate_existing_definition(
+        &document.value,
+        previous.map(|p| &p.spec).unwrap_or(spec),
+        previous
+            .map(|p| p.schema_version)
+            .unwrap_or(OWNERSHIP_SCHEMA),
+    )?;
     let mut ownership = previous.cloned().unwrap_or_else(|| ConfigOwnership {
-        schema_version: 1,
+        schema_version: OWNERSHIP_SCHEMA,
         spec: spec.clone(),
         created_file: before.is_none(),
         created_hooks: false,
@@ -124,11 +135,13 @@ pub fn install_plan(
         // receipt, then adds the new definition. User additions stay in place.
         if previous.spec.command() != spec.command()
             || previous.spec.agent_version != spec.agent_version
+            || previous.schema_version != OWNERSHIP_SCHEMA
         {
             remove_owned(&mut document, previous, false)?;
         }
     }
     ownership.spec = spec.clone();
+    ownership.schema_version = OWNERSHIP_SCHEMA;
     if document.value.get("hooks").is_none() {
         document.add_property(&[], "hooks", &json!({}))?;
         ownership.created_hooks = true;
@@ -160,7 +173,7 @@ pub fn install_plan(
         for group in groups {
             for handler in handlers(group)? {
                 if mentions_owner(handler, &spec.installation_id) {
-                    if *handler != spec.handler() {
+                    if *handler != spec.handler(event, OWNERSHIP_SCHEMA) {
                         return Err(config_error(
                             "OBSERVER_CONFIG_CONFLICT",
                             "Proof 观察条目已被修改，请先核对配置差异。",
@@ -171,7 +184,7 @@ pub fn install_plan(
             }
         }
         if !present {
-            document.append(&["hooks", event], &spec.group())?;
+            document.append(&["hooks", event], &spec.group(event, OWNERSHIP_SCHEMA))?;
         }
     }
     let after = Some(document.text);
@@ -207,7 +220,7 @@ fn validate_ownership(ownership: &ConfigOwnership) -> Result<()> {
     // Removal uses its recorded schema; an Agent version becoming unsupported
     // must not prevent removal of an already-owned command definition.
     ownership.spec.validate_identity()?;
-    if ownership.schema_version != 1
+    if ![1, OWNERSHIP_SCHEMA].contains(&ownership.schema_version)
         || ownership
             .created_events
             .iter()
@@ -221,7 +234,7 @@ fn validate_ownership(ownership: &ConfigOwnership) -> Result<()> {
     Ok(())
 }
 
-fn validate_existing_definition(value: &Value, spec: &HookSpec) -> Result<()> {
+fn validate_existing_definition(value: &Value, spec: &HookSpec, schema: u32) -> Result<()> {
     for (key, value) in value.as_object().unwrap() {
         if key != "hooks" && mentions_owner(value, &spec.installation_id) {
             return Err(config_error(
@@ -265,7 +278,7 @@ fn validate_existing_definition(value: &Value, spec: &HookSpec) -> Result<()> {
             }
             for handler in handlers(group)? {
                 if mentions_owner(handler, &spec.installation_id) {
-                    if *handler != spec.handler() {
+                    if *handler != spec.handler(event, schema) {
                         return Err(config_error(
                             "OBSERVER_CONFIG_CONFLICT",
                             "Proof 观察条目已被修改，请先核对配置差异。",
@@ -318,20 +331,24 @@ fn remove_owned(
             let group = &document.value["hooks"][event][group_index];
             let members = handlers(group)?;
             for member in members {
-                if mentions_owner(member, &spec.installation_id) && *member != spec.handler() {
+                if mentions_owner(member, &spec.installation_id)
+                    && *member != spec.handler(event, ownership.schema_version)
+                {
                     return Err(config_error(
                         "OBSERVER_CONFIG_CONFLICT",
                         "存在被修改的 Proof 条目，未生成删除方案。",
                     ));
                 }
             }
-            if *group == spec.group() {
+            if *group == spec.group(event, ownership.schema_version) {
                 document.remove_array_item(&["hooks", event], group_index)?;
             } else {
                 let indexes: Vec<usize> = members
                     .iter()
                     .enumerate()
-                    .filter_map(|(i, h)| (*h == spec.handler()).then_some(i))
+                    .filter_map(|(i, h)| {
+                        (*h == spec.handler(event, ownership.schema_version)).then_some(i)
+                    })
                     .collect();
                 for index in indexes.into_iter().rev() {
                     document.remove_handler(event, group_index, index)?;

@@ -3,6 +3,13 @@ import { demoChanges, demoDiff } from "../../src/demo";
 import { demoGraphPage } from "../../src/graph-demo";
 import { defaultPreferences } from "../../src/types";
 
+async function openCommit(page: Page) {
+  await page
+    .getByRole("navigation", { name: "Worktree" })
+    .getByRole("button", { name: /^Commit/ })
+    .click();
+}
+
 async function openFixture(page: Page) {
   const workspace = {
     ...demoChanges.workspace,
@@ -23,7 +30,7 @@ async function openFixture(page: Page) {
     ]),
   );
   await page.addInitScript(
-    ({ changes, diffs, preferences }) => {
+    ({ changes, diffs, preferences, graph }) => {
       const state = {
         changes,
         diffs,
@@ -63,6 +70,33 @@ async function openFixture(page: Page) {
               diff.id += `:${++state.reads}`;
               diff.side = args.side;
               return diff;
+            }
+            if (command === "observer_file_context") return [];
+            if (command === "commit_graph") return graph;
+            if (command === "compare_commit")
+              return {
+                baseOid:
+                  graph.commits.find((c) => c.oid === args.oid)?.parents[
+                    args.parent ?? 0
+                  ] ?? "empty",
+                targetOid: args.oid,
+                files: state.changes.files.filter((f) => f.side === "unstaged"),
+              };
+            if (command === "compare_refs")
+              return {
+                baseOid: args.base,
+                targetOid: args.target,
+                files: state.changes.files.filter((f) => f.side === "unstaged"),
+              };
+            if (command === "compare_file") {
+              await new Promise((r) => setTimeout(r, state.delay));
+              return {
+                ...structuredClone(state.diffs[args.path]),
+                canStage: false,
+                canStageHunks: false,
+                canDiscard: false,
+                canDiscardHunks: false,
+              };
             }
             if (command === "branches")
               return [
@@ -165,12 +199,53 @@ async function openFixture(page: Page) {
         },
       });
     },
-    { changes, diffs, preferences: defaultPreferences },
+    { changes, diffs, preferences: defaultPreferences, graph: demoGraphPage() },
   );
   await page.goto("/");
   await page.locator(".recent-projects button").first().click();
   await expect(page.locator(".diff-file-header")).toContainText("requests.ts");
 }
+
+test("Changes focuses on Diff while Commit keeps staging and the draft in its own tab", async ({
+  page,
+}) => {
+  await openFixture(page);
+  await expect(page.getByLabel("Commit message")).toHaveCount(0);
+  const initialFile = await page.locator(".diff-file-header").innerText();
+  await openCommit(page);
+  await page.getByLabel("Commit message").fill("Independent commit draft");
+  await expect(page.locator(".commit-workspace")).toBeVisible();
+  await page
+    .getByRole("button", { name: /Changes/, exact: false })
+    .filter({ has: page.locator(".tab-count") })
+    .click();
+  await expect(page.locator(".diff-file-header")).toHaveText(initialFile, {
+    useInnerText: true,
+  });
+  await expect(page.getByLabel("Commit message")).not.toBeVisible();
+  await openCommit(page);
+  await expect(page.getByLabel("Commit message")).toHaveValue(
+    "Independent commit draft",
+  );
+  await page.screenshot({
+    path: ".artifacts/commit-tab-desktop.png",
+    animations: "disabled",
+  });
+  const file = page
+    .locator(".commit-workspace .tree-file")
+    .filter({ hasText: "response.ts" })
+    .first();
+  await file.click();
+  await page.getByRole("button", { name: "查看 Diff", exact: true }).click();
+  await expect(page.locator(".diff-file-header")).toContainText("response.ts");
+  expect(
+    await page.evaluate(() =>
+      (window as any).fixture.actions.filter((a: any) =>
+        ["stage", "stage_files", "commit"].includes(a.command),
+      ),
+    ),
+  ).toEqual([]);
+});
 
 test("returning to a loaded file does not wait for another Git diff", async ({
   page,
@@ -224,6 +299,7 @@ test("branch dropdown switches in place and ignores IME confirmation", async ({
   page,
 }) => {
   await openFixture(page);
+  await openCommit(page);
   await page.getByLabel("Commit message").fill("Keep this draft");
   await page.getByRole("button", { name: /切换 Branch/ }).click();
   await page.getByLabel("搜索 Branch").fill("feature/ui");
@@ -266,6 +342,7 @@ test("tree selection stages only selected files and Commit bypasses Review", asy
   await page
     .getByRole("button", { name: "Stage selected files", exact: true })
     .click();
+  await openCommit(page);
   await expect(page.locator(".composer-hint")).toContainText("2 staged");
   const action = await page.evaluate(() =>
     (window as any).fixture.actions.find(
@@ -290,6 +367,7 @@ test("Amend restores draft when unchecked and failed Commit preserves message", 
   page,
 }) => {
   await openFixture(page);
+  await openCommit(page);
   await page.getByLabel("Commit message").fill("Ordinary draft");
   await page.getByRole("checkbox", { name: /Amend/ }).check();
   await expect(page.getByLabel("Commit message")).toHaveValue(
@@ -408,6 +486,8 @@ test("file tree folds and filters paths; workflow fits desktop and narrow panels
   await page.getByLabel("搜索 Branch").press("Escape");
   await page.setViewportSize({ width: 640, height: 450 });
   await page.getByRole("button", { name: "显示文件栏", exact: true }).click();
+  await expect(page.getByLabel("Commit message")).toHaveCount(0);
+  await openCommit(page);
   await expect(page.getByLabel("Commit message")).toBeVisible();
   await page.screenshot({
     animations: "disabled",
@@ -756,7 +836,7 @@ test("editor Command is disabled in History and never uses hidden Changes conten
   await page.getByRole("button", { name: "History", exact: true }).click();
   await expect(
     page.getByRole("region", { name: "所选提交详情", exact: true }),
-  ).toContainText("history-only.txt");
+  ).toContainText(demoGraphPage().commits[0].subject);
   await page.getByRole("button", { name: "打开命令面板", exact: true }).click();
   const command = page
     .getByRole("dialog", { name: "命令面板", exact: true })
@@ -1353,4 +1433,275 @@ test("standards peer window wipe marker must not be rolled back by a late sessio
   });
   console.log("peer wipe after late session", JSON.stringify(actual));
   expect(actual).toEqual({ wipe: "2", draft: "new work after wipe 2" });
+});
+
+test("History opens selected Commit diffs in closable tabs and preserves graph selection", async ({
+  page,
+}) => {
+  await openFixture(page);
+  const navigation = page.getByRole("navigation", { name: "Worktree" });
+  await expect(
+    navigation.getByRole("button", { name: "Compare", exact: true }),
+  ).toHaveCount(0);
+  await navigation
+    .getByRole("button", { name: "History", exact: true })
+    .click();
+  const graph = page.getByRole("listbox", { name: "提交列表与分支关系" });
+  await graph.getByRole("option").first().click();
+  await expect(page.locator(".diff-tab-item")).toHaveCount(0);
+  await graph.getByRole("option").first().dblclick();
+  const active = page.locator(".diff-tab-page:not([hidden])"),
+    panel = active.getByRole("region", { name: "历史文件差异" });
+  await expect(panel.locator(".diff-scroll")).toContainText("validateRequest");
+  await expect(
+    active.getByRole("combobox", { name: "Diff 比较父提交" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "返回 History", exact: true }).click();
+  await graph
+    .getByRole("option")
+    .nth(2)
+    .click({ modifiers: ["Meta"] });
+  await expect(page.locator(".diff-tab-item")).toHaveCount(2);
+  await expect(panel.locator(".diff-scroll")).toContainText("validateRequest");
+  await panel.getByRole("button", { name: "Split", exact: true }).click();
+  await expect(
+    panel.getByRole("button", { name: /Stage|标记|预览丢弃/ }),
+  ).toHaveCount(0);
+  await panel.getByRole("button", { name: "交换比较方向" }).click();
+  await expect(panel.locator(".diff-scroll")).toContainText("validateRequest");
+  const requests = await page.evaluate(() =>
+    (window as any).fixture.actions.filter(
+      (a: any) => a.command === "compare_refs",
+    ),
+  );
+  expect(requests.at(-1).args.base).toBe(requests.at(-2).args.target);
+  await page.screenshot({ path: ".artifacts/history-diff-tab-desktop.png" });
+  await page.getByRole("button", { name: "返回 History", exact: true }).click();
+  await expect(graph.getByRole("option", { selected: true })).toHaveCount(2);
+  await expect(
+    page.getByRole("region", { name: "Git 提交图" }).locator(".diff-scroll"),
+  ).toHaveCount(0);
+  await graph.getByRole("option").first().click();
+  await page
+    .getByRole("combobox", { name: "比较父提交", exact: true })
+    .selectOption("1");
+  await page
+    .getByRole("button", { name: "在新 tab 中查看 Diff", exact: true })
+    .click();
+  await expect(page.locator(".diff-tab-item")).toHaveCount(2);
+  await expect(
+    active.getByRole("combobox", { name: "Diff 比较父提交" }),
+  ).toHaveValue("1");
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as any).fixture.actions
+            .filter((a: any) => a.command === "compare_commit")
+            .at(-1).args.parent,
+      ),
+    )
+    .toBe(1);
+  await page.locator(".diff-tab-item.active .diff-tab-close").click();
+  await expect(
+    navigation.getByRole("button", { name: "History", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+  expect(
+    await page.evaluate(() =>
+      (window as any).fixture.actions.filter((a: any) =>
+        [
+          "stage",
+          "stage_files",
+          "commit",
+          "switch_branch",
+          "mark_reviewed",
+        ].includes(a.command),
+      ),
+    ),
+  ).toEqual([]);
+});
+
+test("Branch comparison opens a Diff tab and an older file response cannot replace its empty result", async ({
+  page,
+}) => {
+  await openFixture(page);
+  await page.evaluate(() => {
+    const state = (window as any).fixture;
+    state.delay = 1000;
+    const original = (window as any).__TAURI_INTERNALS__.invoke;
+    (window as any).__TAURI_INTERNALS__.invoke = async (
+      name: string,
+      payload: any,
+    ) => {
+      if (payload?.command === "compare_refs")
+        return {
+          baseOid: payload.args.base,
+          targetOid: payload.args.target,
+          files: [],
+        };
+      return original(name, payload);
+    };
+  });
+  await page
+    .getByRole("navigation", { name: "Worktree" })
+    .getByRole("button", { name: "History", exact: true })
+    .click();
+  const graph = page.getByRole("listbox", { name: "提交列表与分支关系" });
+  await graph.getByRole("option").first().dblclick();
+  const panel = page
+    .locator(".diff-tab-page:not([hidden])")
+    .getByRole("region", { name: "历史文件差异" });
+  await expect(panel.locator(".compare-empty")).toContainText("正在读取 Diff");
+  await page.getByRole("button", { name: "返回 History", exact: true }).click();
+  await graph
+    .getByRole("option")
+    .nth(2)
+    .click({ modifiers: ["Shift"] });
+  await expect(panel.locator(".compare-empty")).toContainText("没有文件差异");
+  await page.waitForTimeout(1100);
+  await expect(panel.locator(".compare-empty")).toContainText("没有文件差异");
+  await page.getByRole("button", { name: "返回 History", exact: true }).click();
+  const branch = page
+    .locator(".repository-refs .repo-ref")
+    .filter({ hasText: "feature/" })
+    .first();
+  await branch.click({ button: "right" });
+  await page
+    .getByRole("menuitem", { name: "与当前 Branch 比较", exact: true })
+    .click();
+  await expect(panel.locator(".compare-capture")).toContainText("feature/");
+  await expect(panel.locator(".compare-empty")).toContainText("没有文件差异");
+});
+
+test("Hook uses current workspace trust and requires a config preview before installing", async ({
+  page,
+}) => {
+  await openFixture(page);
+  await page.evaluate(() => {
+    const w = window as any,
+      state = w.fixture,
+      original = w.__TAURI_INTERNALS__.invoke;
+    state.changes.workspace.trusted = false;
+    const hook = {
+      policyRevision: 0,
+      serviceAvailable: false,
+      serviceError: null,
+      installations: [] as any[],
+    };
+    let preview: any;
+    w.__TAURI_INTERNALS__.invoke = async (name: string, payload: any) => {
+      const c = payload?.command,
+        a = payload?.args ?? {};
+      if (
+        ![
+          "observer_status",
+          "observer_program_locations",
+          "probe_observer",
+          "data_workspaces",
+          "preview_observer_install",
+          "cancel_observer_config",
+          "apply_observer_config",
+          "configure_observer_workspace",
+        ].includes(c)
+      )
+        return original(name, payload);
+      state.actions.push({ command: c, args: structuredClone(a) });
+      if (c === "data_workspaces")
+        return [
+          {
+            workspace: { ...state.changes.workspace, trusted: true },
+            recent: true,
+          },
+        ];
+      if (c === "observer_program_locations")
+        return [{ agent: "codex", executablePath: "/fixture/codex" }];
+      if (c === "observer_status") return structuredClone(hook);
+      if (c === "probe_observer")
+        return {
+          agent: "codex",
+          version: "0.153.4",
+          status: "candidate_unverified",
+          profile: null,
+        };
+      if (c === "preview_observer_install") {
+        preview = {
+          id: "hook-preview",
+          action: "install",
+          agent: "codex",
+          agentVersion: "0.153.4",
+          workspaceId: a.workspaceId,
+          configPath: "/fixture/config/hooks.json",
+          before: '{"userHook":true}',
+          after: '{"userHook":true,"proofHook":true}',
+          fields: a.fields,
+          requiresHookTrust: true,
+        };
+        return preview;
+      }
+      if (c === "cancel_observer_config") return null;
+      if (c === "apply_observer_config") {
+        hook.policyRevision++;
+        hook.serviceAvailable = true;
+        hook.installations = [
+          {
+            installationId: "fixture-hook",
+            agent: "codex",
+            agentVersion: "0.153.4",
+            configPath: preview.configPath,
+            state: "configured_pending",
+            lastEventAt: null,
+            issue: null,
+            consents: [
+              {
+                ...preview.fields,
+                installationId: "fixture-hook",
+                workspaceId: a.workspaceId ?? preview.workspaceId,
+                enabled: true,
+              },
+            ],
+          },
+        ];
+        return {
+          installationId: "fixture-hook",
+          message: "Proof Hook 已安装。",
+          warning: null,
+          observingEnabled: true,
+        };
+      }
+      if (c === "configure_observer_workspace") {
+        hook.policyRevision++;
+        hook.installations[0].consents[0].enabled = a.enabled;
+        return null;
+      }
+    };
+  });
+  await page.getByRole("button", { name: "Agent Hook", exact: true }).click();
+  const card = page.getByRole("region", { name: "Codex Hook", exact: true });
+  await expect(
+    card.getByRole("checkbox", { name: "Prompt", exact: true }),
+  ).not.toBeChecked();
+  await expect(
+    card.getByRole("checkbox", { name: "关闭 Proof 后继续观察", exact: true }),
+  ).not.toBeChecked();
+  await card.getByRole("button", { name: "检测版本", exact: true }).click();
+  await card.getByRole("checkbox", { name: "Prompt", exact: true }).check();
+  await card.getByRole("button", { name: "预览安装…", exact: true }).click();
+  await expect(card.locator(".hook-config-preview")).toContainText(
+    "/fixture/config/hooks.json",
+  );
+  await card.getByRole("button", { name: "取消", exact: true }).click();
+  expect(
+    await page.evaluate(() =>
+      (window as any).fixture.actions.filter(
+        (a: any) => a.command === "apply_observer_config",
+      ),
+    ),
+  ).toHaveLength(0);
+  await card.getByRole("button", { name: "预览安装…", exact: true }).click();
+  await card
+    .getByRole("button", { name: "安装并开启观察", exact: true })
+    .click();
+  await expect(card).toContainText("等待 Agent 事件");
+  await card.getByRole("button", { name: "暂停", exact: true }).click();
+  await expect(card).toContainText("已暂停");
 });

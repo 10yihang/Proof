@@ -45,6 +45,22 @@ fn dispatch(proof: &mut Proof, command: &str, a: &Value) -> Result<Value, Error>
         "set_trust" => {
             json!(proof.set_trust(s("workspaceId"), a["trusted"].as_bool().unwrap_or(false))?)
         }
+        "observer_file_context" => json!(proof.observer_file_context(s("workspaceId"), s("path"))?),
+        "commit_graph" => json!(proof.commit_graph(
+            s("workspaceId"),
+            a["snapshotId"].as_str(),
+            a["offset"].as_u64().unwrap_or(0) as usize,
+            s("scope")
+        )?),
+        "compare_commit" => json!(proof.compare_commit(
+            s("workspaceId"),
+            s("oid"),
+            a["parent"].as_u64().unwrap_or(0) as usize
+        )?),
+        "compare_refs" => json!(proof.compare_refs(s("workspaceId"), s("base"), s("target"))?),
+        "compare_file" => {
+            json!(proof.compare_file(s("workspaceId"), s("base"), s("target"), s("path"))?)
+        }
         "changes" => json!(proof.changes(s("workspaceId"))?),
         "file_diff" => json!(proof.file_diff(
             s("workspaceId"),

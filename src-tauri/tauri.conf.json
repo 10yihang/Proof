@@ -4,9 +4,9 @@
   "version": "0.1.0-alpha.1",
   "identifier": "dev.proof.desktop",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "npm run prepare:observer:dev && npm run dev",
     "devUrl": "http://127.0.0.1:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run prepare:observer && npm run build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -39,6 +39,9 @@
     ],
     "macOS": {
       "signingIdentity": "-"
-    }
+    },
+    "externalBin": [
+      "binaries/proof-observer"
+    ]
   }
 }

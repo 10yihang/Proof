@@ -1,4 +1,74 @@
 /* Git workflow controls share Proof's native surfaces and branch colors. */
+.commit-workspace {
+  display: grid;
+  flex: 1;
+  grid-template-columns: minmax(300px, 1fr) minmax(320px, 420px);
+  align-self: stretch;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface);
+}
+.commit-stage-files {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  border-right: 1px solid var(--border);
+}
+.commit-file-inspector {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+}
+.commit-file-inspector > span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.commit-details {
+  overflow: auto;
+  min-width: 0;
+}
+.commit-workspace .commit-composer {
+  border-top: 0;
+  padding: 26px;
+}
+.commit-workspace .composer-heading {
+  font-size: 15px;
+  margin-bottom: 20px;
+}
+.commit-workspace .commit-composer textarea {
+  min-height: 220px;
+  max-height: 50vh;
+  font-size: 13px;
+  padding: 12px;
+}
+.commit-workspace .composer-options {
+  margin: 16px 0;
+}
+.commit-workspace .composer-submit {
+  margin-top: 22px;
+}
+@media (max-width: 780px) {
+  .commit-workspace {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(240px, 45vh) auto;
+    overflow: auto;
+  }
+  .commit-stage-files {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .commit-details {
+    overflow: visible;
+  }
+}
 .branch-switcher {
   position: relative;
   flex-shrink: 1;
@@ -560,5 +630,410 @@
   }
   .settings-modal .settings-layout {
     grid-template-rows: auto minmax(0, 1fr);
+  }
+}
+
+.compare-capture {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 20px;
+  font-size: 11px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+.compare-content {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+}
+.compare-files {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--border);
+}
+.compare-empty {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--muted);
+}
+.compare-empty h3 {
+  color: var(--text);
+  font-size: 17px;
+  margin: 0;
+}
+.compare-empty p {
+  margin: 0;
+}
+@media (max-width: 780px) {
+  .compare-content {
+    grid-template-columns: 180px minmax(0, 1fr);
+  }
+  .compare-capture {
+    padding: 8px 12px;
+  }
+  .compare-capture > span:last-child {
+    display: none;
+  }
+}
+
+.hook-field-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 14px 0;
+}
+.hook-field-grid label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.hook-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+.hook-config-preview {
+  margin: 16px 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.hook-config-preview > code {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  margin: 8px 0;
+  color: var(--muted);
+}
+.hook-config-preview details {
+  margin: 10px 0;
+}
+.hook-config-preview pre {
+  max-height: 240px;
+  overflow: auto;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 10px;
+  background: var(--surface);
+}
+.hook-config-preview summary {
+  cursor: pointer;
+  font-size: 12px;
+}
+.observer-version-card select {
+  width: 100%;
+}
+.observer-events details {
+  border-bottom: 1px solid var(--border);
+  padding: 10px 0;
+}
+.observer-events summary {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  cursor: pointer;
+  font-size: 12px;
+}
+.observer-events time {
+  font-size: 10px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.observer-events pre {
+  font-size: 11px;
+  line-height: 1.6;
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 8px;
+  background: var(--bg);
+}
+.observer-events p {
+  overflow-wrap: anywhere;
+}
+.context-task {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.history-diff {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.history-diff .compare-content {
+  grid-template-columns: 220px minmax(0, 1fr);
+}
+.history-endpoint {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  min-width: 0;
+  max-width: 38%;
+}
+.history-endpoint > span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.history-diff .compare-capture {
+  min-height: 35px;
+  padding: 5px 12px;
+  flex-shrink: 0;
+}
+.history-diff .compare-capture .icon-button {
+  width: 24px;
+  height: 24px;
+}
+.history-diff .diff-file-header {
+  padding-block: 9px;
+}
+.history-diff .diff-toolbar {
+  min-height: 36px;
+}
+.history-diff .diff-tally {
+  font-size: 11px;
+}
+.history-diff .file-title strong {
+  font-size: 12px;
+}
+.history-diff .compare-files .file-heading > strong {
+  font-size: 12px;
+}
+.history-diff .file-filters {
+  display: none;
+}
+.history-inspector {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 180px;
+  overflow: hidden;
+}
+
+.history-selection-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 16px;
+  min-height: 54px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+.history-selection-header > div {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.history-selection-header strong {
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.history-selection-header small,
+.history-select-hint {
+  font-size: 10px;
+  color: var(--muted);
+}
+.history-selection-header select {
+  font-size: 11px;
+  max-width: 230px;
+}
+.history-context-menu {
+  position: fixed;
+  z-index: 120;
+  min-width: 215px;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 8px 32px #0003;
+}
+.history-context-menu button {
+  display: block;
+  text-align: left;
+  width: 100%;
+  padding: 9px 11px;
+  font-size: 12px;
+  border-radius: 5px;
+}
+.history-context-menu button:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.history-context-menu button:disabled {
+  opacity: 0.4;
+}
+.history-context-menu button:disabled:hover {
+  background: transparent;
+}
+.history-diff .diff-panel {
+  min-height: 0;
+}
+@media (max-width: 1100px) {
+  .history-select-hint {
+    display: none;
+  }
+  .history-diff .compare-content {
+    grid-template-columns: 180px minmax(0, 1fr);
+  }
+}
+
+/* History chooses revisions; each result lives in its own closable tab. */
+.commit-history > .graph-table-wrap {
+  flex: 1;
+  min-height: 180px;
+}
+.history-inspector {
+  flex: 0 0 auto;
+  min-height: 0;
+  border-top: 1px solid var(--border);
+  padding-bottom: 12px;
+  background: var(--surface);
+}
+.history-selection-header {
+  border-bottom: 0;
+}
+.history-open-diff {
+  align-self: flex-start;
+  margin-left: 16px;
+}
+.app .top-navigation {
+  flex: 1;
+  min-width: 180px;
+  overflow: hidden;
+  flex-shrink: 1;
+}
+.top-navigation:has(.diff-tab-item.active)::after {
+  display: none;
+}
+.diff-tab-item {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  position: relative;
+  min-width: 150px;
+}
+.diff-tab-item.active {
+  box-shadow: inset 0 -3px var(--accent);
+  background: var(--accent-soft);
+}
+.top-navigation .diff-tab-button {
+  width: auto;
+  padding: 0 10px;
+  min-width: 118px;
+  gap: 6px;
+  height: 100%;
+}
+.diff-tab-button code {
+  font: 10px var(--font-mono);
+  color: var(--muted);
+}
+.top-navigation .diff-tab-close {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  margin-right: 6px;
+  border-radius: 4px;
+}
+.diff-tab-close:hover {
+  background: var(--hover);
+}
+.diff-tab-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.diff-tab-heading {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+.diff-tab-heading > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+.diff-tab-heading strong {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.diff-tab-heading span {
+  font-size: 11px;
+  color: var(--muted);
+}
+.diff-tab-heading select {
+  font-size: 12px;
+}
+.diff-tab-page .history-diff .compare-content {
+  grid-template-columns: 260px minmax(0, 1fr);
+}
+
+.app-header:has(.top-navigation) > .toolbar-spacer {
+  display: none;
+}
+.app .top-navigation {
+  min-width: 350px;
+}
+.top-navigation > button {
+  flex: 0 0 var(--nav-item-width);
+}
+.diff-tab-strip {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  overflow-x: auto;
+  scrollbar-width: none;
+  align-self: stretch;
+}
+.diff-tab-item {
+  min-width: 130px;
+}
+.top-navigation .diff-tab-button {
+  min-width: 104px;
+  padding-inline: 6px;
+}
+@media (max-width: 1100px) {
+  .app .top-navigation {
+    min-width: 280px;
+  }
+  .diff-tab-item {
+    min-width: 120px;
+  }
+}
+@media (max-width: 780px) {
+  .app .top-navigation {
+    min-width: 240px;
   }
 }

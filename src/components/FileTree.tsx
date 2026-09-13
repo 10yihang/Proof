@@ -30,6 +30,8 @@ export function FileTree({
   onScope,
   disabled,
   onStage,
+  searchId = "file-search",
+  readOnly = false,
 }: {
   files: ChangedFile[];
   selected: string | null;
@@ -41,6 +43,8 @@ export function FileTree({
   onScope: (scope: "all" | Side) => void;
   disabled: boolean;
   onStage: (files: ChangedFile[], side: Side) => void;
+  searchId?: string;
+  readOnly?: boolean;
 }) {
   const clientStorage = useClientStorage();
   const parent = useRef<HTMLDivElement>(null);
@@ -65,8 +69,9 @@ export function FileTree({
     );
   }, [files]);
   const rows = useMemo(
-    () => treeRows(files, scope, search, mode, collapsed),
-    [files, scope, search, mode, collapsed],
+    () =>
+      treeRows(files, readOnly ? "unstaged" : scope, search, mode, collapsed),
+    [files, scope, search, mode, collapsed, readOnly],
   );
   const virtualizer = useVirtualizer({
     count: rows.length,
@@ -137,32 +142,34 @@ export function FileTree({
       <div className="file-search">
         <MagnifyingGlass size={15} />
         <input
-          id="file-search"
+          id={searchId}
           aria-label="搜索变化文件"
           placeholder="Filter files…"
           value={search}
           onChange={(event) => onSearch(event.target.value)}
         />
-        <kbd>⌘ P</kbd>
+        {!readOnly && <kbd>⌘ P</kbd>}
       </div>
-      <div className="file-filters" role="group" aria-label="比较范围">
-        {(
-          [
-            ["all", "All"],
-            ["unstaged", "Unstaged"],
-            ["staged", "Staged"],
-          ] as const
-        ).map(([value, label]) => (
-          <button
-            key={value}
-            aria-pressed={scope === value}
-            onClick={() => onScope(value)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-      {selectedFiles.length > 0 && (
+      {!readOnly && (
+        <div className="file-filters" role="group" aria-label="比较范围">
+          {(
+            [
+              ["all", "All"],
+              ["unstaged", "Unstaged"],
+              ["staged", "Staged"],
+            ] as const
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              aria-pressed={scope === value}
+              onClick={() => onScope(value)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      {!readOnly && selectedFiles.length > 0 && (
         <div className="file-selection-actions">
           <span>{selectedFiles.length} selected</span>
           {(["unstaged", "staged"] as const).map((side) => {
@@ -268,25 +275,31 @@ export function FileTree({
               >
                 {row.kind === "file" ? (
                   <>
-                    <input
-                      type="checkbox"
-                      className="file-check"
-                      aria-label={`选择 ${row.file.path} (${row.side})`}
-                      checked={checked.has(row.key)}
-                      onChange={(event) =>
-                        setChecked((previous) => {
-                          const next = new Set(previous);
-                          if (event.target.checked) next.add(row.key);
-                          else next.delete(row.key);
-                          return next;
-                        })
-                      }
-                    />
+                    {!readOnly && (
+                      <input
+                        type="checkbox"
+                        className="file-check"
+                        aria-label={`选择 ${row.file.path} (${row.side})`}
+                        checked={checked.has(row.key)}
+                        onChange={(event) =>
+                          setChecked((previous) => {
+                            const next = new Set(previous);
+                            if (event.target.checked) next.add(row.key);
+                            else next.delete(row.key);
+                            return next;
+                          })
+                        }
+                      />
+                    )}
                     <button
                       className="tree-file"
                       tabIndex={-1}
                       onClick={() => onSelect(row.file)}
-                      title={`${row.file.path}\n${row.side === "staged" ? "HEAD → Index" : "Index → Worktree"}`}
+                      title={
+                        readOnly
+                          ? row.file.path
+                          : `${row.file.path}\n${row.side === "staged" ? "HEAD → Index" : "Index → Worktree"}`
+                      }
                     >
                       {row.file.path.endsWith(".md") ? (
                         <FileText size={15} />
@@ -305,21 +318,23 @@ export function FileTree({
                         {row.file.status === "?" ? "U" : row.file.status}
                       </span>
                     </button>
-                    <button
-                      className="row-stage"
-                      disabled={disabled || row.file.conflicted}
-                      aria-label={`${row.side === "staged" ? "Unstage" : "Stage"} ${row.file.path}`}
-                      title={
-                        row.side === "staged" ? "Unstage file" : "Stage file"
-                      }
-                      onClick={() => onStage([row.file], row.side)}
-                    >
-                      {row.side === "staged" ? (
-                        <Minus size={14} />
-                      ) : (
-                        <Plus size={14} />
-                      )}
-                    </button>
+                    {!readOnly && (
+                      <button
+                        className="row-stage"
+                        disabled={disabled || row.file.conflicted}
+                        aria-label={`${row.side === "staged" ? "Unstage" : "Stage"} ${row.file.path}`}
+                        title={
+                          row.side === "staged" ? "Unstage file" : "Stage file"
+                        }
+                        onClick={() => onStage([row.file], row.side)}
+                      >
+                        {row.side === "staged" ? (
+                          <Minus size={14} />
+                        ) : (
+                          <Plus size={14} />
+                        )}
+                      </button>
+                    )}
                   </>
                 ) : (
                   <>
@@ -328,7 +343,7 @@ export function FileTree({
                         row.kind === "group" ? "tree-group" : "tree-folder"
                       }
                       tabIndex={-1}
-                      aria-label={`${row.label} 文件夹`}
+                      aria-label={`${readOnly && row.kind === "group" ? "Files" : row.label} 文件夹`}
                       onClick={() => toggle(row.key)}
                     >
                       {row.expanded ? (
@@ -342,24 +357,28 @@ export function FileTree({
                         ) : (
                           <Folder size={15} />
                         ))}
-                      <span>{row.label}</span>
+                      <span>
+                        {readOnly && row.kind === "group" ? "Files" : row.label}
+                      </span>
                       <small>{row.files.length}</small>
                     </button>
-                    <button
-                      className="row-stage"
-                      disabled={disabled || !row.files.length}
-                      aria-label={`${row.side === "staged" ? "Unstage" : "Stage"} ${row.kind === "group" ? (search ? "filtered files" : "all") : row.label}`}
-                      title={`${row.side === "staged" ? "Unstage" : "Stage"} ${row.files.length} files`}
-                      onClick={() => onStage(row.files, row.side)}
-                    >
-                      {row.side === "staged" ? (
-                        <Minus size={14} />
-                      ) : (
-                        <Plus size={14} />
-                      )}{" "}
-                      {row.kind === "group" &&
-                        (row.side === "staged" ? "Unstage" : "Stage all")}
-                    </button>
+                    {!readOnly && (
+                      <button
+                        className="row-stage"
+                        disabled={disabled || !row.files.length}
+                        aria-label={`${row.side === "staged" ? "Unstage" : "Stage"} ${row.kind === "group" ? (search ? "filtered files" : "all") : row.label}`}
+                        title={`${row.side === "staged" ? "Unstage" : "Stage"} ${row.files.length} files`}
+                        onClick={() => onStage(row.files, row.side)}
+                      >
+                        {row.side === "staged" ? (
+                          <Minus size={14} />
+                        ) : (
+                          <Plus size={14} />
+                        )}{" "}
+                        {row.kind === "group" &&
+                          (row.side === "staged" ? "Unstage" : "Stage all")}
+                      </button>
+                    )}
                   </>
                 )}
               </div>

@@ -49,6 +49,7 @@ export function DiffView({
   onLoadContext,
   onEditor,
   openingEditor,
+  comparison,
 }: {
   diff: FileDiff;
   preferences: Preferences;
@@ -62,6 +63,7 @@ export function DiffView({
   onLoadContext: (lines: number) => Promise<DiffContext>;
   onEditor: () => void;
   openingEditor: boolean;
+  comparison?: { base: string; target: string };
 }) {
   const parent = useRef<HTMLDivElement>(null);
   const [raw, setRaw] = useState(false),
@@ -368,29 +370,38 @@ export function DiffView({
             </button>
           </div>
           <span className="comparison">
-            <span>{diff.side === "staged" ? "HEAD" : "Index"}</span>
+            <span>
+              {comparison?.base ?? (diff.side === "staged" ? "HEAD" : "Index")}
+            </span>
             <span aria-hidden="true">→</span>
-            <span>{diff.side === "staged" ? "Index" : "Worktree"}</span>
+            <span>
+              {comparison?.target ??
+                (diff.side === "staged" ? "Index" : "Worktree")}
+            </span>
           </span>
           <div className="toolbar-spacer" />
-          <button
-            className="icon-button"
-            title="文件历史与 Blame"
-            aria-label="文件历史与 Blame"
-            disabled={!onHistory || pending}
-            onClick={onHistory}
-          >
-            <ClockCounterClockwise size={17} />
-          </button>
-          <button
-            className="icon-button"
-            title="Open in editor · 当前 Worktree 文件"
-            aria-label="在外部编辑器打开"
-            disabled={openingEditor}
-            onClick={onEditor}
-          >
-            <ArrowSquareOut size={17} />
-          </button>
+          {!comparison && (
+            <button
+              className="icon-button"
+              title="文件历史与 Blame"
+              aria-label="文件历史与 Blame"
+              disabled={!onHistory || pending}
+              onClick={onHistory}
+            >
+              <ClockCounterClockwise size={17} />
+            </button>
+          )}
+          {!comparison && (
+            <button
+              className="icon-button"
+              title="Open in editor · 当前 Worktree 文件"
+              aria-label="在外部编辑器打开"
+              disabled={openingEditor}
+              onClick={onEditor}
+            >
+              <ArrowSquareOut size={17} />
+            </button>
+          )}
           <button
             className={`icon-button ${preferences.wrapLines ? "selected" : ""}`}
             aria-label="切换自动换行"
@@ -438,14 +449,16 @@ export function DiffView({
           >
             <Code size={17} />
           </button>
-          <button
-            className="icon-button"
-            aria-label="进入专注审查"
-            title="专注审查"
-            onClick={onFocus}
-          >
-            <ArrowsOutSimple size={17} />
-          </button>
+          {!comparison && (
+            <button
+              className="icon-button"
+              aria-label="进入专注审查"
+              title="专注审查"
+              onClick={onFocus}
+            >
+              <ArrowsOutSimple size={17} />
+            </button>
+          )}
         </div>
       </div>
       {optionsOpen && (
@@ -489,6 +502,7 @@ export function DiffView({
               aria-label="每处上下文行数"
               value={displayedContext?.contextLines ?? 3}
               disabled={
+                !!comparison ||
                 contextBusy ||
                 pending ||
                 !["text", "rename"].includes(diff.kind)
@@ -516,7 +530,7 @@ export function DiffView({
             {raw
               ? "当前原始 Patch 展示全部变化；空白折叠仅用于 Diff 视图。"
               : hiddenLines
-                ? `正在隐藏空白变化 · ${hiddenLines} 行被折叠。暂存包含完整原始变化；审查隐藏内容前需恢复显示。`
+                ? `正在隐藏空白变化 · ${hiddenLines} 行被折叠。`
                 : "空白过滤已开启 · 当前文件没有被折叠的变化。"}
           </span>
           <button
@@ -647,9 +661,15 @@ export function DiffView({
         <>
           {split && (
             <div className="split-labels">
-              <span>{diff.side === "staged" ? "HEAD" : "Index"} · 修改前</span>
               <span>
-                {diff.side === "staged" ? "Index" : "Worktree"} · 修改后
+                {comparison?.base ??
+                  (diff.side === "staged" ? "HEAD" : "Index")}{" "}
+                · 修改前
+              </span>
+              <span>
+                {comparison?.target ??
+                  (diff.side === "staged" ? "Index" : "Worktree")}{" "}
+                · 修改后
               </span>
             </div>
           )}
@@ -691,70 +711,76 @@ export function DiffView({
                       <div
                         className={`hunk-header ${row.hunk.reviewState === "reviewed" ? "is-reviewed" : ""}`}
                       >
-                        <button
-                          className="hunk-review"
-                          title={
-                            (hiddenByHunk.get(row.hunk.id) ?? 0) > 0 &&
-                            row.hunk.reviewState !== "reviewed"
-                              ? "此变化块有隐藏内容，请显示全部后再标记。"
-                              : row.hunk.reviewState === "reviewed"
-                                ? "撤销审查标记"
-                                : "Mark hunk reviewed"
-                          }
-                          aria-label={`${row.hunk.reviewState === "reviewed" ? "撤销审查" : "标记已审查"}：第 ${row.hunk.newStart} 行`}
-                          aria-pressed={row.hunk.reviewState === "reviewed"}
-                          disabled={
-                            pending ||
-                            (row.hunk.reviewState !== "reviewed" &&
-                              (hiddenByHunk.get(row.hunk.id) ?? 0) > 0)
-                          }
-                          onClick={() =>
-                            onMark(
-                              row.hunk.id,
-                              row.hunk.reviewState !== "reviewed",
-                            )
-                          }
-                        >
-                          {row.hunk.reviewState === "reviewed" ? (
-                            <Check weight="bold" size={16} />
-                          ) : row.hunk.reviewState === "needs_review" ? (
-                            <ArrowCounterClockwise size={16} />
-                          ) : (
-                            <Circle size={16} />
-                          )}
-                        </button>
+                        {!comparison && (
+                          <button
+                            className="hunk-review"
+                            title={
+                              (hiddenByHunk.get(row.hunk.id) ?? 0) > 0 &&
+                              row.hunk.reviewState !== "reviewed"
+                                ? "此变化块有隐藏内容，请显示全部后再标记。"
+                                : row.hunk.reviewState === "reviewed"
+                                  ? "撤销审查标记"
+                                  : "Mark hunk reviewed"
+                            }
+                            aria-label={`${row.hunk.reviewState === "reviewed" ? "撤销审查" : "标记已审查"}：第 ${row.hunk.newStart} 行`}
+                            aria-pressed={row.hunk.reviewState === "reviewed"}
+                            disabled={
+                              pending ||
+                              (row.hunk.reviewState !== "reviewed" &&
+                                (hiddenByHunk.get(row.hunk.id) ?? 0) > 0)
+                            }
+                            onClick={() =>
+                              onMark(
+                                row.hunk.id,
+                                row.hunk.reviewState !== "reviewed",
+                              )
+                            }
+                          >
+                            {row.hunk.reviewState === "reviewed" ? (
+                              <Check weight="bold" size={16} />
+                            ) : row.hunk.reviewState === "needs_review" ? (
+                              <ArrowCounterClockwise size={16} />
+                            ) : (
+                              <Circle size={16} />
+                            )}
+                          </button>
+                        )}
                         <code>{row.hunk.header}</code>
-                        <span className="hunk-state">
-                          {row.hunk.reviewState === "reviewed"
-                            ? "已审查"
-                            : row.hunk.reviewState === "needs_review"
-                              ? "待复核"
-                              : "未审查"}
-                        </span>
-                        <button
-                          className="hunk-stage"
-                          disabled={
-                            pending ||
-                            !diff.canStageHunks ||
-                            !row.hunk.lines.length
-                          }
-                          title={
-                            diff.canStageHunks && row.hunk.lines.length > 0
-                              ? "仅操作此变化块"
-                              : "当前变化不支持 Hunk 操作"
-                          }
-                          onClick={() => onStage(row.hunk.id)}
-                        >
-                          {diff.side === "staged" ? (
-                            <Minus size={13} />
-                          ) : (
-                            <Plus size={13} />
-                          )}
-                          {diff.side === "staged"
-                            ? "Unstage hunk"
-                            : "Stage hunk"}
-                        </button>
-                        {diff.side === "unstaged" && (
+                        {!comparison && (
+                          <>
+                            <span className="hunk-state">
+                              {row.hunk.reviewState === "reviewed"
+                                ? "已审查"
+                                : row.hunk.reviewState === "needs_review"
+                                  ? "待复核"
+                                  : "未审查"}
+                            </span>
+                            <button
+                              className="hunk-stage"
+                              disabled={
+                                pending ||
+                                !diff.canStageHunks ||
+                                !row.hunk.lines.length
+                              }
+                              title={
+                                diff.canStageHunks && row.hunk.lines.length > 0
+                                  ? "仅操作此变化块"
+                                  : "当前变化不支持 Hunk 操作"
+                              }
+                              onClick={() => onStage(row.hunk.id)}
+                            >
+                              {diff.side === "staged" ? (
+                                <Minus size={13} />
+                              ) : (
+                                <Plus size={13} />
+                              )}
+                              {diff.side === "staged"
+                                ? "Unstage hunk"
+                                : "Stage hunk"}
+                            </button>
+                          </>
+                        )}
+                        {!comparison && diff.side === "unstaged" && (
                           <button
                             className="icon-button"
                             disabled={
@@ -832,7 +858,7 @@ export function DiffView({
                     } as Record<string, string>
                   )[diff.kind] ?? "文件变化"}
                 </h3>
-                <p>检查文件属性与原始 patch 后，可以记录本次人工审查。</p>
+                <p>查看原始 Patch，核对文件属性变化。</p>
                 <button className="button" onClick={() => setRaw(true)}>
                   查看原始 patch
                 </button>
@@ -879,23 +905,27 @@ export function DiffView({
         </div>
         <div className="toolbar-spacer" />
         <span>
-          {reviewed}/{diff.hunks.length} 已审查
+          {comparison
+            ? `${diff.hunks.length} hunks`
+            : `${reviewed}/${diff.hunks.length} 已审查`}
         </span>
-        <button
-          className="button compact"
-          disabled={
-            pending || (hiddenLines > 0 && reviewed !== diff.hunks.length)
-          }
-          title={
-            hiddenLines
-              ? "当前隐藏了空白变化，请恢复显示后再标记整个文件。"
-              : undefined
-          }
-          onClick={() => onMark(null, reviewed !== diff.hunks.length)}
-        >
-          <Check size={15} />
-          {reviewed === diff.hunks.length ? "撤销文件标记" : "标记整个文件"}
-        </button>
+        {!comparison && (
+          <button
+            className="button compact"
+            disabled={
+              pending || (hiddenLines > 0 && reviewed !== diff.hunks.length)
+            }
+            title={
+              hiddenLines
+                ? "当前隐藏了空白变化，请恢复显示后再标记整个文件。"
+                : undefined
+            }
+            onClick={() => onMark(null, reviewed !== diff.hunks.length)}
+          >
+            <Check size={15} />
+            {reviewed === diff.hunks.length ? "撤销文件标记" : "标记整个文件"}
+          </button>
+        )}
       </footer>
     </section>
   );

@@ -221,6 +221,7 @@ export interface DataWorkspace {
 export type DataScope =
   { kind: "repository"; repositoryId: string } | { kind: "all" };
 export interface DataDeletionPreview {
+  hookRemovals?: import("./components/ObserverSettings").HookPreview[];
   id: string;
   scope: DataScope;
   workspaces: Workspace[];

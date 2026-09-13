@@ -39,6 +39,55 @@ mod platform {
             .open(path)
     }
     impl RecoveryFolder {
+        pub fn acquire_hook_installation(root: &Path, id: &str) -> Result<Option<Self>> {
+            uuid::Uuid::parse_str(id).map_err(|_| {
+                Error::new(
+                    "DATA_CLEANUP_PATH",
+                    "Hook 清理路径无效。",
+                    "Expected installation UUID",
+                )
+            })?;
+            let parent = match child(&directory(root)?, &CString::new("observer").unwrap())
+                .and_then(|folder| child(&folder, &CString::new("installations").unwrap()))
+            {
+                Ok(parent) => parent,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                Err(error) => return Err(error.into()),
+            };
+            Self::leased(parent, CString::new(id).unwrap()).map_err(|error| {
+                if error.code == "DATA_INDEX_BUSY" {
+                    Error::new(
+                        "OBSERVER_INSTALL_BUSY",
+                        "Hook 操作尚未结束，请稍后重试清理。",
+                        "Hook directory lease unavailable",
+                    )
+                } else {
+                    error
+                }
+            })
+        }
+        pub fn delete_hook_installation(&self) -> Result<()> {
+            let names = entries(&self.folder)?;
+            if names.iter().any(|name| {
+                ![
+                    "registration.json",
+                    "config-backup.json",
+                    "receipt.json",
+                    ".DS_Store",
+                ]
+                .contains(&name.as_str())
+            }) {
+                return Err(Error::new(
+                    "DATA_CLEANUP_UNRECOGNIZED",
+                    "Hook 备份目录中有未识别内容，清理尚未完成。",
+                    "Unknown installation artifact",
+                ));
+            }
+            for name in names {
+                unlink(&self.folder, &name, 0)?;
+            }
+            self.remove_directory()
+        }
         fn leased(parent: File, name: CString) -> Result<Option<Self>> {
             let folder = match child(&parent, &name) {
                 Ok(folder) => folder,
@@ -461,6 +510,26 @@ mod platform {
     use super::*;
     pub(crate) struct RecoveryFolder;
     impl RecoveryFolder {
+        pub fn acquire_hook_installation(root: &Path, id: &str) -> Result<Option<Self>> {
+            uuid::Uuid::parse_str(id).map_err(|_| {
+                Error::new(
+                    "DATA_CLEANUP_PATH",
+                    "Hook 清理路径无效。",
+                    "Expected installation UUID",
+                )
+            })?;
+            if !root.join("observer/installations").join(id).try_exists()? {
+                return Ok(None);
+            }
+            Err(Error::new(
+                "DATA_CLEANUP_PLATFORM",
+                "此平台的 Hook 备份清理尚未验证。",
+                "Bound hook cleanup unavailable",
+            ))
+        }
+        pub fn delete_hook_installation(&self) -> Result<()> {
+            unreachable!()
+        }
         pub fn acquire_index(root: &Path, id: &str) -> Result<Option<Self>> {
             if !root.join("transient").join(id).try_exists()? {
                 return Ok(None);

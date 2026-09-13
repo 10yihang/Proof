@@ -132,6 +132,28 @@ impl Proof {
         agent: ObserverAgent,
         version: &str,
     ) -> Result<ObserverRegistrationSecret> {
+        let secret = Self::new_observer_registration(agent, version)?;
+        let installation = &secret.installation;
+        let token = &secret.token;
+        self.store.connection.execute(
+            "INSERT INTO observer_installations VALUES(?,?,?,?,?,?,?,NULL)",
+            params![
+                installation.id,
+                agent.as_str(),
+                version,
+                OBSERVER_ADAPTER_VERSION,
+                fingerprint(&[token.as_bytes()]),
+                installation.state,
+                installation.created_at
+            ],
+        )?;
+        Ok(secret)
+    }
+    /// Prepare a transport identity without writing settings or permissions.
+    pub fn new_observer_registration(
+        agent: ObserverAgent,
+        version: &str,
+    ) -> Result<ObserverRegistrationSecret> {
         if version.is_empty() || version.len() > 64 || version.chars().any(char::is_control) {
             return Err(Error::new(
                 "OBSERVER_VERSION",
@@ -153,18 +175,6 @@ impl Proof {
             uuid::Uuid::new_v4().simple(),
             uuid::Uuid::new_v4().simple()
         );
-        self.store.connection.execute(
-            "INSERT INTO observer_installations VALUES(?,?,?,?,?,?,?,NULL)",
-            params![
-                installation.id,
-                agent.as_str(),
-                version,
-                OBSERVER_ADAPTER_VERSION,
-                fingerprint(&[token.as_bytes()]),
-                installation.state,
-                installation.created_at
-            ],
-        )?;
         Ok(ObserverRegistrationSecret {
             installation,
             token,
@@ -356,6 +366,24 @@ impl Proof {
         Ok(events)
     }
 
+    pub fn observer_file_context(
+        &self,
+        workspace_id: &str,
+        path: &str,
+    ) -> Result<Vec<ObserverEvent>> {
+        self.store.workspace(workspace_id)?;
+        self.maintain_local_data()?;
+        let mut statement = self.store.connection.prepare("SELECT payload FROM observer_events WHERE workspace_id=?1 AND expires_at>?2 AND session_id IN (SELECT session_id FROM observer_events WHERE workspace_id=?1 AND expires_at>?2 AND EXISTS(SELECT 1 FROM json_each(observer_events.payload,'$.paths') WHERE value=?3) ORDER BY received_at DESC LIMIT 20) ORDER BY received_at DESC LIMIT 100")?;
+        let rows = statement
+            .query_map(params![workspace_id, now(), path], |r| {
+                r.get::<_, String>(0)
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows.into_iter()
+            .map(|s| serde_json::from_str(&s).map_err(Error::from))
+            .collect()
+    }
+
     /// Native collector entry point. This is intentionally absent from Tauri's
     /// frontend command dispatcher. Raw hook input is never stored as a blob.
     pub fn ingest_observer_event(&self, input: ObserverInput<'_>) -> Result<bool> {
@@ -397,6 +425,17 @@ impl Proof {
         }
         let kind =
             identifier(&raw, "hook_event_name").ok_or_else(|| observer_error("OBSERVER_SCHEMA"))?;
+        if kind == "ProofConnectionCheck" {
+            return self.record_observer_transport_probe(
+                installation_id,
+                token,
+                raw["nonce"].as_str().unwrap_or(""),
+                received_policy_revision,
+            );
+        }
+        if !self.check_observer_hook_program(installation_id)? {
+            return Ok(false);
+        }
         if ![
             "SessionStart",
             "UserPromptSubmit",

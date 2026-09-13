@@ -4,8 +4,6 @@ import {
   ArrowClockwise,
   ArrowDown,
   ArrowUp,
-  Check,
-  Copy,
   GitBranch,
   GitCommit,
   GitMerge,
@@ -20,6 +18,7 @@ import type {
   CommitGraphPage,
   ProofError,
 } from "../types";
+import { type HistoryComparison } from "./HistoryDiff";
 import { demoGraphPage } from "../graph-demo";
 import {
   GRAPH_ROW_HEIGHT,
@@ -35,6 +34,8 @@ export function CommitHistory({
   scopeLabel,
   onScope,
   onBranches,
+  onOpenDiff,
+  requestedComparison,
 }: {
   changes: Changes;
   demo: boolean;
@@ -42,11 +43,38 @@ export function CommitHistory({
   scopeLabel?: string;
   onScope: (scope: string) => void;
   onBranches: (branches: BranchEntry[]) => void;
+  onOpenDiff: (selection: HistoryComparison) => void;
+  requestedComparison?: HistoryComparison | null;
 }) {
   const request = useRequest();
   const [page, setPage] = useState<CommitGraphPage | null>(null);
   const [commits, setCommits] = useState<CommitEntry[]>([]);
   const [selected, setSelected] = useState<CommitEntry | null>(null);
+  const [compared, setCompared] = useState<CommitEntry | null>(null);
+  const [branchComparison, setBranchComparison] =
+    useState<HistoryComparison | null>(null);
+  const [parent, setParent] = useState(0);
+  const [menu, setMenu] = useState<{
+    commit: CommitEntry;
+    x: number;
+    y: number;
+  } | null>(null);
+  useEffect(() => {
+    setBranchComparison(requestedComparison ?? null);
+  }, [requestedComparison]);
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    document.addEventListener("pointerdown", close);
+    document.addEventListener("keydown", key);
+    return () => {
+      document.removeEventListener("pointerdown", close);
+      document.removeEventListener("keydown", key);
+    };
+  }, [menu]);
   const [error, setError] = useState<ProofError | null>(null);
   const [busy, setBusy] = useState(false);
   const [revision, setRevision] = useState(0);
@@ -61,6 +89,8 @@ export function CommitHistory({
     setPage(null);
     setCommits([]);
     setSelected(null);
+    setCompared(null);
+    setParent(0);
     const load = demo
       ? Promise.resolve(demoGraphPage(scope))
       : request<CommitGraphPage>("commit_graph", {
@@ -117,18 +147,38 @@ export function CommitHistory({
     getItemKey: (index) => commits[index].oid,
     rangeExtractor: (range) => {
       const visible = defaultRangeExtractor(range);
-      const active = commits.findIndex(
-        (commit) => commit.oid === selected?.oid,
-      );
-      return active >= 0 && !visible.includes(active)
-        ? [...visible, active].sort((a, b) => a - b)
-        : visible;
+      for (const entry of [selected, compared]) {
+        const index = commits.findIndex((c) => c.oid === entry?.oid);
+        if (index >= 0 && !visible.includes(index)) visible.push(index);
+      }
+      return visible.sort((a, b) => a - b);
     },
   });
-  function select(index: number) {
+  function select(index: number, compare = false) {
     const commit = commits[index];
     if (!commit) return;
-    setSelected(commit);
+    setBranchComparison(null);
+    setParent(0);
+    if (compare && selected && selected.oid !== commit.oid) {
+      if (compared?.oid === commit.oid) setCompared(null);
+      else {
+        setCompared(commit);
+        const ordered = [selected, commit].sort(
+          (a, b) =>
+            commits.findIndex((c) => c.oid === b.oid) -
+            commits.findIndex((c) => c.oid === a.oid),
+        );
+        onOpenDiff({
+          base: ordered[0].oid,
+          target: ordered[1].oid,
+          baseLabel: ordered[0].refs || undefined,
+          targetLabel: ordered[1].refs || undefined,
+        });
+      }
+    } else {
+      setSelected(commit);
+      setCompared(null);
+    }
     virtualizer.scrollToIndex(index, { align: "auto" });
   }
   function findMatch(direction: number) {
@@ -170,6 +220,36 @@ export function CommitHistory({
         : (scopeLabel ??
           page?.branches.find((branch) => branch.oid === scope)?.name ??
           "选中引用");
+  const ordered =
+    selected && compared
+      ? [selected, compared].sort(
+          (a, b) =>
+            commits.findIndex((c) => c.oid === b.oid) -
+            commits.findIndex((c) => c.oid === a.oid),
+        )
+      : null;
+  const comparison: HistoryComparison | null =
+    branchComparison ??
+    (ordered
+      ? {
+          base: ordered[0].oid,
+          target: ordered[1].oid,
+          baseLabel: ordered[0].refs || undefined,
+          targetLabel: ordered[1].refs || undefined,
+        }
+      : selected
+        ? {
+            target: selected.oid,
+            targetLabel: selected.subject,
+            parents: selected.parents,
+            parent,
+            unavailable:
+              selected.boundary === "shallow"
+                ? "父版本尚未获取，无法显示此次提交的变化。"
+                : undefined,
+          }
+        : null);
+  const range = !!branchComparison || !!compared;
   return (
     <section className="commit-history" aria-label="Git 提交图">
       <header className="graph-toolbar">
@@ -270,6 +350,7 @@ export function CommitHistory({
               columnHeader.current.style.transform = `translateX(${-event.currentTarget.scrollLeft}px)`;
           }}
           role="listbox"
+          aria-multiselectable="true"
           aria-label="提交列表与分支关系"
           tabIndex={0}
           aria-busy={busy}
@@ -287,7 +368,7 @@ export function CommitHistory({
             )
               return;
             const index = commits.findIndex(
-              (commit) => commit.oid === selected?.oid,
+              (commit) => commit.oid === (compared ?? selected)?.oid,
             );
             const next =
               event.key === "ArrowDown"
@@ -302,7 +383,7 @@ export function CommitHistory({
             if (next === null) return;
             event.preventDefault();
             event.currentTarget.focus({ preventScroll: true });
-            select(next);
+            select(next, event.shiftKey);
           }}
         >
           <div
@@ -312,7 +393,11 @@ export function CommitHistory({
             {virtualizer.getVirtualItems().map((item) => {
               const commit = commits[item.index],
                 row = graph.rows[item.index];
-              const selectedRow = selected?.oid === commit.oid;
+              const selectedRow = branchComparison
+                ? [branchComparison.base, branchComparison.target].includes(
+                    commit.oid,
+                  )
+                : selected?.oid === commit.oid || compared?.oid === commit.oid;
               return (
                 <button
                   key={commit.oid}
@@ -324,9 +409,31 @@ export function CommitHistory({
                   aria-setsize={commits.length}
                   tabIndex={-1}
                   style={{ transform: `translateY(${item.start}px)` }}
-                  onClick={() => {
-                    setSelected(commit);
+                  onClick={(event) => {
+                    select(
+                      item.index,
+                      event.metaKey || event.ctrlKey || event.shiftKey,
+                    );
                     scroll.current?.focus({ preventScroll: true });
+                  }}
+                  onDoubleClick={() =>
+                    onOpenDiff({
+                      target: commit.oid,
+                      targetLabel: commit.subject,
+                      parents: commit.parents,
+                      unavailable:
+                        commit.boundary === "shallow"
+                          ? "父版本尚未获取。"
+                          : undefined,
+                    })
+                  }
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    setMenu({
+                      commit,
+                      x: Math.min(event.clientX, window.innerWidth - 230),
+                      y: Math.min(event.clientY, window.innerHeight - 120),
+                    });
                   }}
                   aria-label={`${commit.subject}，${commit.author}，${commit.oid.slice(0, 8)}${commit.parents.length > 1 ? `，合并 ${commit.parents.length} 个父提交` : ""}`}
                 >
@@ -452,169 +559,101 @@ export function CommitHistory({
           )}
         </footer>
       </div>
-      {selected && (
-        <CommitDetail
-          key={`${page?.snapshotId}:${selected.oid}`}
-          commit={selected}
-          workspaceId={changes.workspace.id}
-          snapshotId={page?.snapshotId ?? ""}
-          demo={demo}
-        />
-      )}
-    </section>
-  );
-}
-
-function CommitDetail({
-  commit,
-  workspaceId,
-  snapshotId,
-  demo,
-}: {
-  commit: CommitEntry;
-  workspaceId: string;
-  snapshotId: string;
-  demo: boolean;
-}) {
-  const request = useRequest();
-  const [parent, setParent] = useState(0),
-    [patch, setPatch] = useState(""),
-    [busy, setBusy] = useState(true),
-    [error, setError] = useState<ProofError | null>(null),
-    [copied, setCopied] = useState(false);
-  useEffect(() => {
-    let active = true;
-    setBusy(true);
-    setPatch("");
-    setError(null);
-    if (commit.boundary === "shallow") {
-      setBusy(false);
-      setError({
-        code: "GRAPH_SHALLOW_BOUNDARY",
-        message: "此处是浅克隆历史边界，父版本未完整获取。",
-        detail: "不能将缺失的父历史按空树比较。",
-      });
-      return () => {
-        active = false;
-      };
-    }
-    const task = demo
-      ? Promise.resolve(
-          "diff --git a/src/api/requests.ts b/src/api/requests.ts\n--- a/src/api/requests.ts\n+++ b/src/api/requests.ts\n@@ -8,4 +8,5 @@ export async function handleRequest(request: Request) {\n-  const body = await request.json();\n+  const payload = await request.json();\n+  const body = validateRequest(payload);\n   const result = await Router.dispatch(body);\n   return createResponse(result);\n }",
-        )
-      : request<string>("graph_commit_diff", {
-          workspaceId,
-          snapshotId,
-          oid: commit.oid,
-          parent,
-        });
-    void task
-      .then((value) => {
-        if (active) setPatch(value);
-      })
-      .catch((cause) => {
-        if (active) setError(asError(cause));
-      })
-      .finally(() => {
-        if (active) setBusy(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [commit.oid, workspaceId, snapshotId, parent, demo]);
-  const lines = patch.split("\n");
-  return (
-    <section className="graph-detail" aria-label="所选提交详情">
-      <header className="graph-detail-header">
-        <div>
-          <span className="detail-caption">
-            <GitCommit size={15} />
-            {demo ? "演示提交" : "所选提交"}
-            <code>{commit.oid.slice(0, 8)}</code>
-          </span>
-          <h3>{commit.subject}</h3>
-          <span className="detail-author">
-            {commit.author}
-            <span>{new Date(commit.date).toLocaleString("zh-CN")}</span>
-          </span>
-        </div>
-        <button
-          className="icon-button"
-          aria-label="复制完整提交 ID"
-          title={copied ? "已复制" : "复制完整提交 ID"}
-          onClick={() => {
-            void navigator.clipboard
-              .writeText(commit.oid)
-              .then(() => setCopied(true))
-              .catch((cause) => setError(asError(cause)));
-          }}
-        >
-          {copied ? <Check size={16} /> : <Copy size={16} />}
-        </button>
-      </header>
-      <div className="graph-detail-toolbar">
-        <span className="detail-tab">原始 Diff</span>
-        {lines.length > 2000 && (
-          <span className="detail-baseline">预览前 2,000 行</span>
-        )}
-        <button
-          className="icon-button"
-          title="复制完整 Patch"
-          aria-label="复制完整 Patch"
-          disabled={busy || !patch}
-          onClick={() => {
-            void navigator.clipboard
-              .writeText(patch)
-              .catch((cause) => setError(asError(cause)));
-          }}
-        >
-          <Copy size={13} />
-        </button>
-        <div className="toolbar-spacer" />
-        {commit.boundary === "shallow" ? (
-          <span className="detail-baseline">父版本不可用</span>
-        ) : commit.parents.length > 1 ? (
-          <select
-            aria-label="比较父提交"
-            value={parent}
-            onChange={(event) => setParent(Number(event.target.value))}
+      <section className="history-inspector" aria-label="所选提交详情">
+        <header className="history-selection-header">
+          <GitCommit size={16} />
+          <div>
+            <strong>
+              {range
+                ? branchComparison
+                  ? "Branch comparison"
+                  : "2 commits selected"
+                : (selected?.subject ?? "选择 Commit")}
+            </strong>
+            <small>
+              {range
+                ? "比较所选两个版本的文件内容"
+                : selected
+                  ? `${selected.oid.slice(0, 8)} · ${selected.author} · ${new Date(selected.date).toLocaleString()}`
+                  : "双击 Commit 查看 Diff；Shift / ⌘ / Ctrl + 点击另一个 Commit 比较"}
+            </small>
+          </div>
+          {range ? (
+            <button
+              className="button compact"
+              onClick={() => {
+                setCompared(null);
+                setBranchComparison(null);
+              }}
+            >
+              结束比较
+            </button>
+          ) : selected && selected.parents.length > 1 ? (
+            <select
+              aria-label="比较父提交"
+              value={parent}
+              onChange={(e) => setParent(Number(e.target.value))}
+            >
+              {selected.parents.map((oid, index) => (
+                <option key={oid} value={index}>
+                  Parent {index + 1} · {oid.slice(0, 8)}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <span className="history-select-hint">
+              Double-click to open Diff
+            </span>
+          )}
+        </header>
+        {comparison && (
+          <button
+            className="button compact history-open-diff"
+            onClick={() => onOpenDiff(comparison)}
           >
-            {commit.parents.map((oid, index) => (
-              <option key={oid} value={index}>
-                父提交 {index + 1} · {oid.slice(0, 8)}
-              </option>
-            ))}
-          </select>
-        ) : (
-          <span className="detail-baseline">
-            {commit.parents[0]?.slice(0, 8) ?? "空树"} →{" "}
-            {commit.oid.slice(0, 8)}
-          </span>
+            在新 tab 中查看 Diff
+          </button>
         )}
-      </div>
-      {error ? (
-        <div className="graph-error" role="alert">
-          {error.message} <code>{error.code}</code>
+      </section>
+      {menu && (
+        <div
+          className="history-context-menu"
+          role="menu"
+          style={{ left: menu.x, top: menu.y }}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <button
+            role="menuitem"
+            disabled={!selected || selected.oid === menu.commit.oid}
+            onClick={() => {
+              select(
+                commits.findIndex((c) => c.oid === menu.commit.oid),
+                true,
+              );
+              setMenu(null);
+            }}
+          >
+            与所选 Commit 比较
+          </button>
+          <button
+            role="menuitem"
+            onClick={() => {
+              select(commits.findIndex((c) => c.oid === menu.commit.oid));
+              onOpenDiff({
+                target: menu.commit.oid,
+                targetLabel: menu.commit.subject,
+                parents: menu.commit.parents,
+                unavailable:
+                  menu.commit.boundary === "shallow"
+                    ? "父版本尚未获取。"
+                    : undefined,
+              });
+              setMenu(null);
+            }}
+          >
+            查看此 Commit 的变化
+          </button>
         </div>
-      ) : busy ? (
-        <div className="detail-loading" role="status">
-          <span className="loading-line" />
-          <span className="loading-line" />
-          <span className="loading-line" />
-        </div>
-      ) : (
-        <pre className="graph-patch">
-          {patch
-            ? lines.slice(0, 2000).map((line, index) => (
-                <span
-                  key={index}
-                  className={`patch-line ${line.startsWith("+") && !line.startsWith("+++") ? "patch-add" : line.startsWith("-") && !line.startsWith("---") ? "patch-delete" : line.startsWith("@@") ? "patch-hunk" : line.startsWith("diff --git") ? "patch-file" : ""}`}
-                >
-                  {line || " "}
-                </span>
-              ))
-            : "此比较基准下没有文本变化。"}
-        </pre>
       )}
     </section>
   );

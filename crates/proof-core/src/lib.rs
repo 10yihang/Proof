@@ -1,4 +1,5 @@
 mod adapter;
+mod compare;
 mod data;
 mod editor;
 #[cfg(target_os = "macos")]
@@ -8,6 +9,7 @@ mod git;
 mod graph;
 mod guarded_file;
 mod history;
+mod hook_registry;
 mod local_data;
 mod model;
 mod observer;
@@ -23,9 +25,11 @@ mod store;
 mod transient;
 
 pub use adapter::*;
+pub use compare::*;
 pub use data::*;
 pub use editor::*;
 pub use error::{Error, Result};
+pub use hook_registry::*;
 pub use local_data::*;
 pub use model::*;
 pub use observer::*;

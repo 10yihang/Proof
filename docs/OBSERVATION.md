@@ -1,6 +1,6 @@
 # Proof 本地观察实现状态
 
-需求基线为 PRD 的 OBS、CTX、EVD、SEC、SET 与第 21 章。本文描述 2026-09-12 的开发实现，**不是 Agent 正式支持矩阵**。
+需求基线为 PRD 的 OBS、CTX、EVD、SEC、SET 与第 21 章。本文描述 2026-09-13 的开发实现，**不是 Agent 正式支持矩阵**。
 
 ## 传输与授权
 
@@ -10,7 +10,7 @@
 
 接收端最多 8 个连接、4 条排队记录，每个未完成连接最多保留 200 ms。重处理在独立线程进行。接收时捕获授权代次与 GUI 前台租约；处理前及入库事务中重新检查。暂停、字段变更、撤销信任、清理记录都会使旧授权代次失效。事件不能在暂停后恢复或 GUI 重新打开后取得新的权限。
 
-后台观察是每个工作区的独立授权，默认关闭。独立服务 `serve --data-dir <目录>` 读取短期前台租约；租约消失且没有后台授权时停止。SIGTERM/SIGINT 仅停止本采集器。停机取消其自身启动的 Git 读取，2 秒未能收尾则退出并留下不完整性标记；不向 Agent 发信号。GUI 控制器、稳定 helper 安装路径及自动续租尚待接入。
+后台观察是每个工作区的独立授权，默认关闭。独立服务 `serve --data-dir <目录>` 读取短期前台租约；租约消失且没有后台授权时停止。SIGTERM/SIGINT 仅停止本采集器。停机取消其自身启动的 Git 读取，2 秒未能收尾则退出并留下不完整性标记；不向 Agent 发信号。GUI 控制器每秒检查授权并续租。Helper 以内容 hash 安装到 Proof 的私有数据目录，应用移动不改变已安装 Hook 的路径。
 
 ## 记录含义
 
@@ -21,7 +21,7 @@
 - 仅结构化退出码能支持命令成功/失败。Post-only 事件默认 `unconfirmed_post_only`；命令成功不会生成测试用例计数或当前代码已验证结论。
 - `receiving_unverified` 仅表示收到格式可处理的事件，不表示该 Agent 版本已通过真实兼容验证。
 
-Context 面板的会话浏览、人工关联修正、完整性及验证时效呈现尚待接入。底层匹配 hash 不等于当前 Hunk 的独占作者证明。
+Context 已显示最近 100 条文件相关会话事件、Prompt、命令、工具输出与回复，并显示截断、可能重复和到期字段。人工关联修正、完整性统计与验证时效仍待完善。底层匹配 hash 不等于当前 Hunk 的独占作者证明。
 
 ## 保留与清理
 
@@ -50,12 +50,22 @@ Context 面板的会话浏览、人工关联修正、完整性及验证时效呈
 
 执行前核对程序实际位置及经过的各级符号链接来源。已打开的工作区必须仍是同一物理 Git 身份且已受信任；准备检测后撤销信任或替换程序会拒绝执行。目录链接、链式链接和末级文件链接遵循同一检查，循环链接有展开上限。
 
-Codex 0.153.4、Claude Code 2.1.236 仅返回 `candidate_unverified`。版本号不能授予仓库采集权限或提升为运行兼容；未匹配版本返回 `unsupported_version`。Codex 后续安装仍需用户在原 CLI 的 `/hooks` 审阅并信任具体定义，不提供绕过 Hook 信任的入口。
+Codex 0.153.4 / macOS 目前开放安装；Claude Code 和其他组合保持检测状态，真实兼容验证未完成。安装前再次检测程序，展示用户级配置的前后差异，明确 Worktree 与内容字段，确认后才写入。安装后仍需要在 Codex `/hooks` 中信任具体配置；产品不提供绕过此审核的选项。
 
-`proof-observer::config` 提供纯 JSON 变更规划，尚不读取或写入真实配置。它按注册所有权增删必要的异步 command handler，保留其他条目的原始字节与格式；拒绝重复 JSON key、非 UTF-8、错误结构与超过 1 MiB 的输入或结果。重复安装幂等；升级前先核对旧定义，用户增加 matcher、复制或移动条目、其他字段仍引用注册时返回冲突。卸载依据保存的 schema 和所有权记录，当前 Agent 版本不再是安装候选也不阻止移除旧条目。
+原配置保存在私有 0600 备份。文件写入使用绑定目录句柄、发布前后身份检查和同目录原子替换。包含私密配置的临时副本在写入正文之前登记文件与目录身份，恢复和卸载可以准确清理。已卸载状态不能被晚到的安装覆盖；程序/配置/Helper 变化会暂停权限。对已经提交的卸载，后续维护失败作为 warning 呈现，不能伪装成完全未执行。
 
-配置方案中的前后文本可能包含私密设置，不得用于诊断导出。当前尚无物理写入、私有备份、并发文件替换、管理策略检测、稳定 helper 安装及真实 CLI 验证，因而 GUI 仍不开放安装。配置规划测试不构成这些能力的验收。
+全局 Hook 与 Worktree 授权分开保存。暂停某个 Worktree 不影响其他 Worktree。卸载移除本产品的配置条目，保留已有事件。删除 Proof 记录时，预览同时列出所需 Hook 删除；仍被其他仓库使用的全局 Hook 保留。配置修改前在 SQL writer 事务中复验删除范围；跨步骤失败说明已移除 Hook 与尚未删除记录。
 
-上游机制参考 [Codex Hooks](https://learn.chatgpt.com/docs/hooks) 与 [Claude Code Hooks](https://code.claude.com/docs/en/hooks)。文档与合成夹具不替代真实版本验证；没有启动模型、消耗模型 token 或修改现有 Agent 配置。
+Codex 的 Stop 与 SessionEnd 使用有界同步桥接，其他事件异步。真实测试发现异步 Stop 会在会话退出时被取消。桥接本身仍保持 50 ms 自身期限和无输出约束。
 
-下一步仍需真实文件的配置差异预览、备份与并发保护、安装/升级/卸载、稳定 helper 打包、真实版本能力门槛、GUI 生命周期控制、Context 与人工修正、诊断预览导出、完整产品数据删除，以及真实 Agent 验收。
+## 实际验证
+
+用户明确授权使用隔离仓库与实际 Codex Agent。`.artifacts/codex-hook-check-04/result.json` 记录完整 ObserverManager 安装流程后的 Codex 0.153.4 运行：26.992 秒，退出码 0，answer.py 从 41 改为 42，收到 Prompt、SessionStart、三个工具事件、Stop 与 SessionEnd，共 7 条事件。未提交测试仓库代码，未修改用户的 Codex 配置；临时 access credential 已删除。
+
+最终打包应用还通过原生界面完成安装与移除：`.artifacts/hook-native-02/model-result.json` 的实际 Codex 运行 27.333 秒，7 条事件，Helper SHA-256 为 `b72ccd292e05c136a8bffba258012229f6d3c10bf3b63c36fa148ed7585e57bf`。原生 Context 显示了任务、apply_patch 与输出；暂停后权限关闭，卸载后配置/注册凭据消失、事件保留，用户原配置指纹一致。详见同目录 `native-acceptance.json`。
+
+工具输出在该 CLI 版本是字符串，并没有结构化退出码。Proof 因此仍显示 `result_unknown`，不会根据输出中的成功文字生成测试通过结论。Hook payload 不提供可独立核验的进程版本；配置版本检查与此次真实调用验证不等于任意来源事件的运行版本认证。
+
+运行可复验夹具：先构建 proof-observer 与 codex_hook_fixture example，然后执行 `python3 scripts/run-codex-hook-check.py NEW_DIRECTORY --allow-model-run`。此显式命令会调用模型；常规测试和安装流程不调用模型。夹具专用的一次性 Hook trust 参数只用于我们审阅过的隔离配置。
+
+上游机制参考 [Codex Hooks](https://learn.chatgpt.com/docs/hooks) 与 [Claude Code Hooks](https://code.claude.com/docs/en/hooks)。仍需完成其他 Agent/平台矩阵、人工关联修正、诊断导出和整份 PRD 中剩余的验收项。

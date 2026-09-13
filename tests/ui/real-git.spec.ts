@@ -130,6 +130,10 @@ test("actual Git workflow: live save, branch, selected hunk Commit, Amend and Co
       .getByRole("button", { name: "Stage hunk", exact: true })
       .first()
       .click();
+    await page
+      .getByRole("navigation", { name: "Worktree" })
+      .getByRole("button", { name: /^Commit/ })
+      .click();
     await expect(page.locator(".composer-hint")).toContainText("1 staged");
     expect(git("show", ":src/api/client.ts")).toContain("live-save");
     expect(git("show", ":src/api/client.ts")).not.toContain("keep-unstaged");
@@ -163,6 +167,25 @@ test("actual Git workflow: live save, branch, selected hunk Commit, Amend and Co
     expect(git("status", "--porcelain")).toBe("");
     expect(git("show", "HEAD:extra.txt")).toBe("Unselected file");
     expect(git("show", "HEAD:src/api/client.ts")).toContain("keep-unstaged");
+    await page
+      .getByRole("navigation", { name: "Worktree" })
+      .getByRole("button", { name: "History", exact: true })
+      .click();
+    const graph = page.getByRole("listbox", { name: "提交列表与分支关系" });
+    await graph
+      .getByRole("option")
+      .filter({ hasText: beforeHead.slice(0, 8) })
+      .click({ modifiers: ["Meta"] });
+    const panel = page
+      .locator(".diff-tab-page:not([hidden])")
+      .getByRole("region", { name: "历史文件差异" });
+    await panel.locator(".tree-file").filter({ hasText: "client.ts" }).click();
+    await expect(panel.locator(".diff-scroll")).toContainText("keep-unstaged");
+    await expect(panel.locator(".diff-scroll")).toContainText("live-save");
+    await page
+      .getByRole("navigation", { name: "Worktree" })
+      .getByRole("button", { name: /^Commit/ })
+      .click();
     const preservedHead = git("rev-parse", "HEAD"),
       preservedIndex = readFileSync(join(repo, ".git/index")),
       preservedConfig = readFileSync(join(repo, ".git/config")),

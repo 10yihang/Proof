@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowClockwise, Database, Info, Trash } from "@phosphor-icons/react";
+import { HookConfigPreview } from "./ObserverSettings";
 import { asError, isDesktop, useRequest } from "../api";
 import type {
   DataCleanup,
@@ -454,6 +455,9 @@ export function DataSettings({
                         ))}
                       </ul>
                     )}
+                    {deletion.hookRemovals?.map((preview) => (
+                      <HookConfigPreview key={preview.id} preview={preview} />
+                    ))}
                     <dl className="privacy-defaults">
                       <dt>Review 记录</dt>
                       <dd>{deletion.counts.reviewRecords}</dd>

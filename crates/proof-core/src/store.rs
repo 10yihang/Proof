@@ -20,7 +20,7 @@ impl Store {
         let connection = Connection::open(path.join("proof.sqlite3"))?;
         connection.busy_timeout(std::time::Duration::from_secs(3))?;
         let version: u32 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        if version > 5 {
+        if version > 6 {
             return Err(Error::new(
                 "DATABASE_VERSION",
                 "本地数据由更新版本的 Proof 创建，请使用对应版本打开。",
@@ -52,6 +52,10 @@ impl Store {
                 before_data BLOB, after_data BLOB);
             CREATE TABLE IF NOT EXISTS observer_installations (id TEXT PRIMARY KEY, agent TEXT NOT NULL, agent_version TEXT NOT NULL,
                 adapter_version TEXT NOT NULL, token_hash TEXT NOT NULL, state TEXT NOT NULL, created_at INTEGER NOT NULL, last_event_at INTEGER);
+            CREATE TABLE IF NOT EXISTS observer_hook_configs (installation_id TEXT PRIMARY KEY REFERENCES observer_installations(id),
+                config_path TEXT NOT NULL, ownership TEXT NOT NULL, state TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS observer_transport_probes (installation_id TEXT PRIMARY KEY REFERENCES observer_installations(id) ON DELETE CASCADE,
+                nonce_hash TEXT NOT NULL, received_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS observer_permissions (installation_id TEXT NOT NULL REFERENCES observer_installations(id) ON DELETE CASCADE,
                 workspace_id TEXT NOT NULL REFERENCES workspaces(id), enabled INTEGER NOT NULL, prompt INTEGER NOT NULL, command INTEGER NOT NULL,
                 reply INTEGER NOT NULL, output INTEGER NOT NULL, background INTEGER NOT NULL, generation INTEGER NOT NULL,
@@ -71,7 +75,7 @@ impl Store {
                 payload TEXT NOT NULL, created_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS observer_gaps (id TEXT PRIMARY KEY, installation_id TEXT, workspace_id TEXT, code TEXT NOT NULL,
                 count INTEGER, started_at INTEGER NOT NULL, ended_at INTEGER);
-            PRAGMA user_version=5;")?;
+            PRAGMA user_version=6;")?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

@@ -140,7 +140,7 @@ pub fn serve(data_dir: &Path) -> Result<()> {
         for (value,previous,code) in [(snapshot.queue_full,&mut last_queue,"transport_queue_full"),(snapshot.invalid,&mut last_invalid,"transport_invalid"),(snapshot.expired,&mut last_expired,"transport_expired"),(snapshot.storage_rejected,&mut last_storage,"storage_rejected")] {
             if value>*previous {let _=metadata.record_observer_gap(None,code,Some(value-*previous));*previous=value;}
         }
-        let _=server::write_health(&health,&json!({"schemaVersion":1,"adapterVersion":OBSERVER_VERSION,"epoch":epoch,"pid":std::process::id(),"startedAt":start,"heartbeatAt":now(),"cleanShutdown":false,"socketPath":socket,"metrics":snapshot}));
+        let _=server::write_health(&health,&json!({"schemaVersion":1,"adapterVersion":OBSERVER_VERSION,"storageGeneration":storage_generation,"epoch":epoch,"pid":std::process::id(),"startedAt":start,"heartbeatAt":now(),"cleanShutdown":false,"socketPath":socket,"metrics":snapshot}));
         Ok(())
         });
         if STOP.load(Ordering::Relaxed) {control.store(false,Ordering::Release);}
@@ -150,7 +150,7 @@ pub fn serve(data_dir: &Path) -> Result<()> {
     metadata.record_observer_gap(None, "collector_stopped", None)?;
     server::write_health(
         &health,
-        &json!({"schemaVersion":1,"adapterVersion":OBSERVER_VERSION,"epoch":epoch,"pid":std::process::id(),"startedAt":start,"heartbeatAt":now(),"cleanShutdown":true,"socketPath":socket,"metrics":metrics.snapshot()}),
+        &json!({"schemaVersion":1,"adapterVersion":OBSERVER_VERSION,"storageGeneration":storage_generation,"epoch":epoch,"pid":std::process::id(),"startedAt":start,"heartbeatAt":now(),"cleanShutdown":true,"socketPath":socket,"metrics":metrics.snapshot()}),
     ).map_err(|error|proof_core::Error::new("OBSERVER_HEALTH_WRITE","运行状态未能保存。",format!("{error:?}")))?;
     Ok(())
     }).map_err(|_|TransportError::Io)?;

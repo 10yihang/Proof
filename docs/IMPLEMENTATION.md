@@ -1,6 +1,19 @@
 # Proof 实施与验收记录
 
-## 最新实现检查点 · 2026-09-13 Local data
+## 最新检查点 · 2026-09-13 Hook、Commit 与 History Diff tabs
+
+按用户最终要求：Changes 专注文件 Diff；Commit/Amend 独立成页；History 选择单个/两个 Commit 或 Branch，在新的可关闭 Diff tab 中阅读文件差异，不要求再次填写比较表单。History 的选择与滚动位置保留，Merge Parent 和比较方向可以调整。详见 `HISTORY-DIFF.md`。
+
+Codex 0.153.4 / macOS 的安装预览、字段/Worktree 授权、暂停、卸载、GUI 生命周期与稳定 Helper 已接入。schema 为 6。Context 显示实际相关会话及截断/重复/退出状态降级；删除记录与 Hook 卸载共用可恢复回执。两轴独立评审已关闭本轮发现，见 `CODE-REVIEW-11.md`。
+
+最终完整 Rust：161 通过、0 失败、2 条 opt-in 跳过；前端模型 29 通过；完整 UI 27 通过，其中 1 条以测试 NDJSON 驱动实际核心/Git，覆盖实时保存、选中 Hunk Commit、Amend、Commit all、History→Diff tab 和本地记录删除。此前桥接启动计时波动这次未复现，但不宣称其根因已修复。
+
+打包后的 Release 应用使用固定隔离启动配置完成原生安装、暂停、卸载；实际 Codex 在 27.333 秒内完成测试，answer.py 从 41 改为 42，App 自动刷新并显示 7 条真实事件。用户 Codex 配置指纹保持不变，临时登录凭据与测试 Hook 凭据已删除，7 条观察记录保留。原生 History 选中两个 Commit 后打开独立 Split Diff，准确显示 40→41，Worktree 的 42 没有混入该比较。证据为 `.artifacts/hook-native-02/model-result.json` 与 `native-acceptance.json`；原生截图已在任务中查看。
+
+类型检查、Clippy、Rust/Prettier 格式与构建通过。最终原生验证后仅移除一处过时的 Context 关联粒度文字，再次完成全量 UI 验收与打包。包使用 ad-hoc 签名，未公证；版本与输入指纹记录于 `.artifacts/latest-build.json`。此检查点不等于整份 PRD 的发布完成：其他 Agent/平台、人工关联修正、诊断导出及完整 NFR 仍需继续。
+
+
+## 此前实现检查点 · 2026-09-13 Local data
 
 本地数据管理已接入暂停观察、隐藏最近项目、按仓库删除（覆盖 linked Worktree、隔离 clone）及全局清理。schema 升至 5；恢复副本、临时 Index、WAL 和采集运行文件使用可重试清理流程。旧请求、排队设置与跨窗口草稿写入不能重建已删记录。详见 `DATA-MANAGEMENT.md`、`CODE-REVIEW-10.md`。
 
@@ -60,7 +73,7 @@ Diff 工具栏及 Command 已接入外部编辑器，设置支持应用默认和
 
 1. 完成 Git/Review 验证：丢弃/恢复/Blame 原生交互、特殊文件与过滤器完整矩阵、历史阅读位置专项、严格并发压力。
 2. 完成阅读体验与设置：完整选择/滚动持久化、完整文件搜索、外部编辑器原生与 Windows 验收、大文件主动加载与压力、所有设置的应用/仓库层级、200% 缩放与全键盘覆盖。
-3. 完成观察产品流程：真实版本能力门槛、配置差异预览与可恢复安装、稳定 helper 打包、前台租约与后台控制、会话—文件证据界面和人工修正。已有底层传输/存储测试不能替代真实 Agent 回归。
+3. 继续观察产品的剩余范围：其他 Agent/平台的真实兼容矩阵、人工关联修正、完整性与验证时效；Codex/macOS 安装及真实会话已在最新检查点验收。
 4. 完成本地管理：原生全局清理与 Windows 验收、配置与 helper 卸载、诊断预览导出及完整生命周期验收。仓库删除与移除最近已有本轮原生证据。
 5. 完成发布证据：AT-01—30 全矩阵、NFR 基线和压力、macOS 安装包与更新校验、Windows 原型、真实 Agent 事件和用户研究。
 

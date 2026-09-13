@@ -39,7 +39,11 @@ fn both_agents_keep_existing_hooks_permissions_and_original_format() {
                         .contains(&spec.installation_id)
                     {
                         assert!(!["PreToolUse", "PermissionRequest"].contains(&event.as_str()));
-                        assert_eq!(handler["async"], true);
+                        assert_eq!(
+                            handler["async"],
+                            !(agent == Agent::Codex
+                                && ["Stop", "SessionEnd"].contains(&event.as_str()))
+                        );
                         assert_eq!(handler["type"], "command");
                         assert_eq!(handler["timeout"], 1);
                         assert_eq!(handler.as_object().unwrap().len(), 4);
@@ -83,7 +87,10 @@ fn modified_owned_handler_is_a_conflict_for_install_and_uninstall() {
     let spec = spec(Agent::Codex);
     let plan = install_plan(None, &spec, None).unwrap();
     let mut edited: Value = serde_json::from_str(plan.after.as_ref().unwrap()).unwrap();
-    edited["hooks"]["Stop"][0]["hooks"][0]["async"] = false.into();
+    let was_async = edited["hooks"]["Stop"][0]["hooks"][0]["async"]
+        .as_bool()
+        .unwrap();
+    edited["hooks"]["Stop"][0]["hooks"][0]["async"] = (!was_async).into();
     let before = serde_json::to_vec(&edited).unwrap();
     assert!(
         matches!(install_plan(Some(&before),&spec,Some(&plan.ownership)),Err(error) if error.code=="OBSERVER_CONFIG_CONFLICT")
@@ -154,6 +161,50 @@ fn helper_upgrade_replaces_owned_commands_without_duplicate_handlers() {
     assert_eq!(text.matches("revision-2").count(), 8);
     let undo = uninstall_plan(Some(text.as_bytes()), &update.ownership).unwrap();
     assert_eq!(undo.after.as_deref(), Some(EXISTING));
+}
+
+#[test]
+fn legacy_async_terminal_receipts_can_be_upgraded_and_uninstalled() {
+    let spec = spec(Agent::Codex);
+    let current = install_plan(Some(EXISTING.as_bytes()), &spec, None).unwrap();
+    let mut legacy: Value = serde_json::from_str(current.after.as_ref().unwrap()).unwrap();
+    for groups in legacy["hooks"].as_object_mut().unwrap().values_mut() {
+        for group in groups.as_array_mut().unwrap() {
+            for handler in group["hooks"].as_array_mut().unwrap() {
+                if handler["command"]
+                    .as_str()
+                    .unwrap()
+                    .contains(&spec.installation_id)
+                {
+                    handler["async"] = true.into();
+                }
+            }
+        }
+    }
+    let mut receipt = current.ownership.clone();
+    receipt.schema_version = 1;
+    let bytes = serde_json::to_vec(&legacy).unwrap();
+    let removed = uninstall_plan(Some(&bytes), &receipt).unwrap();
+    assert!(!removed.after.unwrap().contains(&spec.installation_id));
+    let upgraded = install_plan(Some(&bytes), &spec, Some(&receipt)).unwrap();
+    assert_eq!(upgraded.ownership.schema_version, 2);
+    let upgraded_json: Value = serde_json::from_str(upgraded.after.as_ref().unwrap()).unwrap();
+    assert_eq!(
+        upgraded_json["hooks"]["Stop"][0]["hooks"][0]["async"],
+        false
+    );
+    assert_eq!(
+        upgraded_json["hooks"]["SessionEnd"][0]["hooks"][0]["async"],
+        false
+    );
+    assert!(!uninstall_plan(
+        upgraded.after.as_deref().map(str::as_bytes),
+        &upgraded.ownership
+    )
+    .unwrap()
+    .after
+    .unwrap()
+    .contains(&spec.installation_id));
 }
 
 #[test]

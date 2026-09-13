@@ -2,7 +2,7 @@
 
 面向 AI 编码场景、以人工 Diff / Code Review 为核心的本地 Git 客户端。
 
-**当前状态：正在实现的 v0.1 Alpha，尚未达到 PRD 的发布完成条件。** Git 与 Review 核心已有真实仓库测试及 macOS 原生流程证据。安全丢弃/恢复点、文件历史与 Blame 已接入，新增原生交互仍待复验；Agent 观察、完整数据管理与性能验收仍在推进。
+**当前状态：正在实现的 v0.1 Alpha，尚未达到 PRD 的发布完成条件。** Git 与 Review 核心已有真实仓库测试及 macOS 原生流程证据。安全丢弃/恢复点、文件历史与 Blame 已接入，新增原生交互仍待复验；Codex 0.153.4 / macOS Hook 已完成隔离真实会话与原生安装验证。History 支持选择 Commit/Branch 后打开独立 Diff tab，Commit/Amend 独立成页；其他 Agent/平台、诊断与完整性能验收仍在推进。
 
 ## 运行
 
