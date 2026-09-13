@@ -353,19 +353,19 @@ export function DiffView({
               aria-pressed={!split}
               onClick={() => displayPreference({ diffMode: "unified" })}
             >
-              统一
+              Unified
             </button>
             <button
               aria-pressed={split}
               onClick={() => displayPreference({ diffMode: "split" })}
             >
-              并排
+              Split
             </button>
           </div>
           <span className="comparison">
             <span>{diff.side === "staged" ? "HEAD" : "Index"}</span>
             <span aria-hidden="true">→</span>
-            <span>{diff.side === "staged" ? "Index" : "工作树"}</span>
+            <span>{diff.side === "staged" ? "Index" : "Worktree"}</span>
           </span>
           <div className="toolbar-spacer" />
           <button
@@ -635,7 +635,7 @@ export function DiffView({
             <div className="split-labels">
               <span>{diff.side === "staged" ? "HEAD" : "Index"} · 修改前</span>
               <span>
-                {diff.side === "staged" ? "Index" : "工作树"} · 修改后
+                {diff.side === "staged" ? "Index" : "Worktree"} · 修改后
               </span>
             </div>
           )}
@@ -685,7 +685,7 @@ export function DiffView({
                               ? "此变化块有隐藏内容，请显示全部后再标记。"
                               : row.hunk.reviewState === "reviewed"
                                 ? "撤销审查标记"
-                                : "标记当前变化块已审查"
+                                : "Mark hunk reviewed"
                           }
                           aria-label={`${row.hunk.reviewState === "reviewed" ? "撤销审查" : "标记已审查"}：第 ${row.hunk.newStart} 行`}
                           aria-pressed={row.hunk.reviewState === "reviewed"}
@@ -736,7 +736,9 @@ export function DiffView({
                           ) : (
                             <Plus size={13} />
                           )}
-                          {diff.side === "staged" ? "撤销暂存" : "暂存"}
+                          {diff.side === "staged"
+                            ? "Unstage hunk"
+                            : "Stage hunk"}
                         </button>
                         {diff.side === "unstaged" && (
                           <button

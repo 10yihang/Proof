@@ -113,7 +113,7 @@ export function RepositoryView({
           }
         >
           <HardDrives size={17} />
-          工作区<span className="count-badge">{worktrees.length}</span>
+          Worktree<span className="count-badge">{worktrees.length}</span>
         </button>
         {section === "history" && (
           <div className="repository-refs">
@@ -198,7 +198,7 @@ export function RepositoryView({
         {section !== "history" && (
           <header className="repository-header">
             <div>
-              <h2>{section === "branches" ? "分支" : "工作区"}</h2>
+              <h2>{section === "branches" ? "分支" : "Worktree"}</h2>
               <p>
                 {section === "branches"
                   ? "本地分支与已知远程引用。"
@@ -283,7 +283,7 @@ export function RepositoryView({
                   </small>
                 </div>
                 {tree.path === changes.workspace.path ? (
-                  <span className="tag active-tag">当前工作区</span>
+                  <span className="tag active-tag">当前 Worktree</span>
                 ) : (
                   <button
                     className="button compact"

@@ -111,7 +111,7 @@ export function FileHistory({
             className={`file-history-current ${revision === null ? "active" : ""}`}
             onClick={() => select(null)}
           >
-            当前工作树 · 含未提交变化
+            当前 Worktree · 含未提交变化
           </button>
           <label className="file-history-search">
             <MagnifyingGlass size={15} />
@@ -181,7 +181,7 @@ export function FileHistory({
         <section className="file-blame" aria-label="所选版本的逐行归属">
           <header className="blame-header">
             <strong>
-              {revision ? `提交 ${revision.slice(0, 12)}` : "当前工作树"}
+              {revision ? `提交 ${revision.slice(0, 12)}` : "当前 Worktree"}
             </strong>
             <span>{blame ? `${blame.totalLines} 行` : ""}</span>
           </header>

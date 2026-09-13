@@ -1,5 +1,9 @@
 # Proof 验收记录
 
+## 最新验收检查点 · 2026-09-13 Git workflow
+
+顶部 Branch 下拉、Changes 文件树/勾选/批量 Stage、常驻 Commit/Amend、按文件缓存与自动刷新已接入。完整 Rust 127 项、前端模型 21 项及真实 Git 前后端流程通过；两轴评审已关闭。macOS 原生点击验收因锁屏待完成，Windows/大仓库 NFR 未因此闭环。详见 `GIT-WORKFLOW.md`、`CODE-REVIEW-08.md`。这只是产品的当前检查点，完整 P0 仍有下列缺口。
+
 本记录描述当前已有证据，不代表 v0.1 已完成。完整范围保持为 PRD 的全部 P0。
 
 ## 2026-09-13：仓库布局与面板交互

@@ -22,6 +22,7 @@ export interface Changes {
   branch: string | null;
   operation: string | null;
   token: string;
+  fileVersions?: Record<string, string>;
   capturedAt: number;
   files: ChangedFile[];
   gitVersion: string;
@@ -93,6 +94,8 @@ export interface CommitPreview {
   total: number;
   indexFingerprint: string;
   capturedAt: number;
+  amend: boolean;
+  message: string;
 }
 export interface CommitEntry {
   oid: string;

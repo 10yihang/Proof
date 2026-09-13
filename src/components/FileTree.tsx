@@ -1,16 +1,22 @@
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   CaretDown,
+  CaretRight,
   Check,
-  Circle,
   FileCode,
   FileText,
   Folder,
+  FolderOpen,
   MagnifyingGlass,
+  TreeStructure,
+  List,
+  Plus,
+  Minus,
 } from "@phosphor-icons/react";
 import { fileKey } from "../types";
-import type { ChangedFile, FileDiff } from "../types";
+import type { ChangedFile, FileDiff, Side } from "../types";
+import { treeRows, type TreeRow } from "../file-tree";
 
 export function FileTree({
   files,
@@ -21,6 +27,8 @@ export function FileTree({
   loaded,
   scope,
   onScope,
+  disabled,
+  onStage,
 }: {
   files: ChangedFile[];
   selected: string | null;
@@ -28,77 +36,121 @@ export function FileTree({
   search: string;
   onSearch: (s: string) => void;
   loaded: Record<string, FileDiff>;
-  scope: "all" | "unstaged" | "staged";
-  onScope: (scope: "all" | "unstaged" | "staged") => void;
+  scope: "all" | Side;
+  onScope: (scope: "all" | Side) => void;
+  disabled: boolean;
+  onStage: (files: ChangedFile[], side: Side) => void;
 }) {
   const parent = useRef<HTMLDivElement>(null);
-  const visible = useMemo(
-    () =>
-      files.filter(
-        (f) =>
-          (scope === "all" || f.side === scope) &&
-          f.path.toLocaleLowerCase().includes(search.toLocaleLowerCase()),
-      ),
-    [files, scope, search],
-  );
-  const rows = useMemo(() => {
-    const result: (
-      | { kind: "group"; label: string; count: number }
-      | { kind: "folder"; label: string }
-      | { kind: "file"; file: ChangedFile }
-    )[] = [];
-    for (const side of ["unstaged", "staged"]) {
-      const sideFiles = visible
-        .filter((f) => f.side === side)
-        .sort((a, b) => a.path.localeCompare(b.path));
-      if (!sideFiles.length) continue;
-      result.push({
-        kind: "group",
-        label: side === "staged" ? "已暂存" : "未暂存",
-        count: sideFiles.length,
-      });
-      let lastDirectory = "";
-      for (const file of sideFiles) {
-        const dir = file.path.includes("/")
-          ? file.path.slice(0, file.path.lastIndexOf("/"))
-          : "";
-        if (dir && dir !== lastDirectory)
-          result.push({ kind: "folder", label: dir });
-        lastDirectory = dir;
-        result.push({ kind: "file", file });
-      }
+  const [mode, setMode] = useState<"tree" | "list">(() => {
+    try {
+      return localStorage.getItem("proof:file-view") === "list"
+        ? "list"
+        : "tree";
+    } catch {
+      return "tree";
     }
-    return result;
-  }, [visible]);
+  });
+  const [collapsed, setCollapsed] = useState(new Set<string>());
+  const [checked, setChecked] = useState(new Set<string>());
+  const [focusKey, setFocusKey] = useState<string | null>(null);
+  useEffect(() => {
+    setChecked(
+      (previous) =>
+        new Set(
+          [...previous].filter((key) =>
+            files.some((file) => fileKey(file) === key),
+          ),
+        ),
+    );
+  }, [files]);
+  const rows = useMemo(
+    () => treeRows(files, scope, search, mode, collapsed),
+    [files, scope, search, mode, collapsed],
+  );
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => parent.current,
-    estimateSize: (i) => (rows[i].kind === "group" ? 42 : 34),
-    overscan: 12,
+    estimateSize: (i) => (rows[i].kind === "group" ? 38 : 30),
+    getItemKey: (i) => rows[i].key,
+    overscan: 14,
   });
+  function toggle(key: string) {
+    setCollapsed((previous) => {
+      const next = new Set(previous);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+  function chooseView(value: "tree" | "list") {
+    setMode(value);
+    try {
+      localStorage.setItem("proof:file-view", value);
+    } catch {
+      /* View remains usable for this session. */
+    }
+  }
+  const selectedFiles = files.filter((file) => checked.has(fileKey(file)));
+  function focus(index: number) {
+    const target = rows[Math.max(0, Math.min(rows.length - 1, index))];
+    if (!target) return;
+    setFocusKey(target.key);
+    virtualizer.scrollToIndex(index);
+    requestAnimationFrame(() => {
+      const element = [
+        ...(parent.current?.querySelectorAll<HTMLElement>("[data-tree-key]") ??
+          []),
+      ].find((el) => el.dataset.treeKey === target.key);
+      element?.focus();
+    });
+  }
+  function action(row: TreeRow) {
+    if (row.kind === "file") onSelect(row.file);
+    else toggle(row.key);
+  }
   return (
     <>
-      <div className="sidebar-heading">
-        <strong>变化文件</strong>
+      <div className="sidebar-heading file-heading">
+        <strong>Changes</strong>
         <span className="count-badge">{files.length}</span>
+        <span className="toolbar-spacer" />
+        <button
+          className="icon-button"
+          aria-label="文件树视图"
+          title="Tree view"
+          aria-pressed={mode === "tree"}
+          onClick={() => chooseView("tree")}
+        >
+          <TreeStructure size={16} />
+        </button>
+        <button
+          className="icon-button"
+          aria-label="文件列表视图"
+          title="List view"
+          aria-pressed={mode === "list"}
+          onClick={() => chooseView("list")}
+        >
+          <List size={16} />
+        </button>
       </div>
       <div className="file-search">
-        <MagnifyingGlass size={16} />
+        <MagnifyingGlass size={15} />
         <input
           id="file-search"
           aria-label="搜索变化文件"
-          placeholder="查找文件…"
+          placeholder="Filter files…"
           value={search}
-          onChange={(e) => onSearch(e.target.value)}
+          onChange={(event) => onSearch(event.target.value)}
         />
         <kbd>⌘ P</kbd>
       </div>
       <div className="file-filters" role="group" aria-label="比较范围">
         {(
           [
-            ["all", "全部"],
-            ["unstaged", "未暂存"],
-            ["staged", "已暂存"],
+            ["all", "All"],
+            ["unstaged", "Unstaged"],
+            ["staged", "Staged"],
           ] as const
         ).map(([value, label]) => (
           <button
@@ -110,100 +162,219 @@ export function FileTree({
           </button>
         ))}
       </div>
-      <div className="file-tree" ref={parent} aria-label="变化文件列表">
+      {selectedFiles.length > 0 && (
+        <div className="file-selection-actions">
+          <span>{selectedFiles.length} selected</span>
+          {(["unstaged", "staged"] as const).map((side) => {
+            const batch = selectedFiles.filter((file) => file.side === side);
+            return (
+              !!batch.length && (
+                <button
+                  key={side}
+                  disabled={disabled}
+                  onClick={() => {
+                    onStage(batch, side);
+                  }}
+                  aria-label={`${side === "staged" ? "Unstage" : "Stage"} selected files`}
+                >
+                  {side === "staged" ? <Minus size={13} /> : <Plus size={13} />}{" "}
+                  {side === "staged" ? "Unstage" : "Stage"} {batch.length}
+                </button>
+              )
+            );
+          })}
+          <button onClick={() => setChecked(new Set())}>清除</button>
+        </div>
+      )}
+      <div
+        className="file-tree"
+        ref={parent}
+        role="tree"
+        aria-label="变化文件树"
+        onKeyDown={(event) => {
+          if (
+            !(event.target instanceof HTMLElement) ||
+            event.target.matches("input")
+          )
+            return;
+          const target = event.target;
+          const index = rows.findIndex(
+            (row) =>
+              row.key ===
+              target.closest<HTMLElement>("[data-tree-key]")?.dataset.treeKey,
+          );
+          if (index < 0) return;
+          const row = rows[index];
+          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+            event.preventDefault();
+            focus(index + (event.key === "ArrowDown" ? 1 : -1));
+          }
+          if (event.key === "Home" || event.key === "End") {
+            event.preventDefault();
+            focus(event.key === "Home" ? 0 : rows.length - 1);
+          }
+          if (event.key === "ArrowRight") {
+            event.preventDefault();
+            if (row.kind !== "file" && !row.expanded) toggle(row.key);
+            else focus(index + 1);
+          }
+          if (event.key === "ArrowLeft") {
+            event.preventDefault();
+            if (row.kind !== "file" && row.expanded) toggle(row.key);
+            else if (row.parent)
+              focus(rows.findIndex((item) => item.key === row.parent));
+          }
+          if (event.key === "Enter" || event.key === " ") {
+            if (event.target.matches("[data-tree-key]")) {
+              event.preventDefault();
+              action(row);
+            }
+          }
+        }}
+      >
         <div
+          role="none"
           style={{ height: virtualizer.getTotalSize(), position: "relative" }}
         >
           {virtualizer.getVirtualItems().map((item) => {
-            const row = rows[item.index];
+            const row = rows[item.index],
+              file = row.kind === "file" ? row.file : null;
+            const reviewed =
+              file &&
+              loaded[fileKey(file)]?.hunks.every(
+                (hunk) => hunk.reviewState === "reviewed",
+              );
             return (
               <div
-                key={item.key}
+                key={row.key}
+                role="treeitem"
+                aria-level={row.depth}
+                aria-expanded={row.kind === "file" ? undefined : row.expanded}
+                aria-selected={file ? selected === row.key : undefined}
+                data-tree-key={row.key}
+                tabIndex={
+                  (focusKey ?? selected ?? rows[0]?.key) === row.key ? 0 : -1
+                }
+                onFocus={() => setFocusKey(row.key)}
+                className={`file-tree-row ${row.kind} ${selected === row.key ? "is-selected" : ""}`}
                 style={{
                   position: "absolute",
                   top: 0,
                   width: "100%",
                   transform: `translateY(${item.start}px)`,
                   height: item.size,
+                  paddingLeft: 6 + (row.depth - 1) * 12,
                 }}
               >
-                {row.kind === "group" ? (
-                  <div className="tree-group">
-                    <CaretDown size={12} />
-                    <span>{row.label}</span>
-                    <span>{row.count}</span>
-                  </div>
-                ) : row.kind === "folder" ? (
-                  <div className="tree-folder">
-                    <Folder size={14} />
-                    <span>{row.label}</span>
-                  </div>
-                ) : (
-                  (() => {
-                    const file = row.file,
-                      key = fileKey(file),
-                      diff = loaded[key];
-                    const reviewed =
-                      diff &&
-                      diff.hunks.every((h) => h.reviewState === "reviewed");
-                    return (
-                      <button
-                        className={`tree-file ${selected === key ? "is-selected" : ""}`}
-                        aria-current={selected === key ? "true" : undefined}
-                        onClick={() => onSelect(file)}
-                        title={`${file.path}\n${file.side === "staged" ? "HEAD → Index" : "Index → 工作树"}`}
+                {row.kind === "file" ? (
+                  <>
+                    <input
+                      type="checkbox"
+                      className="file-check"
+                      aria-label={`选择 ${row.file.path} (${row.side})`}
+                      checked={checked.has(row.key)}
+                      onChange={(event) =>
+                        setChecked((previous) => {
+                          const next = new Set(previous);
+                          if (event.target.checked) next.add(row.key);
+                          else next.delete(row.key);
+                          return next;
+                        })
+                      }
+                    />
+                    <button
+                      className="tree-file"
+                      tabIndex={-1}
+                      onClick={() => onSelect(row.file)}
+                      title={`${row.file.path}\n${row.side === "staged" ? "HEAD → Index" : "Index → Worktree"}`}
+                    >
+                      {row.file.path.endsWith(".md") ? (
+                        <FileText size={15} />
+                      ) : (
+                        <FileCode size={15} />
+                      )}
+                      <span className="tree-filename">
+                        {mode === "list"
+                          ? row.file.path
+                          : row.file.path.split("/").pop()}
+                      </span>
+                      {reviewed && <Check size={12} className="review-check" />}
+                      <span
+                        className={`file-status status-${row.file.status === "?" ? "new" : row.file.status}`}
                       >
-                        {file.path.endsWith(".md") ? (
-                          <FileText size={16} />
+                        {row.file.status === "?" ? "U" : row.file.status}
+                      </span>
+                    </button>
+                    <button
+                      className="row-stage"
+                      disabled={disabled || row.file.conflicted}
+                      aria-label={`${row.side === "staged" ? "Unstage" : "Stage"} ${row.file.path}`}
+                      title={
+                        row.side === "staged" ? "Unstage file" : "Stage file"
+                      }
+                      onClick={() => onStage([row.file], row.side)}
+                    >
+                      {row.side === "staged" ? (
+                        <Minus size={14} />
+                      ) : (
+                        <Plus size={14} />
+                      )}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      className={
+                        row.kind === "group" ? "tree-group" : "tree-folder"
+                      }
+                      tabIndex={-1}
+                      aria-label={`${row.label} 文件夹`}
+                      onClick={() => toggle(row.key)}
+                    >
+                      {row.expanded ? (
+                        <CaretDown size={12} />
+                      ) : (
+                        <CaretRight size={12} />
+                      )}{" "}
+                      {row.kind === "folder" &&
+                        (row.expanded ? (
+                          <FolderOpen size={15} />
                         ) : (
-                          <FileCode size={16} />
-                        )}
-                        <span className="tree-filename">
-                          {file.path.split("/").pop()}
-                        </span>
-                        <span
-                          className={`file-status status-${file.status === "?" ? "new" : file.status}`}
-                          aria-label={
-                            (
-                              {
-                                M: "修改",
-                                A: "新增",
-                                D: "删除",
-                                R: "重命名",
-                                "?": "未跟踪",
-                                U: "冲突",
-                              } as Record<string, string>
-                            )[file.status]
-                          }
-                        >
-                          {file.status === "?" ? "U" : file.status}
-                        </span>
-                        {reviewed ? (
-                          <Check
-                            className="review-check"
-                            size={13}
-                            weight="bold"
-                          />
-                        ) : (
-                          <Circle className="review-empty" size={12} />
-                        )}
-                      </button>
-                    );
-                  })()
+                          <Folder size={15} />
+                        ))}
+                      <span>{row.label}</span>
+                      <small>{row.files.length}</small>
+                    </button>
+                    <button
+                      className="row-stage"
+                      disabled={disabled || !row.files.length}
+                      aria-label={`${row.side === "staged" ? "Unstage" : "Stage"} ${row.kind === "group" ? (search ? "filtered files" : "all") : row.label}`}
+                      title={`${row.side === "staged" ? "Unstage" : "Stage"} ${row.files.length} files`}
+                      onClick={() => onStage(row.files, row.side)}
+                    >
+                      {row.side === "staged" ? (
+                        <Minus size={14} />
+                      ) : (
+                        <Plus size={14} />
+                      )}{" "}
+                      {row.kind === "group" &&
+                        (row.side === "staged" ? "Unstage" : "Stage all")}
+                    </button>
+                  </>
                 )}
               </div>
             );
           })}
         </div>
-        {!visible.length && (
+        {!rows.some((row) => row.kind === "file") && (
           <p className="empty-list">
-            {files.length ? "没有匹配的变化文件" : "当前工作区没有代码变化"}
+            {search
+              ? "没有匹配的文件"
+              : files.length
+                ? "展开文件夹查看变化"
+                : "Worktree clean"}
           </p>
         )}
-      </div>
-      <div className="sidebar-footnote">
-        <Circle size={12} />
-        <span>审查标记绑定当前代码版本</span>
       </div>
     </>
   );

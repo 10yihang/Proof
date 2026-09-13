@@ -1,0 +1,419 @@
+/* Git workflow controls share Proof's native surfaces and branch colors. */
+.branch-switcher {
+  position: relative;
+  flex-shrink: 1;
+  min-width: 0;
+}
+.branch-popover {
+  position: absolute;
+  z-index: 100;
+  left: 0;
+  top: calc(100% + 12px);
+  width: min(360px, calc(100vw - 32px));
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow:
+    0 16px 48px #0004,
+    0 2px 8px #0002;
+  padding: 6px;
+  animation: workflow-reveal 140ms ease-out;
+}
+.branch-search {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+}
+.branch-search input {
+  width: 100%;
+  min-width: 0;
+  background: none;
+  border: 0;
+  outline: none;
+  padding: 4px 0;
+  font-size: 12px;
+}
+.branch-options {
+  max-height: min(370px, 55vh);
+  overflow: auto;
+}
+.branch-section-label {
+  color: var(--muted);
+  font-size: 10px;
+  padding: 12px 9px 5px;
+}
+.branch-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px;
+  border-radius: 5px;
+  text-align: left;
+  font-size: 12px;
+}
+.branch-option:hover,
+.branch-option:focus-visible {
+  background: var(--hover);
+}
+.branch-option > span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.branch-option code {
+  font-size: 10px;
+  color: var(--muted);
+}
+.branch-empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  padding: 12px 9px;
+  margin: 0;
+}
+.create-branch {
+  border-top: 1px solid var(--border);
+  margin-top: 5px;
+  color: var(--accent);
+}
+.file-heading {
+  padding: 15px 13px 10px;
+  gap: 6px;
+}
+.file-heading .icon-button {
+  width: 25px;
+  height: 25px;
+}
+.file-heading .icon-button[aria-pressed="true"] {
+  background: var(--hover);
+  color: var(--text);
+}
+.file-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding-right: 4px;
+  border-radius: 4px;
+  min-width: 0;
+}
+.file-tree-row:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+.file-tree-row:hover {
+  background: var(--hover);
+}
+.file-tree-row.is-selected {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 var(--accent);
+}
+.file-tree-row .tree-file,
+.file-tree-row .tree-folder,
+.file-tree-row .tree-group {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0 2px;
+  margin: 0;
+  border-radius: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.file-tree-row .tree-file:hover {
+  background: transparent;
+}
+.file-tree-row .tree-file > svg {
+  flex-shrink: 0;
+}
+.file-tree-row .tree-folder {
+  font-size: 11px;
+}
+.file-tree-row .tree-group {
+  font-size: 11px;
+  font-weight: 600;
+}
+.file-tree-row .tree-group > span,
+.file-tree-row .tree-folder > span {
+  flex: 0 1 auto;
+  margin-left: 0;
+  font-size: inherit;
+  color: var(--text);
+}
+.file-tree-row small {
+  color: var(--faint);
+  font-size: 10px;
+  margin-left: 2px;
+}
+.file-check {
+  width: 12px;
+  height: 12px;
+  margin: 0 1px 0 0;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+}
+.row-stage {
+  height: 24px;
+  min-width: 22px;
+  padding: 3px;
+  border-radius: 4px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 2px;
+  color: var(--muted);
+  flex-shrink: 0;
+  font-size: 10px;
+}
+.row-stage:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.row-stage:disabled {
+  opacity: 0.35;
+}
+.file-tree-row.group .row-stage {
+  background: var(--surface-2);
+  padding: 3px 5px;
+}
+.file-selection-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 7px 12px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  font-size: 10px;
+}
+.file-selection-actions span {
+  flex: 1;
+  color: var(--muted);
+}
+.file-selection-actions button {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  color: var(--accent);
+}
+.commit-composer {
+  position: relative;
+  flex: 0 0 auto;
+  border-top: 1px solid var(--border);
+  padding: 12px;
+  background: var(--surface);
+}
+.composer-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  margin-bottom: 9px;
+}
+.composer-heading > span {
+  margin-left: auto;
+  max-width: 50%;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+}
+.commit-composer textarea {
+  width: 100%;
+  display: block;
+  min-height: 76px;
+  max-height: 180px;
+  resize: vertical;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+.commit-composer textarea:focus {
+  outline: 1px solid var(--accent);
+  border-color: var(--accent);
+}
+.composer-options {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 9px 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.composer-options label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.composer-options input {
+  width: 12px;
+  height: 12px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.composer-options code {
+  font-size: 10px;
+  color: var(--faint);
+}
+.review-policy {
+  font-size: 9px;
+  color: var(--accent);
+}
+.amend-note {
+  font-size: 10px;
+  color: var(--muted);
+  margin: 0 0 9px;
+  line-height: 1.5;
+}
+.composer-submit {
+  display: flex;
+  position: relative;
+}
+.composer-submit > .button {
+  min-width: 0;
+  font-size: 11px;
+  padding: 7px 8px;
+}
+.composer-submit > .button:first-child {
+  flex: 1;
+  border-radius: 5px 0 0 5px;
+  gap: 5px;
+}
+.composer-submit > .composer-menu-trigger {
+  border-radius: 0 5px 5px 0;
+  border-left-color: #ffffff30;
+  width: 26px;
+  flex: 0 0 26px;
+}
+.composer-hint {
+  text-align: center;
+  color: var(--muted);
+  font-size: 9px;
+  margin: 7px 0 0;
+}
+.composer-menu {
+  position: absolute;
+  bottom: calc(100% + 5px);
+  right: 0;
+  min-width: 210px;
+  padding: 5px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px #0003;
+  z-index: 25;
+  animation: workflow-reveal 120ms ease-out;
+}
+.composer-menu button {
+  width: 100%;
+  text-align: left;
+  padding: 9px;
+  border-radius: 4px;
+  font-size: 11px;
+  display: flex;
+  gap: 10px;
+}
+.composer-menu button:hover {
+  background: var(--hover);
+}
+.composer-menu small {
+  margin-left: auto;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.diff-loading {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--muted);
+  font-size: 12px;
+  pointer-events: none;
+}
+.diff-loading.background {
+  top: 104px;
+  right: 12px;
+  left: auto;
+  transform: none;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  padding: 5px 9px;
+  border-radius: 5px;
+  font-size: 10px;
+}
+.live-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.live-status .status-dot {
+  background: var(--add);
+  width: 5px;
+  height: 5px;
+  box-shadow: none;
+}
+.live-status .status-dot.neutral {
+  background: var(--muted);
+}
+@keyframes workflow-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (max-width: 780px) {
+  .branch-popover {
+    position: fixed;
+    top: 92px;
+    left: 16px;
+  }
+  .commit-composer {
+    padding: 9px 12px;
+  }
+  .commit-composer textarea {
+    min-height: 58px;
+  }
+}
+@media (max-height: 600px) {
+  .composer-heading,
+  .composer-hint {
+    display: none;
+  }
+  .commit-composer {
+    padding: 7px 10px;
+  }
+  .commit-composer textarea {
+    min-height: 44px;
+    height: 44px;
+  }
+  .composer-options {
+    padding: 6px 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .branch-popover,
+  .composer-menu {
+    animation: none;
+  }
+}

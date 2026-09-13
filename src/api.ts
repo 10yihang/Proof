@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type { ProofError } from "./types";
 
 export const isDesktop =
@@ -27,5 +28,39 @@ export function asError(error: unknown): ProofError {
     code: "UNEXPECTED_ERROR",
     message: "本次操作未完成，请查看详情后重试。",
     detail: String(error),
+  };
+}
+
+// New renderer instances must supersede a watcher left by a previous reload.
+let watchGeneration = Date.now() * 1000;
+export function watchWorkspace(
+  workspaceId: string,
+  onChange: () => void,
+  onError: (error: unknown) => void,
+) {
+  let closed = false;
+  const generation = ++watchGeneration;
+  let stop: (() => void) | undefined;
+  void listen<string>("workspace-invalidated", (event) => {
+    if (!closed && event.payload === workspaceId) onChange();
+  })
+    .then(async (unlisten) => {
+      if (closed) {
+        unlisten();
+        return;
+      }
+      stop = unlisten;
+      await invoke("watch_workspace", { workspaceId, generation });
+    })
+    .catch((error) => {
+      if (!closed) onError(error);
+    });
+  return () => {
+    closed = true;
+    stop?.();
+    void invoke("watch_workspace", {
+      workspaceId: null,
+      generation: ++watchGeneration,
+    }).catch(() => {});
   };
 }

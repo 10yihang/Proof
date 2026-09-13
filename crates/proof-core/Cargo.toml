@@ -19,3 +19,7 @@ libc = "0.2"
 
 [dev-dependencies]
 rusqlite = { workspace = true, features = ["hooks"] }
+
+[[example]]
+name = "ui-fixture-driver"
+path = "../../tests/support/ui-fixture-driver.rs"

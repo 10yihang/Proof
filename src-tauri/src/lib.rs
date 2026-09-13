@@ -3,6 +3,52 @@ use std::sync::{Arc, Mutex};
 use tauri::Manager;
 
 struct AppState(Arc<Mutex<Proof>>);
+mod watcher;
+
+#[tauri::command]
+async fn watch_workspace(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    watch: tauri::State<'_, Mutex<watcher::WorkspaceWatch>>,
+    workspace_id: Option<String>,
+    generation: u64,
+) -> Result<bool, Error> {
+    let paths = if let Some(id) = &workspace_id {
+        let core = state.0.clone();
+        let id = id.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            core.lock()
+                .map_err(|error| Error::new("CORE_UNAVAILABLE", "无法监听 Worktree。", error))?
+                .workspace_watch_paths(&id)
+        })
+        .await
+        .map_err(|error| {
+            Error::new(
+                "WATCH_UNAVAILABLE",
+                "文件监听不可用，已改用定时刷新。",
+                error,
+            )
+        })??
+    } else {
+        vec![]
+    };
+    let mut current = watch.lock().map_err(|error| {
+        Error::new(
+            "WATCH_UNAVAILABLE",
+            "文件监听不可用，已改用定时刷新。",
+            error,
+        )
+    })?;
+    if generation < current.generation {
+        return Ok(false);
+    }
+    current.generation = generation;
+    current.watcher = None;
+    if let Some(id) = workspace_id {
+        current.watcher = Some(watcher::start(app, id, paths)?);
+    }
+    Ok(current.watcher.is_some())
+}
 
 #[tauri::command]
 async fn proof_command(
@@ -99,6 +145,12 @@ fn dispatch(
         "stage" => serde_json::to_value(
             proof.stage(string(&args, "snapshotId")?, args["hunkId"].as_str())?,
         ),
+        "stage_files" => serde_json::to_value(proof.stage_files(
+            string(&args, "workspaceId")?,
+            &serde_json::from_value::<Vec<String>>(args["paths"].clone())?,
+            serde_json::from_value(args["side"].clone())?,
+            string(&args, "expectedToken")?,
+        )?),
         "discard_preview" => serde_json::to_value(
             proof.discard_preview(string(&args, "snapshotId")?, args["hunkId"].as_str())?,
         ),
@@ -116,9 +168,12 @@ fn dispatch(
         "recovery_content" => {
             serde_json::to_value(proof.recovery_content(string(&args, "recoveryId")?)?)
         }
-        "commit_preview" => {
-            serde_json::to_value(proof.commit_preview(string(&args, "workspaceId")?)?)
-        }
+        "commit_preview" => serde_json::to_value(proof.prepare_commit_checked(
+            string(&args, "workspaceId")?,
+            args["amend"].as_bool().unwrap_or(false),
+            args["coverage"].as_bool().unwrap_or(true),
+            args["expectedToken"].as_str(),
+        )?),
         "commit" => serde_json::to_value(
             proof.commit(string(&args, "previewId")?, string(&args, "message")?)?,
         ),
@@ -152,11 +207,12 @@ fn dispatch(
         )?),
         "branches" => serde_json::to_value(proof.branches(string(&args, "workspaceId")?)?),
         "worktrees" => serde_json::to_value(proof.worktrees(string(&args, "workspaceId")?)?),
-        "switch_branch" => serde_json::to_value(proof.switch_branch(
+        "switch_branch" => serde_json::to_value(proof.switch_branch_from(
             string(&args, "workspaceId")?,
             string(&args, "name")?,
             args["create"].as_bool().unwrap_or(false),
             string(&args, "expectedToken")?,
+            args["remote"].as_str(),
         )?),
         _ => return Err(Error::new("UNKNOWN_COMMAND", "此操作尚不支持。", command)),
     }?;
@@ -171,9 +227,10 @@ pub fn run() {
                 .map(std::path::PathBuf::from)
                 .unwrap_or(app.path().app_data_dir()?);
             app.manage(AppState(Arc::new(Mutex::new(Proof::open(data_dir)?))));
+            app.manage(Mutex::new(watcher::WorkspaceWatch::default()));
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![proof_command])
+        .invoke_handler(tauri::generate_handler![proof_command, watch_workspace])
         .run(tauri::generate_context!())
         .expect("Proof could not start");
 }

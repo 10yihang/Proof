@@ -12,6 +12,7 @@ mod process;
 mod reading;
 mod recovery;
 mod service;
+mod staging;
 mod store;
 
 pub use adapter::*;

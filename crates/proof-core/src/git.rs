@@ -24,19 +24,43 @@ impl Git {
     pub fn discover(&self, path: &str) -> Result<(Workspace, String, String)> {
         let requested = fs::canonicalize(path)
             .map_err(|e| Error::new("PATH_UNAVAILABLE", "仓库路径不存在或无法访问。", e))?;
-        let root = text(process::checked(
-            self.raw(&requested, &["rev-parse", "--show-toplevel"])?,
-        )?)?;
-        let root = fs::canonicalize(root.trim_end_matches('\n'))?;
-        let git_dir = text(process::checked(
-            self.raw(&root, &["rev-parse", "--absolute-git-dir"])?,
-        )?)?;
-        let common = text(process::checked(self.raw(
-            &root,
-            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        let paths = text(process::checked(self.raw(
+            &requested,
+            &[
+                "rev-parse",
+                "--path-format=absolute",
+                "--show-toplevel",
+                "--absolute-git-dir",
+                "--git-common-dir",
+            ],
         )?)?)?;
-        let git_dir = fs::canonicalize(git_dir.trim_end_matches('\n'))?;
-        let common = fs::canonicalize(common.trim_end_matches('\n'))?;
+        let parts: Vec<_> = paths.trim_end_matches('\n').split('\n').collect();
+        // Preserve unusual repository paths containing newlines with the
+        // original, unambiguous one-output-at-a-time discovery.
+        let (root, git_dir, common) = if parts.len() == 3 {
+            (
+                fs::canonicalize(parts[0])?,
+                fs::canonicalize(parts[1])?,
+                fs::canonicalize(parts[2])?,
+            )
+        } else {
+            let root = text(process::checked(
+                self.raw(&requested, &["rev-parse", "--show-toplevel"])?,
+            )?)?;
+            let root = fs::canonicalize(root.trim_end_matches('\n'))?;
+            let git_dir = text(process::checked(
+                self.raw(&root, &["rev-parse", "--absolute-git-dir"])?,
+            )?)?;
+            let common = text(process::checked(self.raw(
+                &root,
+                &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            )?)?)?;
+            (
+                root,
+                fs::canonicalize(git_dir.trim_end_matches('\n'))?,
+                fs::canonicalize(common.trim_end_matches('\n'))?,
+            )
+        };
         let repo_identity = directory_identity(&common)?;
         let identity = directory_identity(&git_dir)?;
         Ok((
@@ -160,19 +184,36 @@ impl Git {
         )?;
         let files = parse_status(&status)?;
         let mut stamps = Vec::new();
+        let mut file_versions = std::collections::HashMap::new();
+        let operation = self.state(workspace);
+        let base_version = fingerprint(&[
+            head.as_deref().unwrap_or("").as_bytes(),
+            branch.as_deref().unwrap_or("").as_bytes(),
+            &index,
+            operation.as_deref().unwrap_or("").as_bytes(),
+            &[u8::from(workspace.trusted)],
+            self.diff_environment(workspace, files.iter().map(|file| file.path.as_str()))?
+                .as_bytes(),
+        ]);
         for file in &files {
             let full = checked_path(workspace, &file.path)?;
-            if let Ok(metadata) = fs::symlink_metadata(&full) {
-                stamps.extend_from_slice(
-                    format!(
-                        "{:?}:{}:{:?}",
-                        file.path,
-                        metadata.len(),
-                        metadata.modified().ok()
-                    )
-                    .as_bytes(),
-                );
-            }
+            let stamp = file_stamp(&full)?;
+            let old_stamp = file
+                .old_path
+                .as_deref()
+                .map(|path| checked_path(workspace, path).and_then(|path| file_stamp(&path)))
+                .transpose()?
+                .unwrap_or_default();
+            let version = fingerprint(&[
+                base_version.as_bytes(),
+                file.path.as_bytes(),
+                file.status.as_bytes(),
+                file.old_path.as_deref().unwrap_or("").as_bytes(),
+                stamp.as_bytes(),
+                old_stamp.as_bytes(),
+            ]);
+            stamps.extend_from_slice(version.as_bytes());
+            file_versions.insert(format!("{}:{}", file.side.as_str(), file.path), version);
         }
         let token = fingerprint(&[
             head.as_deref().unwrap_or("").as_bytes(),
@@ -180,6 +221,7 @@ impl Git {
             &index,
             &status,
             &stamps,
+            base_version.as_bytes(),
         ]);
         let version = text(process::checked(
             self.raw(Path::new(&workspace.path), &["--version"])?,
@@ -188,8 +230,9 @@ impl Git {
             workspace: workspace.clone(),
             head,
             branch,
-            operation: self.state(workspace),
+            operation,
             token,
+            file_versions,
             captured_at: now(),
             files,
             git_version: version.trim().into(),
@@ -219,7 +262,36 @@ impl Git {
             &index,
             &content,
             &old,
+            self.diff_environment(workspace, std::iter::once(path))?
+                .as_bytes(),
         ]))
+    }
+
+    /// Diff also depends on effective attributes and config, including nested,
+    /// info, global and included files. Ask Git to resolve them once, instead of
+    /// guessing paths or exposing config values to the frontend.
+    fn diff_environment<'a>(
+        &self,
+        workspace: &Workspace,
+        paths: impl Iterator<Item = &'a str>,
+    ) -> Result<String> {
+        let config = process::checked(self.raw(
+            Path::new(&workspace.path),
+            &["config", "--null", "--list", "--includes"],
+        )?)?;
+        let mut input = Vec::new();
+        for path in paths {
+            input.extend_from_slice(path.as_bytes());
+            input.push(0);
+        }
+        let mut command = self.command(workspace)?;
+        command.args(["check-attr", "--all", "-z", "--stdin"]);
+        let attributes = process::checked(process::run(
+            command,
+            Some(&input),
+            Duration::from_secs(20),
+        )?)?;
+        Ok(fingerprint(&[&config, &attributes]))
     }
 
     pub fn context_guard(&self, workspace: &Workspace) -> Result<String> {
@@ -453,6 +525,39 @@ impl Git {
     }
 }
 
+fn file_stamp(path: &Path) -> Result<String> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok("missing".into()),
+        Err(error) => return Err(error.into()),
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Ok(format!(
+            "{}:{}:{}:{}:{}:{}:{}:{}",
+            metadata.dev(),
+            metadata.ino(),
+            metadata.mode(),
+            metadata.len(),
+            metadata.mtime(),
+            metadata.mtime_nsec(),
+            metadata.ctime(),
+            metadata.ctime_nsec()
+        ))
+    }
+    #[cfg(not(unix))]
+    {
+        Ok(format!(
+            "{}:{:?}:{:?}:{:?}",
+            metadata.len(),
+            metadata.modified().ok(),
+            metadata.created().ok(),
+            metadata.file_type()
+        ))
+    }
+}
+
 pub(crate) fn parse_status(bytes: &[u8]) -> Result<Vec<ChangedFile>> {
     let mut records = bytes.split(|b| *b == 0);
     let mut files = Vec::new();
@@ -495,7 +600,11 @@ pub(crate) fn parse_status(bytes: &[u8]) -> Result<Vec<ChangedFile>> {
         if x != ' ' && x != '?' && x != '!' {
             files.push(ChangedFile {
                 path: path.clone(),
-                old_path: old_path.clone(),
+                old_path: if x == 'R' || x == 'C' {
+                    old_path.clone()
+                } else {
+                    None
+                },
                 status: x.to_string(),
                 side: Side::Staged,
                 conflicted: false,
@@ -504,7 +613,7 @@ pub(crate) fn parse_status(bytes: &[u8]) -> Result<Vec<ChangedFile>> {
         if y != ' ' && y != '!' {
             files.push(ChangedFile {
                 path,
-                old_path,
+                old_path: if y == 'R' || y == 'C' { old_path } else { None },
                 status: if x == '?' { "?".into() } else { y.to_string() },
                 side: Side::Unstaged,
                 conflicted: false,

@@ -39,7 +39,7 @@ export function ContextInspector({
       }}
     >
       <header className="context-header">
-        <strong>修改上下文</strong>
+        <strong>Change context</strong>
         <button
           className="icon-button"
           title="收起上下文"
@@ -64,10 +64,10 @@ export function ContextInspector({
                 <span className="status-dot neutral" />
                 来源未知
               </span>
-              <p>尚无可核对的会话记录，无法确认这份修改的来源。</p>
+              <p>没有关联的 Agent 会话。</p>
               <div className="context-explanation">
                 <Info size={14} />
-                <span>文件变化本身不能证明由 Agent 或人工完成。</span>
+                <span>关联会话后可查看任务和执行记录。</span>
               </div>
             </div>
             <div className="context-section">
@@ -108,14 +108,14 @@ export function ContextInspector({
           <div className="context-section snapshot-info">
             <div className="section-title">
               <ClockCounterClockwise size={16} />
-              <h3>阅读快照</h3>
+              <h3>Diff details</h3>
             </div>
             <dl>
               <dt>比较范围</dt>
               <dd>
-                {diff.side === "staged" ? "HEAD → Index" : "Index → 工作树"}
+                {diff.side === "staged" ? "HEAD → Index" : "Index → Worktree"}
               </dd>
-              <dt>捕获时间</dt>
+              <dt>更新时间</dt>
               <dd>
                 {new Date(diff.capturedAt).toLocaleTimeString("zh-CN", {
                   hour12: false,
@@ -130,9 +130,7 @@ export function ContextInspector({
                 {demo && diff.path !== "README.md" ? "文件级示例" : "暂无证据"}
               </dd>
             </dl>
-            <p className="snapshot-note">
-              外部变化会提示更新，当前阅读位置保持稳定。
-            </p>
+            <p className="snapshot-note">文件保存后自动更新 Diff。</p>
           </div>
         )}
       </div>

@@ -53,6 +53,369 @@ fn baseline() -> String {
 }
 
 #[test]
+#[ignore = "Manual latency sample; use --ignored --nocapture on the target machine"]
+fn file_open_latency_sample() {
+    let mut f = Fixture::new();
+    f.change();
+    let mut timings = Vec::new();
+    for _ in 0..10 {
+        let start = std::time::Instant::now();
+        f.proof
+            .file_diff(&f.workspace.id, "code.txt", Side::Unstaged)
+            .unwrap();
+        timings.push(start.elapsed().as_millis());
+    }
+    timings.sort();
+    eprintln!("file_diff latency ms (sorted): {timings:?}");
+    assert!(timings[9] <= 500, "local cold Diff exceeds 500 ms");
+}
+
+#[test]
+fn batch_stage_selected_files_preserves_unselected_content_and_supports_unstage() {
+    let mut f = Fixture::new();
+    f.change();
+    fs::write(f.repo.join("-中文\nfile.txt"), "selected new\n").unwrap();
+    fs::write(f.repo.join("unselected.txt"), "leave me\n").unwrap();
+    let before_worktree = fs::read(f.repo.join("code.txt")).unwrap();
+    let token = f.proof.changes(&f.workspace.id).unwrap().token;
+    let paths = vec!["code.txt".into(), "-中文\nfile.txt".into()];
+    let stage = f
+        .proof
+        .stage_files(&f.workspace.id, &paths, Side::Unstaged, &token)
+        .unwrap();
+    assert!(stage.result.ok);
+    assert_eq!(
+        git(&f.repo, &["show", ":-中文\nfile.txt"]),
+        "selected new\n"
+    );
+    assert_eq!(fs::read(f.repo.join("code.txt")).unwrap(), before_worktree);
+    assert!(!git(&f.repo, &["diff", "--cached", "--name-only"]).contains("unselected.txt"));
+    let unstage = f
+        .proof
+        .stage_files(&f.workspace.id, &paths, Side::Staged, &stage.token)
+        .unwrap();
+    assert!(unstage.result.ok);
+    assert!(git(&f.repo, &["diff", "--cached"]).is_empty());
+    assert_eq!(fs::read(f.repo.join("code.txt")).unwrap(), before_worktree);
+}
+
+#[test]
+fn batch_stage_is_atomic_and_refuses_stale_or_invalid_selections() {
+    let mut f = Fixture::new();
+    f.change();
+    let token = f.proof.changes(&f.workspace.id).unwrap().token;
+    let index = fs::read(f.repo.join(".git/index")).unwrap();
+    let paths = vec!["code.txt".into(), "missing.txt".into()];
+    assert!(f
+        .proof
+        .stage_files(&f.workspace.id, &paths, Side::Unstaged, &token)
+        .is_err());
+    assert_eq!(fs::read(f.repo.join(".git/index")).unwrap(), index);
+    fs::write(f.repo.join("code.txt"), "newer content").unwrap();
+    assert_eq!(
+        f.proof
+            .stage_files(
+                &f.workspace.id,
+                &["code.txt".into()],
+                Side::Unstaged,
+                &token
+            )
+            .unwrap_err()
+            .code,
+        "STALE_CONTENT"
+    );
+    assert_eq!(fs::read(f.repo.join(".git/index")).unwrap(), index);
+    assert!(!f.repo.join(".git/index.lock").exists());
+}
+
+#[test]
+fn batch_unstage_unborn_and_commit_all_without_review() {
+    let mut f = Fixture::new();
+    git(&f.repo, &["checkout", "--orphan", "fresh"]);
+    let changes = f.proof.changes(&f.workspace.id).unwrap();
+    let result = f
+        .proof
+        .stage_files(
+            &f.workspace.id,
+            &["code.txt".into()],
+            Side::Staged,
+            &changes.token,
+        )
+        .unwrap();
+    assert!(result.result.ok);
+    assert!(git(&f.repo, &["ls-files"]).is_empty());
+    assert!(f.repo.join("code.txt").exists());
+    let stage = f
+        .proof
+        .stage_files(
+            &f.workspace.id,
+            &["code.txt".into()],
+            Side::Unstaged,
+            &result.token,
+        )
+        .unwrap();
+    let preview = f
+        .proof
+        .prepare_commit_checked(&f.workspace.id, false, false, Some(&stage.token))
+        .unwrap();
+    assert!(
+        f.proof
+            .commit(&preview.id, "Initial from composer")
+            .unwrap()
+            .ok
+    );
+    assert_eq!(git(&f.repo, &["show", "HEAD:code.txt"]), baseline());
+}
+
+#[test]
+fn amend_root_and_message_only_keep_parentage_and_worktree() {
+    let mut f = Fixture::new();
+    let root = git(&f.repo, &["rev-parse", "HEAD"]);
+    f.change();
+    let worktree = fs::read(f.repo.join("code.txt")).unwrap();
+    let preview = f
+        .proof
+        .prepare_commit(&f.workspace.id, true, false)
+        .unwrap();
+    assert_eq!(preview.message, "Initial");
+    assert!(preview.amend);
+    assert!(
+        f.proof
+            .commit(&preview.id, "Renamed initial commit")
+            .unwrap()
+            .ok
+    );
+    assert_ne!(git(&f.repo, &["rev-parse", "HEAD"]), root);
+    assert_eq!(git(&f.repo, &["show", "-s", "--format=%P", "HEAD"]), "\n");
+    assert_eq!(git(&f.repo, &["show", "HEAD:code.txt"]), baseline());
+    assert_eq!(fs::read(f.repo.join("code.txt")).unwrap(), worktree);
+}
+
+#[test]
+fn amend_uses_only_selected_index_and_rejects_new_head() {
+    let mut f = Fixture::new();
+    fs::write(f.repo.join("one.txt"), "one\n").unwrap();
+    git(&f.repo, &["add", "one.txt"]);
+    git(&f.repo, &["commit", "-m", "Second"]);
+    let parent = git(&f.repo, &["rev-parse", "HEAD^"]);
+    f.change();
+    let diff = f
+        .proof
+        .file_diff(&f.workspace.id, "code.txt", Side::Unstaged)
+        .unwrap();
+    f.proof.stage(&diff.id, Some(&diff.hunks[0].id)).unwrap();
+    let preview = f
+        .proof
+        .prepare_commit(&f.workspace.id, true, false)
+        .unwrap();
+    assert!(f.proof.commit(&preview.id, "Second, amended").unwrap().ok);
+    assert_eq!(git(&f.repo, &["rev-parse", "HEAD^"]), parent);
+    assert_eq!(
+        git(&f.repo, &["show", "HEAD:code.txt"]),
+        baseline().replace("line 3\n", "changed 3\n")
+    );
+    assert!(git(&f.repo, &["diff"]).contains("changed 25"));
+    let preview = f
+        .proof
+        .prepare_commit(&f.workspace.id, true, false)
+        .unwrap();
+    git(&f.repo, &["commit", "--allow-empty", "-m", "external"]);
+    assert_eq!(
+        f.proof
+            .commit(&preview.id, "must not amend new head")
+            .unwrap_err()
+            .code,
+        "STALE_CONTENT"
+    );
+}
+
+#[test]
+fn file_versions_invalidate_only_the_edited_file_even_for_same_size_edits() {
+    let f = Fixture::new();
+    f.change();
+    fs::write(f.repo.join("other.txt"), "first\n").unwrap();
+    let a = f.proof.changes(&f.workspace.id).unwrap();
+    fs::write(f.repo.join("other.txt"), "later\n").unwrap();
+    let b = f.proof.changes(&f.workspace.id).unwrap();
+    assert_ne!(a.token, b.token);
+    assert_eq!(
+        a.file_versions["unstaged:code.txt"],
+        b.file_versions["unstaged:code.txt"]
+    );
+    assert_ne!(
+        a.file_versions["unstaged:other.txt"],
+        b.file_versions["unstaged:other.txt"]
+    );
+}
+
+#[test]
+fn dropdown_switch_tracks_remote_and_preserves_local_edits_on_failure() {
+    let mut f = Fixture::new();
+    git(
+        &f.repo,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://example.invalid/fixture.git",
+        ],
+    );
+    git(
+        &f.repo,
+        &["update-ref", "refs/remotes/origin/feature", "HEAD"],
+    );
+    let token = f.proof.changes(&f.workspace.id).unwrap().token;
+    assert!(
+        f.proof
+            .switch_branch_from(
+                &f.workspace.id,
+                "feature",
+                true,
+                &token,
+                Some("origin/feature")
+            )
+            .unwrap()
+            .ok
+    );
+    assert_eq!(
+        git(&f.repo, &["config", "branch.feature.remote"]),
+        "origin\n"
+    );
+    f.change();
+    let before = fs::read(f.repo.join("code.txt")).unwrap();
+    let token = f.proof.changes(&f.workspace.id).unwrap().token;
+    assert!(f
+        .proof
+        .switch_branch(&f.workspace.id, "not-there", false, &token)
+        .is_err());
+    assert_eq!(fs::read(f.repo.join("code.txt")).unwrap(), before);
+    assert!(f
+        .proof
+        .switch_branch(&f.workspace.id, "@{-1}", false, &token)
+        .is_err());
+}
+
+#[test]
+fn batch_stage_rename_does_not_include_a_recreated_old_file_or_directory() {
+    for directory in [false, true] {
+        let mut f = Fixture::new();
+        git(&f.repo, &["mv", "code.txt", "renamed.txt"]);
+        fs::write(
+            f.repo.join("renamed.txt"),
+            baseline().replace("line 3", "selected change"),
+        )
+        .unwrap();
+        if directory {
+            fs::create_dir(f.repo.join("code.txt")).unwrap();
+            fs::write(f.repo.join("code.txt/unselected.txt"), "not selected").unwrap();
+        } else {
+            fs::write(f.repo.join("code.txt"), "not selected").unwrap();
+        }
+        let changes = f.proof.changes(&f.workspace.id).unwrap();
+        let unstaged = changes
+            .files
+            .iter()
+            .find(|file| file.path == "renamed.txt" && file.side == Side::Unstaged)
+            .unwrap();
+        assert!(unstaged.old_path.is_none());
+        let stage = f
+            .proof
+            .stage_files(
+                &f.workspace.id,
+                &["renamed.txt".into()],
+                Side::Unstaged,
+                &changes.token,
+            )
+            .unwrap();
+        assert!(stage.result.ok);
+        assert!(!git(&f.repo, &["ls-files"])
+            .lines()
+            .any(|path| path == "code.txt" || path.starts_with("code.txt/")));
+        assert!(git(&f.repo, &["show", ":renamed.txt"]).contains("selected change"));
+    }
+}
+
+#[test]
+fn attributes_and_included_config_invalidate_cached_diff_versions() {
+    let mut f = Fixture::new();
+    f.change();
+    let before = f.proof.changes(&f.workspace.id).unwrap();
+    fs::write(f.repo.join(".gitattributes"), "code.txt -diff\n").unwrap();
+    let after = f.proof.changes(&f.workspace.id).unwrap();
+    assert_ne!(
+        before.file_versions["unstaged:code.txt"],
+        after.file_versions["unstaged:code.txt"]
+    );
+    assert_eq!(
+        f.proof
+            .file_diff(&f.workspace.id, "code.txt", Side::Unstaged)
+            .unwrap()
+            .kind,
+        proof_core::FileKind::Binary
+    );
+    fs::create_dir_all(f.repo.join(".git/info")).unwrap();
+    fs::write(f.repo.join(".git/info/attributes"), "code.txt diff\n").unwrap();
+    let info = f.proof.changes(&f.workspace.id).unwrap();
+    assert_ne!(after.token, info.token);
+    assert_ne!(
+        after.file_versions["unstaged:code.txt"],
+        info.file_versions["unstaged:code.txt"]
+    );
+    fs::write(
+        f.repo.join(".git/diff-config"),
+        "[diff]\n  algorithm = patience\n",
+    )
+    .unwrap();
+    git(&f.repo, &["config", "include.path", "diff-config"]);
+    let included = f.proof.changes(&f.workspace.id).unwrap();
+    fs::write(
+        f.repo.join(".git/diff-config"),
+        "[diff]\n  algorithm = histogram\n",
+    )
+    .unwrap();
+    assert_ne!(
+        included.file_versions["unstaged:code.txt"],
+        f.proof.changes(&f.workspace.id).unwrap().file_versions["unstaged:code.txt"]
+    );
+}
+
+#[test]
+fn batch_unstage_rename_rejects_unselected_index_descendant_changes() {
+    let mut f = Fixture::new();
+    git(&f.repo, &["mv", "code.txt", "renamed.txt"]);
+    fs::create_dir(f.repo.join("code.txt")).unwrap();
+    fs::write(f.repo.join("code.txt/unselected.txt"), "staged version\n").unwrap();
+    git(&f.repo, &["add", "code.txt/unselected.txt"]);
+    fs::write(
+        f.repo.join("code.txt/unselected.txt"),
+        "staged version\nworktree version\n",
+    )
+    .unwrap();
+    let before = git(&f.repo, &["ls-files", "--stage"]);
+    let token = f.proof.changes(&f.workspace.id).unwrap().token;
+    assert_eq!(
+        f.proof
+            .stage_files(
+                &f.workspace.id,
+                &["renamed.txt".into()],
+                Side::Staged,
+                &token
+            )
+            .unwrap_err()
+            .code,
+        "INDEX_SCOPE_CHANGED"
+    );
+    assert_eq!(git(&f.repo, &["ls-files", "--stage"]), before);
+    assert_eq!(
+        git(&f.repo, &["show", ":code.txt/unselected.txt"]),
+        "staged version\n"
+    );
+    assert!(fs::read_to_string(f.repo.join("code.txt/unselected.txt"))
+        .unwrap()
+        .contains("worktree version"));
+}
+
+#[test]
 fn discarded_hunk_and_restart_undo_preserve_other_hunk_and_index() {
     let mut f = Fixture::new();
     f.change();

@@ -14,7 +14,7 @@ export const demoChanges: Changes = {
     id: "demo",
     repositoryId: "demo",
     name: "demo-service",
-    path: "/演示工作区/demo-service",
+    path: "/demo/demo-service",
     gitDir: "",
     commonDir: "",
     trusted: false,

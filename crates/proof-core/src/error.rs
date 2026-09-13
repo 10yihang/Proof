@@ -20,7 +20,7 @@ impl Error {
     pub fn stale() -> Self {
         Self::new(
             "STALE_CONTENT",
-            "工作区出现新变化，请查看最新内容后重试。",
+            "Worktree 已更新，请检查最新 Diff 后重试。",
             "Expected content or comparison base no longer matches",
         )
     }

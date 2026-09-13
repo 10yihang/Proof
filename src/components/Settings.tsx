@@ -95,10 +95,8 @@ export function Settings({
           )}
           {tab === "appearance" && (
             <>
-              <h3>让代码保持清晰</h3>
-              <p className="muted">
-                应用默认设置，保存在本机；所有主题均可离线使用。
-              </p>
+              <h3>外观与阅读</h3>
+              <p className="muted">应用默认设置。仓库布局可单独调整。</p>
               <label className="field-label">主题</label>
               <div className="theme-options">
                 {(
@@ -152,7 +150,7 @@ export function Settings({
               </label>
               <label className="settings-toggle">
                 <span>
-                  <strong>显示上下文面板</strong>
+                  <strong>显示 Context 面板</strong>
                   <small>应用默认；仓库单独设置时优先使用仓库值</small>
                 </span>
                 <input

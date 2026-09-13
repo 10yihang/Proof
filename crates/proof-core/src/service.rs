@@ -71,6 +71,16 @@ impl Proof {
     pub fn changes(&self, workspace_id: &str) -> Result<Changes> {
         self.git()?.changes(&self.store.workspace(workspace_id)?)
     }
+    pub fn workspace_watch_paths(&self, workspace_id: &str) -> Result<Vec<PathBuf>> {
+        let workspace = self.store.workspace(workspace_id)?;
+        let mut paths = vec![PathBuf::from(&workspace.path)];
+        for path in [&workspace.git_dir, &workspace.common_dir] {
+            if !paths.iter().any(|root| Path::new(path).starts_with(root)) {
+                paths.push(PathBuf::from(path));
+            }
+        }
+        Ok(paths)
+    }
 
     pub fn file_diff(&mut self, workspace_id: &str, path: &str, side: Side) -> Result<FileDiff> {
         let workspace = self.store.workspace(workspace_id)?;
@@ -422,17 +432,44 @@ impl Proof {
         Ok(())
     }
     pub fn commit_preview(&mut self, workspace_id: &str) -> Result<CommitPreview> {
+        self.prepare_commit(workspace_id, false, true)
+    }
+    pub fn prepare_commit(
+        &mut self,
+        workspace_id: &str,
+        amend: bool,
+        coverage: bool,
+    ) -> Result<CommitPreview> {
+        self.prepare_commit_checked(workspace_id, amend, coverage, None)
+    }
+    pub fn prepare_commit_checked(
+        &mut self,
+        workspace_id: &str,
+        amend: bool,
+        coverage: bool,
+        expected_token: Option<&str>,
+    ) -> Result<CommitPreview> {
         let workspace = self.store.workspace(workspace_id)?;
         self.require_write(&workspace)?;
         let git = self.git()?;
         let before = git.index_bytes(&workspace)?;
         let changes = git.changes(&workspace)?;
+        if expected_token.is_some_and(|token| token != changes.token) {
+            return Err(Error::stale());
+        }
         let files: Vec<ChangedFile> = changes
             .files
             .into_iter()
             .filter(|f| f.side == Side::Staged)
             .collect();
-        if files.is_empty() {
+        if amend && changes.head.is_none() {
+            return Err(Error::new(
+                "NO_COMMIT_TO_AMEND",
+                "当前 Branch 还没有 Commit。",
+                "Unborn HEAD",
+            ));
+        }
+        if files.is_empty() && !amend {
             return Err(Error::new(
                 "NOTHING_STAGED",
                 "请先暂存需要提交的变化。",
@@ -440,7 +477,8 @@ impl Proof {
             ));
         }
         let (mut reviewed, mut total) = (0, 0);
-        for file in &files {
+        let coverage = coverage || self.store.preferences()?.strict_review;
+        for file in files.iter().filter(|_| coverage) {
             let diff = self.file_diff(workspace_id, &file.path, Side::Staged)?;
             total += diff.hunks.len();
             reviewed += diff
@@ -452,6 +490,25 @@ impl Proof {
         if before != git.index_bytes(&workspace)? || changes.head != git.head(&workspace)? {
             return Err(Error::stale());
         }
+        let (message, parents) = if amend {
+            let oid = changes.head.as_deref().unwrap();
+            (
+                git::text(git.query(
+                    &workspace,
+                    &["show", "--no-show-signature", "-s", "--format=%B", oid],
+                )?)?
+                .trim_end_matches('\n')
+                .to_string(),
+                git::text(git.query(
+                    &workspace,
+                    &["show", "--no-show-signature", "-s", "--format=%P", oid],
+                )?)?
+                .trim()
+                .to_string(),
+            )
+        } else {
+            (String::new(), changes.head.clone().unwrap_or_default())
+        };
         let preview = CommitPreview {
             id: uuid::Uuid::new_v4().to_string(),
             workspace_id: workspace_id.into(),
@@ -462,6 +519,9 @@ impl Proof {
             total,
             index_fingerprint: fingerprint(&[&before]),
             captured_at: now(),
+            amend,
+            message,
+            parents,
         };
         if self.previews.len() > 16 {
             self.previews.clear();
@@ -531,6 +591,9 @@ impl Proof {
         .to_string();
         let mut command = git.command(&workspace)?;
         command.args(["commit", "--file=-"]);
+        if preview.amend {
+            command.arg("--amend");
+        }
         git::index_override(&mut command, index.path());
         let output = process::run(command, Some(message.as_bytes()), Duration::from_secs(120))?;
         let actual_head = git.head(&workspace)?;
@@ -567,14 +630,18 @@ impl Proof {
             .and_then(|bytes| std::str::from_utf8(bytes).ok())
             .map(str::trim);
         let matches = tree == expected_tree
-            && parents == preview.head.as_deref().unwrap_or("")
+            && parents == preview.parents
             && actual_branch == preview.branch
             && target_head.is_some()
             && actual_head.as_deref() == target_head;
         let mut result = OperationResult {
             ok: matches,
             message: if matches {
-                "提交已完成"
+                if preview.amend {
+                    "Amend 完成"
+                } else {
+                    "Commit 完成"
+                }
             } else {
                 "提交已产生，实际结果与预览不同，请核对历史"
             }
@@ -682,16 +749,52 @@ impl Proof {
         create: bool,
         expected_token: &str,
     ) -> Result<OperationResult> {
+        self.switch_branch_from(workspace_id, name, create, expected_token, None)
+    }
+    pub fn switch_branch_from(
+        &mut self,
+        workspace_id: &str,
+        name: &str,
+        create: bool,
+        expected_token: &str,
+        remote: Option<&str>,
+    ) -> Result<OperationResult> {
         let workspace = self.store.workspace(workspace_id)?;
         self.require_write(&workspace)?;
         let git = self.git()?;
         if git.changes(&workspace)?.token != expected_token {
             return Err(Error::stale());
         }
-        git.query(&workspace, &["check-ref-format", "--branch", name])?;
+        if name.starts_with('-') || name.contains("@{") || name == "HEAD" {
+            return Err(Error::new("INVALID_BRANCH", "Branch 名称无效。", name));
+        }
+        git.query(
+            &workspace,
+            &["check-ref-format", &format!("refs/heads/{name}")],
+        )?;
         let mut cmd = git.command(&workspace)?;
         cmd.arg("switch");
-        if create {
+        if let Some(remote) = remote {
+            if !create
+                || !git
+                    .branches(&workspace)?
+                    .iter()
+                    .any(|branch| branch.remote && branch.name == remote)
+            {
+                return Err(Error::new(
+                    "BRANCH_MISSING",
+                    "Remote branch 已变化，请重新选择。",
+                    remote,
+                ));
+            }
+            cmd.args([
+                "--track",
+                "--create",
+                name,
+                "--",
+                &format!("refs/remotes/{remote}"),
+            ]);
+        } else if create {
             cmd.arg("--create").arg(name);
         } else {
             cmd.arg("--").arg(name);
@@ -700,7 +803,7 @@ impl Proof {
         let after = git.changes(&workspace)?;
         Ok(OperationResult {
             ok: after.branch.as_deref() == Some(name),
-            message: "已切换分支，请核对新的比较基准".into(),
+            message: format!("已切换到 {name}"),
             actual_head: after.head,
             actual_branch: after.branch,
             warning: None,
@@ -740,7 +843,7 @@ impl IndexLock {
             published: false,
         })
     }
-    fn publish(mut self, bytes: &[u8]) -> Result<()> {
+    pub(crate) fn publish(mut self, bytes: &[u8]) -> Result<()> {
         self.file.write_all(bytes)?;
         self.file.sync_all()?;
         let destination = self.path.with_file_name("index");

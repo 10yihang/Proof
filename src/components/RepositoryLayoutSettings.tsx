@@ -34,8 +34,7 @@ export function RepositoryLayoutSettings({
         <span>{name}</span>
       </div>
       <p className="muted">
-        只用于此本地仓库，关联 worktree
-        共用。窗口变窄时临时收缩，不覆盖保存的宽度。
+        应用于此仓库及关联 Worktree。
         {demo && "演示布局仅在本次体验中保留。"}
       </p>
       <div className="layout-save-status" role="status">
@@ -85,7 +84,7 @@ export function RepositoryLayoutSettings({
         />
       </label>
       <label className="field-label" htmlFor="repository-context">
-        此仓库上下文面板
+        此仓库的 Context 面板
       </label>
       <select
         id="repository-context"

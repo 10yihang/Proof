@@ -165,7 +165,7 @@ export function RecoveryDialog({
       ) : (
         <div className="recovery-list">
           {!points.length && (
-            <p className="muted">当前工作区没有保留中的恢复点。</p>
+            <p className="muted">当前 Worktree 没有保留中的恢复点。</p>
           )}
           {points.map((p) => (
             <article className="recovery-item" key={p.id}>

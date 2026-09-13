@@ -70,6 +70,7 @@ pub struct Changes {
     pub branch: Option<String>,
     pub operation: Option<String>,
     pub token: String,
+    pub file_versions: std::collections::HashMap<String, String>,
     pub captured_at: u64,
     pub files: Vec<ChangedFile>,
     pub git_version: String,
@@ -225,6 +226,11 @@ pub struct CommitPreview {
     pub total: usize,
     pub index_fingerprint: String,
     pub captured_at: u64,
+    #[serde(default)]
+    pub amend: bool,
+    pub message: String,
+    #[serde(skip)]
+    pub parents: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -235,6 +241,14 @@ pub struct OperationResult {
     pub actual_head: Option<String>,
     pub actual_branch: Option<String>,
     pub warning: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchStageResult {
+    #[serde(flatten)]
+    pub result: OperationResult,
+    pub token: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -60,7 +60,7 @@ export function DataSettings({
           ? result.databaseCompactionPending
             ? "记录已清理；数据库空闲空间尚未收回，请稍后重试清理。"
             : clearWorkspace
-              ? `已暂停此工作区的观察，并清理 ${result.deletedEvents} 条事件。`
+              ? `已暂停此 Worktree 的观察，并清理 ${result.deletedEvents} 条事件。`
               : "到期记录已清理。"
           : "记录已从当前数据中移除；旧数据库读取仍占用日志，磁盘副本清理尚未完成。请稍后重试清理。",
       );
@@ -106,7 +106,7 @@ export function DataSettings({
             disabled={busy}
             onChange={(event) => setSelected(event.target.value)}
           >
-            <option value="">全部工作区</option>
+            <option value="">全部 Worktree</option>
             {workspaces.map((workspace) => (
               <option key={workspace.id} value={workspace.id}>
                 {workspace.name} · {workspace.path}
@@ -144,7 +144,7 @@ export function DataSettings({
                 </div>
               </div>
               <dl className="privacy-defaults">
-                <dt>{selected ? "此工作区" : "全部工作区"}的观察事件</dt>
+                <dt>{selected ? "此 Worktree" : "全部 Worktree"}的观察事件</dt>
                 <dd>{usage.observerEvents.toLocaleString()} 条</dd>
                 <dt>观察会话</dt>
                 <dd>{usage.observerSessions.toLocaleString()} 个</dd>
@@ -197,9 +197,9 @@ export function DataSettings({
                 {busy ? "正在处理…" : "清理到期记录 / 重试磁盘清理"}
               </button>
               <div className="data-delete-section">
-                <h4>清理工作区观察记录</h4>
+                <h4>清理 Worktree 观察记录</h4>
                 <p className="inline-help">
-                  删除此工作区的任务、事件、会话与关联备注，并暂停观察。人工审查记录、恢复点、源代码和
+                  删除此 Worktree 的任务、事件、会话与关联备注，并暂停观察。人工审查记录、恢复点、源代码和
                   Agent 自己的历史保留。
                 </p>
                 {!confirming ? (
@@ -217,7 +217,7 @@ export function DataSettings({
                     role="group"
                     aria-label="确认清理观察记录"
                   >
-                    <strong>确认删除此工作区的观察记录？</strong>
+                    <strong>确认删除此 Worktree 的观察记录？</strong>
                     <p>
                       删除后无法在 Proof
                       中恢复；再次开启观察不会补回这些历史。系统备份、快照和自行导出的副本需另行处理。
@@ -244,7 +244,7 @@ export function DataSettings({
                 )}
                 {!selected && (
                   <p className="inline-help">
-                    先选择一个工作区，再清理其观察记录。
+                    先选择一个 Worktree，再清理其观察记录。
                   </p>
                 )}
               </div>

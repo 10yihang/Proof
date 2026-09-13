@@ -21,7 +21,7 @@ import {
   ClockCounterClockwise,
   List,
 } from "@phosphor-icons/react";
-import { asError, isDesktop, request } from "./api";
+import { asError, isDesktop, request, watchWorkspace } from "./api";
 import { demoChanges, demoDiff, demoDiffContext } from "./demo";
 import { hiddenWhitespace } from "./diff-reading";
 import { defaultPreferences, fileKey } from "./types";
@@ -49,6 +49,9 @@ import { RecoveryDialog } from "./components/RecoveryDialog";
 import { FileHistory } from "./components/FileHistory";
 import { ResizableWorkbench } from "./components/ResizableWorkbench";
 import { useRepositoryLayout } from "./use-repository-layout";
+import { DiffCache } from "./diff-cache";
+import { BranchPicker } from "./components/BranchPicker";
+import { CommitComposer } from "./components/CommitComposer";
 import { shouldDismissDrawer } from "./components/panel-focus";
 
 type Dialog =
@@ -75,12 +78,18 @@ export default function App() {
   const initialized = useRef(false);
   const [recent, setRecent] = useState<Workspace[]>([]);
   const [changes, setChanges] = useState<Changes | null>(null);
-  const [incoming, setIncoming] = useState<Changes | null>(null);
+  const cache = useRef(new DiffCache());
+  const selectedRef = useRef<string | null>(null);
+  const busyRef = useRef(false);
+  const refreshGeneration = useRef(0);
   const [diff, setDiff] = useState<FileDiff | null>(null);
+  const displayedDiff = useRef<FileDiff | null>(null);
+  displayedDiff.current = diff;
+  const [reviewTarget, setReviewTarget] = useState<FileDiff | null>(null);
   const [loaded, setLoaded] = useState<Record<string, FileDiff>>({});
   const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState<ProofError | null>(null);
-  const [busy, setBusy] = useState(false),
+  const [busy, setBusyState] = useState(false),
     [loadingDiff, setLoadingDiff] = useState(false);
   const [dialog, setDialog] = useState<Dialog>(null),
     [tab, setTab] = useState<"changes" | "repository">("changes");
@@ -104,6 +113,11 @@ export default function App() {
   const repositoryLayout = useRepositoryLayout(changes?.workspace, demo);
   const [preview, setPreview] = useState<CommitPreview | null>(null),
     [draft, setDraft] = useState("");
+  const [amendTarget, setAmendTarget] = useState<{
+    head: string;
+    branch: string | null;
+  } | null>(null);
+  const normalDraft = useRef("");
   const [discardPoint, setDiscardPoint] = useState<RecoveryPoint | null>(null);
   const [path, setPath] = useState(""),
     [notification, setNotification] = useState("");
@@ -112,6 +126,12 @@ export default function App() {
     current = useRef<Changes | null>(null),
     polling = useRef(false);
   current.current = changes;
+  selectedRef.current = selected;
+  function setBusy(value: boolean) {
+    busyRef.current = value;
+    if (value) ++refreshGeneration.current;
+    setBusyState(value);
+  }
 
   useEffect(() => {
     if (initialized.current) return;
@@ -189,71 +209,132 @@ export default function App() {
       return () => window.clearTimeout(timer);
     }
   }, [notification]);
+  const acceptChangesRef = useRef<(next: Changes) => Promise<void>>(
+    async () => {},
+  );
+  const [syncing, setSyncing] = useState(false);
+  const pollRef = useRef<() => void>(() => {});
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      const currentState = current.current;
+    if (!isDesktop || demo || !changes) return;
+    let timer = 0;
+    const stop = watchWorkspace(
+      changes.workspace.id,
+      () => {
+        window.clearTimeout(timer);
+        timer = window.setTimeout(() => pollRef.current(), 120);
+      },
+      (error) => setError(asError(error)),
+    );
+    return () => {
+      window.clearTimeout(timer);
+      stop();
+    };
+  }, [changes?.workspace.id, demo]);
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      const active = current.current;
       if (
         !isDesktop ||
         demo ||
-        !currentState ||
+        !active ||
         document.visibilityState === "hidden" ||
         polling.current ||
-        busy
+        busyRef.current
       )
         return;
       polling.current = true;
-      const epoch = workspaceEpoch.current;
-      void request<Changes>("changes", {
-        workspaceId: currentState.workspace.id,
-      })
-        .then((next) => {
-          if (
-            epoch === workspaceEpoch.current &&
-            current.current?.workspace.id === next.workspace.id &&
-            current.current.token !== next.token
-          )
-            setIncoming(next);
-        })
-        .catch((e) => {
-          if (epoch === workspaceEpoch.current) setError(asError(e));
-        })
-        .finally(() => {
-          polling.current = false;
+      const epoch = workspaceEpoch.current,
+        generation = refreshGeneration.current;
+      try {
+        const next = await request<Changes>("changes", {
+          workspaceId: active.workspace.id,
         });
-    }, 3000);
-    return () => window.clearInterval(timer);
-  }, [demo, busy]);
+        const selectedFile = next.files.find(
+          (file) => fileKey(file) === selectedRef.current,
+        );
+        if (
+          !cancelled &&
+          epoch === workspaceEpoch.current &&
+          generation === refreshGeneration.current &&
+          !busyRef.current &&
+          current.current?.workspace.id === next.workspace.id &&
+          (current.current.token !== next.token ||
+            (selectedFile && !cache.current.get(next, selectedFile)))
+        ) {
+          await acceptChangesRef.current(next);
+        }
+      } catch (e) {
+        if (!cancelled && epoch === workspaceEpoch.current)
+          setError(asError(e));
+      } finally {
+        polling.current = false;
+      }
+    };
+    pollRef.current = () => void poll();
+    const timer = window.setInterval(() => void poll(), 1200);
+    const focus = () => void poll();
+    window.addEventListener("focus", focus);
+    document.addEventListener("visibilitychange", focus);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", focus);
+      document.removeEventListener("visibilitychange", focus);
+    };
+  }, [demo]);
 
   async function loadFile(
     file: ChangedFile,
     workspace = current.current?.workspace,
+    force = false,
   ) {
-    if (!workspace) return;
-    const epoch = workspaceEpoch.current;
-    const seq = ++sequence.current;
+    const active = current.current;
+    if (!workspace || !active || active.workspace.id !== workspace.id) return;
+    const epoch = workspaceEpoch.current,
+      seq = ++sequence.current;
+    selectedRef.current = fileKey(file);
     setSelected(fileKey(file));
+    const cached = !force && cache.current.get(active, file);
+    if (cached) {
+      setDiff(cached);
+      setLoadingDiff(false);
+      return;
+    }
+    // Keep the same file readable during a refresh. Never label the previous
+    // file as the new selection while its contents are still loading.
+    setDiff((d) => (d && fileKey(d) === fileKey(file) ? d : null));
     setLoadingDiff(true);
     try {
-      const next =
+      const next = await cache.current.read(active, file, () =>
         workspace.id === "demo"
-          ? demoDiff(file)
-          : await request<FileDiff>("file_diff", {
+          ? Promise.resolve(demoDiff(file))
+          : request<FileDiff>("file_diff", {
               workspaceId: workspace.id,
               path: file.path,
               side: file.side,
-            });
+            }),
+      );
+      const now = current.current;
       if (
-        seq !== sequence.current ||
         epoch !== workspaceEpoch.current ||
+        !now ||
+        now.workspace.id !== workspace.id ||
         next.workspaceId !== workspace.id ||
-        current.current?.workspace.id !== workspace.id
+        cache.current.version(active, file) !== cache.current.version(now, file)
       )
         return;
-      setDiff(next);
-      setLoaded((cache) => ({ ...cache, [fileKey(file)]: next }));
+      cache.current.put(now, file, next);
+      setLoaded(cache.current.values());
+      if (seq === sequence.current) setDiff(next);
     } catch (e) {
       if (seq === sequence.current && epoch === workspaceEpoch.current) {
-        setError(asError(e));
+        const failure = asError(e);
+        if (
+          failure.code !== "STALE_CONTENT" &&
+          failure.code !== "CHANGE_MISSING"
+        )
+          setError(failure);
         setDiff(null);
       }
     } finally {
@@ -261,6 +342,32 @@ export default function App() {
         setLoadingDiff(false);
     }
   }
+  async function acceptChanges(next: Changes, force = false) {
+    current.current = next;
+    setChanges(next);
+    if (force) cache.current.clear();
+    setLoaded(cache.current.retain(next));
+    const file =
+      next.files.find((file) => fileKey(file) === selectedRef.current) ??
+      next.files.find((file) => file.path === diff?.path) ??
+      next.files[0];
+    if (file) {
+      setSyncing(true);
+      try {
+        await loadFile(file, next.workspace, force);
+      } finally {
+        setSyncing(false);
+      }
+    } else {
+      ++sequence.current;
+      setSelected(null);
+      selectedRef.current = null;
+      setDiff(null);
+      setLoadingDiff(false);
+    }
+  }
+  acceptChangesRef.current = acceptChanges;
+
   async function openWorkspace(repositoryPath: string) {
     if (!repositoryPath.trim()) return;
     const epoch = ++workspaceEpoch.current;
@@ -281,10 +388,11 @@ export default function App() {
       current.current = next;
       setDemo(false);
       setChanges(next);
-      setIncoming(null);
+      cache.current.clear();
       setDiff(null);
       setLoaded({});
       setSelected(null);
+      setAmendTarget(null);
       setSearch("");
       setScope("all");
       setTab("changes");
@@ -323,35 +431,20 @@ export default function App() {
   }
   async function refresh() {
     const active = current.current;
-    if (!active) return;
-    if (active.workspace.id === "demo") {
-      setIncoming(null);
-      return;
-    }
-    const workspaceId = active.workspace.id;
+    if (!active || active.workspace.id === "demo") return;
     const epoch = workspaceEpoch.current;
-    const seq = ++sequence.current;
     setBusy(true);
     try {
-      const next = await request<Changes>("changes", { workspaceId });
-      if (seq !== sequence.current || epoch !== workspaceEpoch.current) return;
-      current.current = next;
-      setChanges(next);
-      setIncoming(null);
-      setLoaded({});
-      const file =
-        next.files.find((f) => fileKey(f) === selected) ?? next.files[0];
-      if (file) await loadFile(file, next.workspace);
-      else {
-        setDiff(null);
-        setSelected(null);
-      }
-    } catch (e) {
+      const next = await request<Changes>("changes", {
+        workspaceId: active.workspace.id,
+      });
       if (
         epoch === workspaceEpoch.current &&
-        current.current?.workspace.id === workspaceId
+        current.current?.workspace.id === next.workspace.id
       )
-        setError(asError(e));
+        await acceptChanges(next, true);
+    } catch (e) {
+      if (epoch === workspaceEpoch.current) setError(asError(e));
     } finally {
       if (epoch === workspaceEpoch.current) setBusy(false);
     }
@@ -393,11 +486,13 @@ export default function App() {
     reviewed: boolean,
     confirmed = false,
   ) {
-    if (!diff) return;
+    const target = confirmed ? reviewTarget : diff;
+    if (!target) return;
+    if (confirmed && target.id !== diff?.id) return;
     if (
       reviewed &&
       preferences.ignoreWhitespace &&
-      diff.hunks.some(
+      target.hunks.some(
         (hunk) =>
           (!hunkId || hunk.id === hunkId) && hiddenWhitespace(hunk).size > 0,
       )
@@ -411,10 +506,10 @@ export default function App() {
       return;
     }
     if (!hunkId && reviewed && !confirmed) {
+      setReviewTarget(target);
       setDialog("mark-file");
       return;
     }
-    const target = diff;
     const epoch = workspaceEpoch.current;
     setBusy(true);
     try {
@@ -438,12 +533,54 @@ export default function App() {
         ),
       };
       setDiff((d) => (d?.id === target.id ? next : d));
-      setLoaded((cache) => ({ ...cache, [fileKey(target)]: next }));
+      if (current.current) cache.current.put(current.current, target, next);
+      setLoaded(cache.current.values());
       setDialog(null);
     } catch (e) {
-      if (epoch === workspaceEpoch.current) setError(asError(e));
+      if (epoch === workspaceEpoch.current)
+        await snapshotError(e, target, epoch);
     } finally {
       if (epoch === workspaceEpoch.current) setBusy(false);
+    }
+  }
+  async function snapshotError(
+    error: unknown,
+    target: FileDiff,
+    epoch: number,
+  ) {
+    const active = current.current;
+    if (
+      epoch !== workspaceEpoch.current ||
+      !active ||
+      active.workspace.id !== target.workspaceId
+    )
+      return;
+    const failure = asError(error);
+    if (["SNAPSHOT_EXPIRED", "STALE_CONTENT"].includes(failure.code)) {
+      cache.current.remove(target, target.id);
+      setLoaded(cache.current.values());
+    }
+    if (
+      displayedDiff.current?.id !== target.id ||
+      selectedRef.current !== fileKey(target)
+    )
+      return;
+    setError(failure);
+    if (!["SNAPSHOT_EXPIRED", "STALE_CONTENT"].includes(failure.code)) return;
+    const file = active.files.find((file) => fileKey(file) === fileKey(target));
+    if (file) {
+      const expectedSequence = sequence.current + 1;
+      await loadFile(file, active.workspace, true);
+      if (
+        epoch === workspaceEpoch.current &&
+        sequence.current === expectedSequence &&
+        current.current?.workspace.id === target.workspaceId
+      ) {
+        setError({
+          ...failure,
+          message: "Diff 已更新，请重新选择要操作的内容。",
+        });
+      }
     }
   }
   async function stage(hunkId: string | null) {
@@ -475,7 +612,60 @@ export default function App() {
         epoch === workspaceEpoch.current &&
         current.current?.workspace.id === workspaceId
       )
-        setError(asError(e));
+        await snapshotError(e, diff, epoch);
+    } finally {
+      if (epoch === workspaceEpoch.current) setBusy(false);
+    }
+  }
+  async function stageFiles(files: ChangedFile[], side: "staged" | "unstaged") {
+    const active = current.current;
+    if (!active || busyRef.current || demo) return;
+    const epoch = workspaceEpoch.current;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await request<OperationResult>("stage_files", {
+        workspaceId: active.workspace.id,
+        paths: files.map((file) => file.path),
+        side,
+        expectedToken: active.token,
+      });
+      if (epoch !== workspaceEpoch.current) return;
+      setNotification(result.message);
+      if (result.warning)
+        setError({
+          code: "STAGE_CHANGED",
+          message: result.message,
+          detail: result.warning,
+        });
+      await refresh();
+    } catch (error) {
+      if (epoch === workspaceEpoch.current) setError(asError(error));
+    } finally {
+      if (epoch === workspaceEpoch.current) setBusy(false);
+    }
+  }
+  async function switchBranch(name: string, create: boolean, remote?: string) {
+    const active = current.current;
+    if (!active || busyRef.current || demo) return false;
+    const epoch = workspaceEpoch.current;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await request<OperationResult>("switch_branch", {
+        workspaceId: active.workspace.id,
+        name,
+        create,
+        remote,
+        expectedToken: active.token,
+      });
+      if (epoch !== workspaceEpoch.current) return false;
+      setNotification(result.message);
+      await refresh();
+      return result.ok;
+    } catch (error) {
+      if (epoch === workspaceEpoch.current) setError(asError(error));
+      return false;
     } finally {
       if (epoch === workspaceEpoch.current) setBusy(false);
     }
@@ -499,7 +689,7 @@ export default function App() {
       setDiscardPoint(point);
       setDialog("discard");
     } catch (e) {
-      if (epoch === workspaceEpoch.current) setError(asError(e));
+      if (epoch === workspaceEpoch.current) await snapshotError(e, diff, epoch);
     } finally {
       if (epoch === workspaceEpoch.current) setBusy(false);
     }
@@ -578,15 +768,15 @@ export default function App() {
       if (epoch === workspaceEpoch.current) setBusy(false);
     }
   }, [changes]);
-  async function commit() {
-    if (!preview) return;
+  async function commit(prepared = preview) {
+    if (!prepared) return;
     const epoch = workspaceEpoch.current;
-    const workspaceId = preview.workspaceId;
+    const workspaceId = prepared.workspaceId;
     setBusy(true);
     setError(null);
     try {
       const result = await request<OperationResult>("commit", {
-        previewId: preview.id,
+        previewId: prepared.id,
         message: draft,
       });
       if (
@@ -596,8 +786,9 @@ export default function App() {
         return;
       if (result.ok) {
         setDraft("");
+        setAmendTarget(null);
         try {
-          localStorage.removeItem(`proof:draft:${preview.workspaceId}`);
+          localStorage.removeItem(`proof:draft:${prepared.workspaceId}`);
         } catch {
           /* Draft is already cleared in memory. */
         }
@@ -621,13 +812,124 @@ export default function App() {
       if (epoch === workspaceEpoch.current) setBusy(false);
     }
   }
+  function editDraft(message: string) {
+    setDraft(message);
+    if (!changes) return;
+    try {
+      localStorage.setItem(`proof:draft:${changes.workspace.id}`, message);
+    } catch (error) {
+      setError({
+        code: "DRAFT_STORAGE",
+        message: "Commit 草稿未保存，请保留当前窗口。",
+        detail: String(error),
+      });
+    }
+  }
+  async function toggleAmend(value: boolean) {
+    if (!value) {
+      setAmendTarget(null);
+      editDraft(normalDraft.current);
+      return;
+    }
+    const active = current.current;
+    if (!active || demo || busyRef.current || !active.head) return;
+    const epoch = workspaceEpoch.current;
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await request<CommitPreview>("commit_preview", {
+        workspaceId: active.workspace.id,
+        amend: true,
+        coverage: false,
+        expectedToken: active.token,
+      });
+      if (
+        epoch !== workspaceEpoch.current ||
+        next.head !== active.head ||
+        next.branch !== active.branch
+      )
+        return;
+      normalDraft.current = draft;
+      setAmendTarget({ head: active.head, branch: active.branch });
+      editDraft(next.message);
+    } catch (error) {
+      if (epoch === workspaceEpoch.current) setError(asError(error));
+    } finally {
+      if (epoch === workspaceEpoch.current) setBusy(false);
+    }
+  }
+  async function quickCommit(all: boolean) {
+    const active = current.current;
+    if (!active || busyRef.current || demo || !draft.trim()) return;
+    const epoch = workspaceEpoch.current;
+    setBusy(true);
+    setError(null);
+    try {
+      let token = active.token;
+      if (
+        amendTarget &&
+        (amendTarget.head !== active.head ||
+          amendTarget.branch !== active.branch)
+      )
+        throw {
+          code: "AMEND_TARGET_CHANGED",
+          message: "上一条 Commit 已变化，请重新选择 Amend。",
+          detail: "HEAD changed since Amend was selected",
+        };
+      if (all) {
+        const paths = active.files
+          .filter((file) => file.side === "unstaged")
+          .map((file) => file.path);
+        if (paths.length) {
+          const result = await request<OperationResult & { token: string }>(
+            "stage_files",
+            {
+              workspaceId: active.workspace.id,
+              paths,
+              side: "unstaged",
+              expectedToken: token,
+            },
+          );
+          if (epoch !== workspaceEpoch.current) return;
+          if (!result.ok || result.warning)
+            throw {
+              code: "STAGE_CHANGED",
+              message: result.message,
+              detail: result.warning ?? "请检查 Index 后再 Commit。",
+            };
+          token = result.token;
+        }
+      }
+      const next = await request<CommitPreview>("commit_preview", {
+        workspaceId: active.workspace.id,
+        amend: !!amendTarget,
+        coverage: preferences.strictReview,
+        expectedToken: token,
+      });
+      if (epoch !== workspaceEpoch.current) return;
+      if (next.head !== active.head || next.branch !== active.branch)
+        throw {
+          code: "COMMIT_TARGET_CHANGED",
+          message: "Branch 或 HEAD 已变化，请检查后再 Commit。",
+          detail: "Commit target changed",
+        };
+      await commit(next);
+    } catch (error) {
+      if (epoch === workspaceEpoch.current) {
+        setError(asError(error));
+        await refresh();
+      }
+    } finally {
+      if (epoch === workspaceEpoch.current) setBusy(false);
+    }
+  }
   function startDemo() {
     ++workspaceEpoch.current;
     ++sequence.current;
     current.current = demoChanges;
     setBusy(false);
     setLoadingDiff(false);
-    setIncoming(null);
+    cache.current.clear();
     setDemo(true);
     setChanges(demoChanges);
     setDiff(demoDiff(demoChanges.files[0]));
@@ -730,9 +1032,6 @@ export default function App() {
     reviewedUnits = knownUnits.filter(
       (h) => h.reviewState === "reviewed",
     ).length;
-  const reviewedFiles = knownDiffs.filter((d) =>
-    d.hunks.every((h) => h.reviewState === "reviewed"),
-  ).length;
   const stagedCount =
     changes?.files.filter((f) => f.side === "staged").length ?? 0;
   const contextOpen =
@@ -800,19 +1099,18 @@ export default function App() {
           <CaretDown size={12} />
         </button>
         {changes && (
-          <button
-            className="branch-picker"
-            onClick={() => showRepository("branches")}
-          >
-            <GitBranch size={15} />
-            <span>{changes.branch ?? "Detached HEAD"}</span>
-            <CaretDown size={11} />
-          </button>
+          <BranchPicker
+            key={changes.workspace.id}
+            changes={changes}
+            demo={demo}
+            busy={busy}
+            onSwitch={switchBranch}
+          />
         )}
         {changes && (
           <nav
             className="top-navigation"
-            aria-label="工作区"
+            aria-label="Worktree"
             style={
               {
                 "--nav-index":
@@ -869,8 +1167,8 @@ export default function App() {
           <button
             className="icon-button"
             disabled={busy}
-            aria-label="刷新工作区"
-            title="刷新本地工作区"
+            aria-label="刷新 Worktree"
+            title="刷新本地 Worktree"
             onClick={() => {
               void refresh();
             }}
@@ -883,7 +1181,7 @@ export default function App() {
           onClick={() => openSettings("observer")}
         >
           <span className="status-dot neutral" />
-          观察未接入
+          Connect agent
         </button>
         <button
           className="command-trigger"
@@ -932,22 +1230,6 @@ export default function App() {
                 onClick={() => setDialog("trust")}
               >
                 审阅信任设置
-              </button>
-            </div>
-          )}
-          {incoming && (
-            <div className="stale-banner">
-              <ArrowClockwise size={16} />
-              <span>
-                工作区出现新变化。当前阅读快照保持不变，写操作会重新核对。
-              </span>
-              <button
-                className="button compact"
-                onClick={() => {
-                  void refresh();
-                }}
-              >
-                查看最新变化
               </button>
             </div>
           )}
@@ -1004,12 +1286,12 @@ export default function App() {
         <main className="welcome">
           <div className="welcome-main">
             <ProofMark large />
-            <p className="welcome-kicker">每一次修改，都值得看清。</p>
-            <h1>从真实代码开始审查</h1>
+            <p className="welcome-kicker">Git, with context.</p>
+            <h1>打开仓库，开始工作</h1>
             <p className="welcome-description">
-              打开本地 Git 仓库，逐段核对变化。
+              查看 Diff、管理 Branch、提交代码。
               <br />
-              保留你的开发方式，让每一次判断有据可查。
+              按需关联 Agent 的修改记录。
             </p>
             <button
               className="button primary welcome-open"
@@ -1022,7 +1304,7 @@ export default function App() {
               打开本地仓库
             </button>
             <button className="demo-link" onClick={startDemo}>
-              体验演示工作区 <ArrowRight size={15} />
+              体验演示 Worktree <ArrowRight size={15} />
             </button>
             <div className="welcome-principles">
               <span>
@@ -1118,6 +1400,14 @@ export default function App() {
                     <X size={15} />
                   </button>
                   <FileTree
+                    key={changes.workspace.id}
+                    disabled={
+                      busy ||
+                      demo ||
+                      !changes.workspace.trusted ||
+                      !!changes.operation
+                    }
+                    onStage={(files, side) => void stageFiles(files, side)}
                     files={changes.files}
                     selected={selected}
                     onSelect={(f) => {
@@ -1138,6 +1428,27 @@ export default function App() {
                     loaded={loaded}
                     scope={scope}
                     onScope={setScope}
+                  />
+                  <CommitComposer
+                    message={draft}
+                    onMessage={editDraft}
+                    amend={!!amendTarget}
+                    onAmend={(value) => void toggleAmend(value)}
+                    head={changes.head}
+                    branch={changes.branch}
+                    staged={stagedCount}
+                    unstaged={
+                      changes.files.filter((file) => file.side === "unstaged")
+                        .length
+                    }
+                    busy={busy}
+                    disabled={
+                      demo || !changes.workspace.trusted || !!changes.operation
+                    }
+                    demo={demo}
+                    strictReview={preferences.strictReview}
+                    onReviewSettings={() => openSettings("review")}
+                    onCommit={(all) => void quickCommit(all)}
                   />
                 </aside>
               }
@@ -1177,14 +1488,20 @@ export default function App() {
                     onPreferences={(p) => {
                       void updatePreferences(p);
                     }}
-                    onLoadContext={(contextLines) =>
-                      demo
-                        ? Promise.resolve(demoDiffContext(diff, contextLines))
-                        : request<DiffContext>("diff_context", {
-                            snapshotId: diff.id,
-                            contextLines,
-                          })
-                    }
+                    onLoadContext={async (contextLines) => {
+                      const epoch = workspaceEpoch.current;
+                      try {
+                        return demo
+                          ? demoDiffContext(diff, contextLines)
+                          : await request<DiffContext>("diff_context", {
+                              snapshotId: diff.id,
+                              contextLines,
+                            });
+                      } catch (error) {
+                        await snapshotError(error, diff, epoch);
+                        throw error;
+                      }
+                    }}
                     onFocus={() => setFocused((f) => !f)}
                   />
                 ) : (
@@ -1194,13 +1511,13 @@ export default function App() {
                     </div>
                     <h2>
                       {changes.files.length
-                        ? "选择一个文件，开始审查"
+                        ? "选择文件查看 Diff"
                         : "当前没有代码变化"}
                     </h2>
                     <p>
                       {changes.files.length
-                        ? "真实 Diff、明确基准、由你判断。"
-                        : "工作树与索引中暂无需要核对的修改。"}
+                        ? "选择左侧文件查看 Diff。"
+                        : "Worktree clean"}
                     </p>
                     {!changes.files.length && (
                       <button
@@ -1213,8 +1530,12 @@ export default function App() {
                   </div>
                 )}
                 {loadingDiff && (
-                  <div className="loading-overlay" role="status">
-                    正在读取文件变化…
+                  <div
+                    className={`diff-loading ${diff ? "background" : ""}`}
+                    role="status"
+                  >
+                    <ArrowClockwise size={14} className="spinning" />{" "}
+                    {diff ? "更新中…" : "载入 Diff…"}
                   </div>
                 )}
               </div>
@@ -1234,16 +1555,13 @@ export default function App() {
               }
             />
             <span>
-              已打开内容{" "}
+              Review{" "}
               <strong>
                 {reviewedUnits}/{knownUnits.length}
               </strong>{" "}
-              块已审查
+              hunks reviewed
             </span>
           </div>
-          <span className="global-remaining">
-            全局还有 {changes.files.length - reviewedFiles} 个文件未完成核对
-          </span>
           <div className="toolbar-spacer" />
           {focused && (
             <button
@@ -1272,7 +1590,7 @@ export default function App() {
             id="context-toggle"
             className="icon-button"
             aria-label={contextOpen ? "收起上下文" : "显示上下文"}
-            title="上下文面板"
+            title="Context 面板"
             aria-expanded={contextOpen}
             aria-controls="context-panel"
             disabled={!narrow && !repositoryLayout.ready}
@@ -1303,7 +1621,7 @@ export default function App() {
           {diff && (
             <button
               className="button compact"
-              disabled={!diff.canStage || busy}
+              disabled={!diff.canStage || busy || loadingDiff}
               title={
                 !diff.canStage
                   ? "此文件当前不支持 Git 写操作"
@@ -1318,7 +1636,7 @@ export default function App() {
               ) : (
                 <Plus size={15} />
               )}
-              {diff.side === "staged" ? "撤销文件暂存" : "暂存文件"}
+              {diff.side === "staged" ? "Unstage file" : "Stage file"}
             </button>
           )}
           <button
@@ -1350,15 +1668,16 @@ export default function App() {
           )}
           <button
             className="button primary compact"
-            disabled={
-              busy || demo || !stagedCount || !changes.workspace.trusted
-            }
+            disabled={busy}
             onClick={() => {
-              void prepareCommit();
+              showFileSearch();
+              requestAnimationFrame(() =>
+                document.getElementById("quick-commit-message")?.focus(),
+              );
             }}
           >
             <GitCommit size={16} />
-            提交预览<span className="button-count">{stagedCount}</span>
+            Commit<span className="button-count">{stagedCount}</span>
           </button>
         </footer>
       )}
@@ -1396,7 +1715,9 @@ export default function App() {
             <strong>{discardPoint.path}</strong>
             <p>{discardPoint.scope}</p>
           </div>
-          <p>恢复点已经保存。确认后，所选工作树内容会还原到索引中的版本。</p>
+          <p>
+            恢复点已经保存。确认后，所选 Worktree 内容会还原到索引中的版本。
+          </p>
           <p className="inline-help">
             恢复内容保留至 {new Date(discardPoint.expiresAt).toLocaleString()}
             ，总计上限 256 MiB。撤销时若文件已有新改动，Proof
@@ -1525,27 +1846,32 @@ export default function App() {
           </div>
         </Modal>
       )}
-      {dialog === "mark-file" && diff && (
+      {dialog === "mark-file" && reviewTarget && (
         <Modal
           title="标记整个文件已审查"
           error={error}
           onClose={() => setDialog(null)}
         >
           <p>
-            此标记覆盖 <strong>{diff.path}</strong> 当前完整 Diff 的{" "}
-            <strong>{diff.hunks.length} 个变化块</strong>
+            此标记覆盖 <strong>{reviewTarget.path}</strong> 当前完整 Diff 的{" "}
+            <strong>{reviewTarget.hunks.length} 个变化块</strong>
             ，包含尚未滚动到的内容。
           </p>
           <p className="inline-help">
-            只记录你对这个版本的人工审查，不会暂存文件或改变测试状态。
+            只记录你对这个版本的人工审查，不会 Stage 文件或改变测试状态。
           </p>
+          {diff?.id !== reviewTarget.id && (
+            <p role="status" className="inline-help">
+              文件已更新，请关闭此窗口并重新选择 Review 范围。
+            </p>
+          )}
           <div className="modal-actions">
             <button className="button" onClick={() => setDialog(null)}>
               继续逐段阅读
             </button>
             <button
               className="button primary"
-              disabled={busy}
+              disabled={busy || diff?.id !== reviewTarget.id || loadingDiff}
               onClick={() => {
                 void mark(null, true, true);
               }}
@@ -1567,7 +1893,7 @@ export default function App() {
           <div className="commit-target">
             <GitBranch size={17} />
             <strong>{preview.branch ?? "Detached HEAD"}</strong>
-            <span>{preview.files.length} 个已暂存文件</span>
+            <span>{preview.files.length} staged files</span>
             <code>{preview.head?.slice(0, 8) ?? "首次提交"}</code>
           </div>
           <div className="commit-files">
@@ -1584,7 +1910,7 @@ export default function App() {
             className={`commit-coverage ${preview.reviewed === preview.total ? "complete" : ""}`}
           >
             <Info size={16} />
-            {preview.reviewed}/{preview.total} 个变化块已审查。
+            {preview.reviewed}/{preview.total} hunks reviewed.
             {preview.reviewed !== preview.total
               ? "未审查内容也会包含在本次提交中。"
               : "此状态只代表人工审查记录。"}
@@ -1652,7 +1978,10 @@ export default function App() {
             <GitBranch size={12} />
             {changes.branch ?? "Detached HEAD"}
           </span>
-          <span>本地 Git</span>
+          <span className="live-status">
+            <span className={`status-dot ${syncing ? "neutral" : ""}`} />
+            {syncing ? "更新中" : "Live"}
+          </span>
         </div>
       )}
       {dialog === "settings" && (
@@ -1707,7 +2036,7 @@ export default function App() {
                 disabled: !changes,
               },
               {
-                label: "刷新工作区",
+                label: "刷新 Worktree",
                 icon: <ArrowClockwise size={19} />,
                 run: () => {
                   setDialog(null);
