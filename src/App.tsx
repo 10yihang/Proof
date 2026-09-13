@@ -20,6 +20,7 @@ import {
   Trash,
   ClockCounterClockwise,
   List,
+  ArrowSquareOut,
 } from "@phosphor-icons/react";
 import { asError, isDesktop, request, watchWorkspace } from "./api";
 import { demoChanges, demoDiff, demoDiffContext } from "./demo";
@@ -37,6 +38,7 @@ import type {
   Workspace,
   RecoveryPoint,
   RecoveryAction,
+  EditorOpenResult,
 } from "./types";
 import { DiffView } from "./components/DiffView";
 import { FileTree } from "./components/FileTree";
@@ -53,6 +55,8 @@ import { DiffCache } from "./diff-cache";
 import { BranchPicker } from "./components/BranchPicker";
 import { CommitComposer } from "./components/CommitComposer";
 import { shouldDismissDrawer } from "./components/panel-focus";
+
+type EditorTarget = Pick<FileDiff, "id" | "workspaceId" | "path" | "side">;
 
 type Dialog =
   | "open"
@@ -86,6 +90,7 @@ export default function App() {
   const displayedDiff = useRef<FileDiff | null>(null);
   displayedDiff.current = diff;
   const [reviewTarget, setReviewTarget] = useState<FileDiff | null>(null);
+  const [commandTarget, setCommandTarget] = useState<EditorTarget | null>(null);
   const [loaded, setLoaded] = useState<Record<string, FileDiff>>({});
   const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState<ProofError | null>(null);
@@ -95,7 +100,7 @@ export default function App() {
     [tab, setTab] = useState<"changes" | "repository">("changes");
   const [repositoryVisited, setRepositoryVisited] = useState(false);
   const [settingsSection, setSettingsSection] = useState<
-    "appearance" | "review" | "observer" | "data"
+    "appearance" | "review" | "observer" | "data" | "editor"
   >("appearance");
   const [repositorySection, setRepositorySection] =
     useState<RepositorySection>("history");
@@ -121,6 +126,7 @@ export default function App() {
   const [discardPoint, setDiscardPoint] = useState<RecoveryPoint | null>(null);
   const [path, setPath] = useState(""),
     [notification, setNotification] = useState("");
+  const [openingEditor, setOpeningEditor] = useState(false);
   const sequence = useRef(0),
     workspaceEpoch = useRef(0),
     current = useRef<Changes | null>(null),
@@ -545,7 +551,7 @@ export default function App() {
   }
   async function snapshotError(
     error: unknown,
-    target: FileDiff,
+    target: EditorTarget,
     epoch: number,
   ) {
     const active = current.current;
@@ -985,7 +991,8 @@ export default function App() {
       if (editing || busy || (dialog !== null && dialog !== "commands")) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        setDialog((d) => (d === "commands" ? null : "commands"));
+        if (dialog === "commands") setDialog(null);
+        else openCommands();
       }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "p") {
         event.preventDefault();
@@ -1068,10 +1075,56 @@ export default function App() {
     );
   }
   function openSettings(
-    section: "appearance" | "review" | "observer" | "data" = "appearance",
+    section:
+      "appearance" | "review" | "observer" | "data" | "editor" = "appearance",
   ) {
     setSettingsSection(section);
     setDialog("settings");
+  }
+  function openCommands() {
+    const file = tab === "changes" ? displayedDiff.current : null;
+    setCommandTarget(
+      file
+        ? {
+            id: file.id,
+            workspaceId: file.workspaceId,
+            path: file.path,
+            side: file.side,
+          }
+        : null,
+    );
+    setDialog("commands");
+  }
+  async function openEditor(
+    target: EditorTarget | null = displayedDiff.current,
+  ) {
+    if (tab !== "changes" || !target || openingEditor) return;
+    if (demo || !isDesktop) {
+      openSettings("editor");
+      return;
+    }
+    const epoch = workspaceEpoch.current;
+    setOpeningEditor(true);
+    setError(null);
+    try {
+      const result = await request<EditorOpenResult>("open_in_editor", {
+        snapshotId: target.id,
+      });
+      if (epoch === workspaceEpoch.current) setNotification(result.message);
+    } catch (error) {
+      if (epoch !== workspaceEpoch.current) return;
+      const failure = asError(error);
+      if (failure.code === "EDITOR_NOT_CONFIGURED") openSettings("editor");
+      else if (["SNAPSHOT_EXPIRED", "STALE_CONTENT"].includes(failure.code))
+        await snapshotError(error, target, epoch);
+      else
+        setError({
+          ...failure,
+          message: `无法打开 ${target.path}。${failure.message}`,
+        });
+    } finally {
+      setOpeningEditor(false);
+    }
   }
   function showRepository(section: RepositorySection) {
     setRepositorySection(section);
@@ -1187,7 +1240,7 @@ export default function App() {
           className="command-trigger"
           title="命令面板"
           aria-label="打开命令面板"
-          onClick={() => setDialog("commands")}
+          onClick={openCommands}
         >
           <MagnifyingGlass size={15} />
           <span>Command</span>
@@ -1472,6 +1525,8 @@ export default function App() {
                     key={`${diff.workspaceId}:${diff.path}:${diff.side}`}
                     diff={diff}
                     preferences={preferences}
+                    onEditor={() => void openEditor()}
+                    openingEditor={openingEditor}
                     pending={busy || loadingDiff}
                     onMark={(h, r) => {
                       void mark(h, r);
@@ -1986,6 +2041,7 @@ export default function App() {
       )}
       {dialog === "settings" && (
         <Settings
+          onError={(error) => setError(asError(error))}
           initialSection={settingsSection}
           workspaces={recent}
           workspaceId={changes?.workspace.id}
@@ -2063,6 +2119,16 @@ export default function App() {
                 disabled: !changes,
               },
               {
+                label: "在外部编辑器打开",
+                detail: commandTarget?.path,
+                icon: <ArrowSquareOut size={19} />,
+                run: () => {
+                  setDialog(null);
+                  void openEditor(commandTarget);
+                },
+                disabled: tab !== "changes" || !commandTarget || openingEditor,
+              },
+              {
                 label: "观察与偏好设置",
                 icon: <GearSix size={19} />,
                 run: () => openSettings(),
@@ -2075,6 +2141,9 @@ export default function App() {
               >
                 {action.icon}
                 <span>{action.label}</span>
+                {"detail" in action && action.detail && (
+                  <small>{action.detail}</small>
+                )}
                 {action.disabled && <small>当前不可用</small>}
               </button>
             ))}

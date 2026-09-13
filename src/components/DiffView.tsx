@@ -18,6 +18,7 @@ import {
   ClockCounterClockwise,
   SlidersHorizontal,
   X,
+  ArrowSquareOut,
 } from "@phosphor-icons/react";
 import type { DiffContext, DiffLine, FileDiff, Preferences } from "../types";
 import { asError } from "../api";
@@ -46,6 +47,8 @@ export function DiffView({
   onPreferences,
   onFocus,
   onLoadContext,
+  onEditor,
+  openingEditor,
 }: {
   diff: FileDiff;
   preferences: Preferences;
@@ -57,6 +60,8 @@ export function DiffView({
   onPreferences: (p: Partial<Preferences>) => void;
   onFocus: () => void;
   onLoadContext: (lines: number) => Promise<DiffContext>;
+  onEditor: () => void;
+  openingEditor: boolean;
 }) {
   const parent = useRef<HTMLDivElement>(null);
   const [raw, setRaw] = useState(false),
@@ -376,6 +381,15 @@ export function DiffView({
             onClick={onHistory}
           >
             <ClockCounterClockwise size={17} />
+          </button>
+          <button
+            className="icon-button"
+            title="Open in editor · 当前 Worktree 文件"
+            aria-label="在外部编辑器打开"
+            disabled={openingEditor}
+            onClick={onEditor}
+          >
+            <ArrowSquareOut size={17} />
           </button>
           <button
             className={`icon-button ${preferences.wrapLines ? "selected" : ""}`}

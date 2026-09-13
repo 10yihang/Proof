@@ -417,3 +417,91 @@
     animation: none;
   }
 }
+.editor-settings .editor-scope {
+  margin: 18px 0 20px;
+  width: fit-content;
+}
+.editor-settings select {
+  width: 100%;
+  margin-bottom: 8px;
+}
+.editor-application-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin: 14px 0 20px;
+}
+.editor-application-list button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  text-align: left;
+  font-size: 12px;
+}
+.editor-application-list button span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.editor-application-list button[aria-pressed="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.editor-application-list button:hover {
+  background: var(--hover);
+}
+.editor-effective {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 9px;
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+.editor-effective > span,
+.editor-effective small {
+  color: var(--muted);
+}
+.editor-effective small {
+  width: 100%;
+  font-size: 11px;
+}
+.editor-settings-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 16px;
+  margin-top: 22px;
+}
+.editor-settings-actions > span {
+  color: var(--muted);
+  font-size: 11px;
+}
+.editor-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--del);
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 12px;
+  font-size: 12px;
+}
+.editor-error details {
+  margin: 6px 0;
+}
+.editor-error pre {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  max-height: 100px;
+  overflow: auto;
+  font-size: 10px;
+}

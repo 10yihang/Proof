@@ -8,6 +8,7 @@ import {
   Plug,
   ShieldCheck,
   Sun,
+  Code,
 } from "@phosphor-icons/react";
 import type {
   Preferences,
@@ -20,6 +21,7 @@ import { RepositoryLayoutSettings } from "./RepositoryLayoutSettings";
 import { Modal } from "./Modal";
 import { DataSettings } from "./DataSettings";
 import { ObserverSettings } from "./ObserverSettings";
+import { EditorSettings } from "./EditorSettings";
 
 export function Settings({
   preferences,
@@ -31,6 +33,7 @@ export function Settings({
   demo,
   layout,
   initialSection = "appearance",
+  onError,
 }: {
   preferences: Preferences;
   error: ProofError | null;
@@ -47,11 +50,12 @@ export function Settings({
     onReset: () => void;
     onRetry: () => void;
   };
-  initialSection?: "appearance" | "review" | "observer" | "data";
+  initialSection?: "appearance" | "review" | "observer" | "data" | "editor";
+  onError: (error: unknown) => void;
 }) {
-  const [tab, setTab] = useState<"appearance" | "review" | "observer" | "data">(
-    initialSection,
-  );
+  const [tab, setTab] = useState<
+    "appearance" | "review" | "observer" | "data" | "editor"
+  >(initialSection);
   return (
     <Modal title="设置" error={error} onClose={onClose} wide>
       <div className="settings-layout">
@@ -78,6 +82,13 @@ export function Settings({
             Agent 观察
           </button>
           <button
+            className={tab === "editor" ? "active" : ""}
+            onClick={() => setTab("editor")}
+          >
+            <Code size={17} />
+            外部编辑器
+          </button>
+          <button
             className={tab === "data" ? "active" : ""}
             onClick={() => setTab("data")}
           >
@@ -86,6 +97,18 @@ export function Settings({
           </button>
         </nav>
         <div className="settings-content">
+          {tab === "editor" && (
+            <EditorSettings
+              key={workspaceId ?? "application"}
+              workspaceId={workspaceId}
+              workspaceName={
+                workspaces.find((workspace) => workspace.id === workspaceId)
+                  ?.name
+              }
+              demo={demo}
+              onSaveError={onError}
+            />
+          )}
           {tab === "data" && (
             <DataSettings
               workspaces={workspaces}

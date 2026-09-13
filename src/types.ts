@@ -236,3 +236,26 @@ export const defaultPreferences: Preferences = {
 };
 export const fileKey = (file: Pick<ChangedFile, "side" | "path">) =>
   `${file.side}:${file.path}`;
+
+export interface EditorApplication {
+  path: string;
+  name: string;
+  bundleId: string | null;
+}
+export type EditorChoice =
+  | { mode: "inherit" }
+  | { mode: "disabled" }
+  | { mode: "application"; application: EditorApplication };
+export interface EditorSettings {
+  revision: number;
+  application: EditorChoice;
+  repository: EditorChoice | null;
+  effective: EditorApplication | null;
+  source: "application" | "repository";
+  platform: string;
+}
+export interface EditorOpenResult {
+  application: EditorApplication;
+  path: string;
+  message: string;
+}

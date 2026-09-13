@@ -2520,6 +2520,7 @@ name = "proof-core"
 version = "0.1.0-alpha.1"
 dependencies = [
  "libc",
+ "plist",
  "rusqlite",
  "serde",
  "serde_json",

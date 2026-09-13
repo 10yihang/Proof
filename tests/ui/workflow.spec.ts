@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { demoChanges, demoDiff } from "../../src/demo";
+import { demoGraphPage } from "../../src/graph-demo";
 import { defaultPreferences } from "../../src/types";
 
 async function openFixture(page: Page) {
@@ -499,4 +500,309 @@ test("late context reply cannot evict the next workspace cache or show its error
         ).length,
     ),
   ).toBe(readsBefore);
+});
+
+async function editorFixture(page: Page) {
+  await openFixture(page);
+  await page.evaluate(() => {
+    const w = window as any,
+      state = w.fixture,
+      original = w.__TAURI_INTERNALS__.invoke;
+    const apps = [
+      { name: "Zed", path: "/Applications/Zed.app", bundleId: "dev.zed.Zed" },
+      {
+        name: "Visual Studio Code",
+        path: "/Applications/Visual Studio Code.app",
+        bundleId: "com.microsoft.VSCode",
+      },
+    ];
+    state.editor = {
+      revision: 0,
+      application: { mode: "disabled" },
+      repository: { mode: "inherit" },
+      effective: null,
+      source: "application",
+      platform: "macos",
+    };
+    function settings() {
+      const choice =
+        state.editor.repository.mode === "inherit"
+          ? state.editor.application
+          : state.editor.repository;
+      return {
+        ...state.editor,
+        effective: choice.mode === "application" ? choice.application : null,
+        source:
+          state.editor.repository.mode === "inherit"
+            ? "application"
+            : "repository",
+      };
+    }
+    w.__TAURI_INTERNALS__.invoke = async (name: string, payload: any) => {
+      const { command, args } = payload;
+      if (
+        ![
+          "editor_settings",
+          "editor_applications",
+          "set_editor_settings",
+          "open_in_editor",
+        ].includes(command)
+      )
+        return original(name, payload);
+      state.actions.push({ command, args: structuredClone(args) });
+      if (command === "editor_settings") return structuredClone(settings());
+      if (command === "editor_applications") return apps;
+      if (command === "set_editor_settings") {
+        if (state.deferEditorSave)
+          return new Promise((_, reject) => {
+            state.rejectEditorSave = reject;
+          });
+        if (state.editorConflict)
+          throw {
+            code: "EDITOR_SETTINGS_CHANGED",
+            message: "编辑器设置已在其他窗口更新，请重新读取。",
+            detail: "revision mismatch",
+          };
+        const change = args.update;
+        state.editor[change.scope] =
+          change.mode === "application"
+            ? {
+                mode: "application",
+                application: apps.find((app) => app.path === change.path),
+              }
+            : { mode: change.mode };
+        state.editor.revision++;
+        return structuredClone(settings());
+      }
+      if (state.deferEditorOpen)
+        return new Promise((_, reject) => {
+          state.rejectEditorOpen = reject;
+        });
+      const app = settings().effective;
+      if (!app)
+        throw {
+          code: "EDITOR_NOT_CONFIGURED",
+          message: "请选择外部编辑器。",
+          detail: "No editor",
+        };
+      state.editorLaunched = true;
+      return {
+        application: app,
+        path: state.changes.workspace.path + "/src/api/requests.ts",
+        message: "已交给 " + app.name + " 打开 Worktree 文件",
+      };
+    };
+  });
+}
+async function chooseEditor(page: Page) {
+  await page
+    .getByRole("button", { name: "在外部编辑器打开", exact: true })
+    .click();
+  await expect(
+    page.getByRole("region", { name: "外部编辑器", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByLabel("默认使用", { exact: true })
+    .selectOption("application");
+  await page.getByRole("button", { name: "Zed", exact: true }).click();
+}
+
+test("editor configuration is explicit, scoped, and only the open button launches", async ({
+  page,
+}) => {
+  await editorFixture(page);
+  await chooseEditor(page);
+  expect(
+    await page.evaluate(() => (window as any).fixture.editorLaunched ?? false),
+  ).toBe(false);
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(page.locator(".editor-settings-actions")).toContainText(
+    "已保存",
+  );
+  await expect(page.locator(".editor-effective")).toContainText("Zed");
+  expect(
+    await page.evaluate(() => (window as any).fixture.editorLaunched ?? false),
+  ).toBe(false);
+  await page.screenshot({
+    path: ".artifacts/editor-settings-light.png",
+    animations: "disabled",
+  });
+  await page.getByRole("button", { name: "关闭", exact: true }).click();
+  await expect(
+    page.getByRole("dialog", { name: "设置", exact: true }),
+  ).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "在外部编辑器打开", exact: true })
+    .click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "已交给 Zed" }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(() => (window as any).fixture.editorLaunched),
+  ).toBe(true);
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page
+    .locator(".settings-nav")
+    .getByRole("button", { name: "外部编辑器", exact: true })
+    .click();
+  await page.getByRole("button", { name: "此仓库", exact: true }).click();
+  await expect(page.getByLabel("此仓库使用", { exact: true })).toHaveValue(
+    "inherit",
+  );
+  await page.getByLabel("此仓库使用", { exact: true }).selectOption("disabled");
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(page.locator(".editor-effective")).toContainText("未启用");
+  await expect(page.locator(".editor-effective")).toContainText(
+    "此仓库覆盖应用默认",
+  );
+});
+
+test("editor save conflict keeps draft, and a late failed save remains visible after closing", async ({
+  page,
+}) => {
+  await editorFixture(page);
+  await chooseEditor(page);
+  await page.evaluate(() => {
+    (window as any).fixture.editorConflict = true;
+  });
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(page.locator(".editor-error")).toContainText("其他窗口更新");
+  await expect(page.getByLabel("编辑器路径", { exact: true })).toHaveValue(
+    "/Applications/Zed.app",
+  );
+  await page.evaluate(() => {
+    (window as any).fixture.editorConflict = false;
+    (window as any).fixture.deferEditorSave = true;
+  });
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => typeof (window as any).fixture.rejectEditorSave),
+    )
+    .toBe("function");
+  await page.getByRole("button", { name: "关闭", exact: true }).click();
+  await expect(
+    page.getByRole("dialog", { name: "设置", exact: true }),
+  ).toHaveCount(0);
+  await page.evaluate(() =>
+    (window as any).fixture.rejectEditorSave({
+      code: "STORAGE_ERROR",
+      message: "磁盘不可写。",
+      detail: "fixture",
+    }),
+  );
+  await expect(page.getByRole("alert")).toContainText("编辑器设置未保存");
+});
+
+test("an editor launch failure stays visible when the same file refreshes in the background", async ({
+  page,
+}) => {
+  await editorFixture(page);
+  await page.evaluate(() => {
+    (window as any).fixture.deferEditorOpen = true;
+  });
+  await page
+    .getByRole("button", { name: "在外部编辑器打开", exact: true })
+    .click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => typeof (window as any).fixture.rejectEditorOpen),
+    )
+    .toBe("function");
+  await page.evaluate(() => {
+    (window as any).fixture.changes.token = "while-opening";
+  });
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as any).fixture.actions.filter(
+            (action: any) => action.command === "file_diff",
+          ).length,
+      ),
+    )
+    .toBe(2);
+  await page.evaluate(() =>
+    (window as any).fixture.rejectEditorOpen({
+      code: "EDITOR_LAUNCH_FAILED",
+      message: "编辑器不可用。",
+      detail: "fixture",
+    }),
+  );
+  await expect(page.getByRole("alert")).toContainText(
+    "无法打开 src/api/requests.ts",
+  );
+  await expect(
+    page.getByRole("button", { name: "在外部编辑器打开", exact: true }),
+  ).toBeEnabled();
+});
+
+test("editor Command is disabled in History and never uses hidden Changes content", async ({
+  page,
+}) => {
+  await editorFixture(page);
+  await page.evaluate((graph) => {
+    const w = window as any,
+      original = w.__TAURI_INTERNALS__.invoke;
+    w.__TAURI_INTERNALS__.invoke = async (name: string, payload: any) => {
+      if (payload?.command === "commit_graph") return graph;
+      if (payload?.command === "graph_commit_diff")
+        return "diff --git a/history-only.txt b/history-only.txt\n--- a/history-only.txt\n+++ b/history-only.txt\n@@ -1 +1 @@\n-old\n+new\n";
+      return original(name, payload);
+    };
+  }, demoGraphPage());
+  await page.getByRole("button", { name: "History", exact: true }).click();
+  await expect(
+    page.getByRole("region", { name: "所选提交详情", exact: true }),
+  ).toContainText("history-only.txt");
+  await page.getByRole("button", { name: "打开命令面板", exact: true }).click();
+  const command = page
+    .getByRole("dialog", { name: "命令面板", exact: true })
+    .getByRole("button", { name: /在外部编辑器打开/ });
+  await expect(command).toBeDisabled();
+  expect(
+    await page.evaluate(() =>
+      (window as any).fixture.actions.filter(
+        (action: any) => action.command === "open_in_editor",
+      ),
+    ),
+  ).toHaveLength(0);
+});
+
+test("editor Command keeps its displayed file target when live Changes moves to another file", async ({
+  page,
+}) => {
+  await editorFixture(page);
+  await page.evaluate(() => {
+    const f = (window as any).fixture;
+    f.editor.application = {
+      mode: "application",
+      application: {
+        name: "Zed",
+        path: "/Applications/Zed.app",
+        bundleId: "dev.zed.Zed",
+      },
+    };
+  });
+  await page.getByRole("button", { name: "打开命令面板", exact: true }).click();
+  const command = page
+    .getByRole("dialog", { name: "命令面板", exact: true })
+    .getByRole("button", { name: /在外部编辑器打开/ });
+  await expect(command).toContainText("src/api/requests.ts");
+  await page.evaluate(() => {
+    const f = (window as any).fixture;
+    f.changes.files = f.changes.files.filter(
+      (file: any) => file.path !== "src/api/requests.ts",
+    );
+    f.changes.token = "moved-selection";
+  });
+  await expect(page.locator(".diff-file-header")).toContainText("response.ts");
+  await expect(command).toContainText("src/api/requests.ts");
+  await command.click();
+  const [request] = await page.evaluate(() =>
+    (window as any).fixture.actions.filter(
+      (action: any) => action.command === "open_in_editor",
+    ),
+  );
+  expect(request.args.snapshotId).toContain("src/api/requests.ts");
 });

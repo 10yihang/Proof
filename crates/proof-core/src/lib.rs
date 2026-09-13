@@ -1,5 +1,8 @@
 mod adapter;
 mod data;
+mod editor;
+#[cfg(target_os = "macos")]
+mod editor_metadata;
 mod error;
 mod git;
 mod graph;
@@ -9,6 +12,7 @@ mod model;
 mod observer;
 mod patch;
 mod process;
+mod program;
 mod reading;
 mod recovery;
 mod service;
@@ -17,6 +21,7 @@ mod store;
 
 pub use adapter::*;
 pub use data::*;
+pub use editor::*;
 pub use error::{Error, Result};
 pub use model::*;
 pub use observer::*;

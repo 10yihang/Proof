@@ -82,6 +82,16 @@ fn dispatch(
     if command == "observer_program_locations" {
         return serde_json::to_value(proof_core::observer_program_locations()).map_err(Error::from);
     }
+    if command == "editor_applications" {
+        return serde_json::to_value(proof_core::editor_applications()).map_err(Error::from);
+    }
+    if command == "open_in_editor" {
+        let job = core
+            .lock()
+            .map_err(|_| unavailable())?
+            .prepare_editor_open(string(&args, "snapshotId")?)?;
+        return serde_json::to_value(job.run()?).map_err(Error::from);
+    }
     if command == "probe_observer" {
         let job = core
             .lock()
@@ -104,6 +114,13 @@ fn dispatch(
         "set_preferences" => serde_json::to_value(
             proof.set_preferences(serde_json::from_value(args["preferences"].clone())?)?,
         ),
+        "editor_settings" => {
+            serde_json::to_value(proof.editor_settings(args["workspaceId"].as_str())?)
+        }
+        "set_editor_settings" => serde_json::to_value(proof.set_editor_settings(
+            args["workspaceId"].as_str(),
+            serde_json::from_value(args["update"].clone())?,
+        )?),
         "repository_layout" => {
             serde_json::to_value(proof.repository_layout(string(&args, "workspaceId")?)?)
         }

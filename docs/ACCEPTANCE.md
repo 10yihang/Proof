@@ -1,6 +1,20 @@
 # Proof 验收记录
 
-## 最新验收检查点 · 2026-09-13 Git workflow
+## 最新验收检查点 · 2026-09-13 External editor
+
+Changes Diff 工具栏及 Command 可将当前 Worktree 文件交给用户配置的外部编辑器；设置支持应用默认、仓库继承/覆盖/禁用，保存不会启动应用。文件目标从原生 snapshot 确定；应用、设置、信任或文件身份在排队后改变则拒绝。History 禁用该命令；已有菜单中的文件目标不跟随后台选择变化。实现边界见 `EXTERNAL-EDITOR.md`。
+
+9 条新增核心测试覆盖 SQLite 设置继承/持久化/失败、linked Worktree 与 clone、Staged 仍打开当前 Worktree、特殊字面路径、排队失效、符号/硬链接及内部路径拒绝。流式 Info.plist 解析拒绝放大、超深、超多事件和重复身份字段，同时兼容 Zed 的无关重复元数据。本机只读枚举识别 Zed、Code、IntelliJ IDEA、TextEdit，未启动它们。两轴评审发现全部关闭，见 `CODE-REVIEW-09.md`。
+
+完整 Rust 135 项通过（core 115、桌面 2、配置规划 11、传输 7）、1 项失败、2 条 opt-in 跳过。既有 `bridge_bounds_never_closed_stdin_and_missing_service` 测得总耗时 570.134292 ms、spawn 982.292 µs，超过 500 ms；同一测试二进制定向复测通过，未放宽阈值，原因仍未关闭。桌面实际文件保存/atomic rename 通知测试通过。类型检查、Clippy、格式检查和前端模型 21 项通过。
+
+Playwright 15/15 通过：14 条 UI 回归含 5 条新增编辑器流程；另 1 条通过测试 NDJSON 驱动真实 core/Git，完成自动刷新、Branch 切换、选定 Hunk Commit、Amend、全部提交，最终 HEAD 为 `bf6d3f4f2c4d94d92f20f91fb61f5a9fc7565375`，status clean。它不是 Tauri IPC 证据，临时仓库已由测试清理。编辑器 handoff 使用受控回调，未启动真实编辑器。
+
+macOS 仍锁屏，CUA 明确要求手动解锁；实际编辑器窗口及原生选择器尚未验证。旧应用与验收夹具保留，Windows 原生实现也未验收。不把这些自动化结果称为完整 P0 或完整 NFR 通过。
+
+前端及 Tauri `--debug --no-bundle` 构建通过；将新可执行文件放入已核对资源不变的独立 bundle 副本后，ad-hoc 签名与 `codesign --verify --deep --strict` 通过。114 个源码/构建输入与构建时一致，来源见 `.artifacts/latest-build.json`。主 JS 509.17 kB（gzip 148.59 kB）仍有体积警告；该包不是公证发行包。
+
+## 此前验收检查点 · 2026-09-13 Git workflow
 
 顶部 Branch 下拉、Changes 文件树/勾选/批量 Stage、常驻 Commit/Amend、按文件缓存与自动刷新已接入。完整 Rust 127 项、前端模型 21 项及真实 Git 前后端流程通过；两轴评审已关闭。macOS 原生点击验收因锁屏待完成，Windows/大仓库 NFR 未因此闭环。详见 `GIT-WORKFLOW.md`、`CODE-REVIEW-08.md`。这只是产品的当前检查点，完整 P0 仍有下列缺口。
 

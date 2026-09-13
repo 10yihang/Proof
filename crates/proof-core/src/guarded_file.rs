@@ -158,7 +158,7 @@ mod platform {
                 name: cstr(parts.last().unwrap().as_os_str().as_bytes())?,
             })
         }
-        fn open_file(&self) -> Result<Option<File>> {
+        pub fn open_file(&self) -> Result<Option<File>> {
             let fd = unsafe {
                 libc::openat(
                     self.parent.as_raw_fd(),

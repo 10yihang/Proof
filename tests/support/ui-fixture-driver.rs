@@ -9,6 +9,12 @@ fn dispatch(proof: &mut Proof, command: &str, a: &Value) -> Result<Value, Error>
         "open_workspace" => json!(proof.open_workspace(s("path"))?),
         "recent_workspaces" => json!(proof.recent_workspaces()?),
         "preferences" => json!(proof.preferences()?),
+        "editor_applications" => json!(proof_core::editor_applications()),
+        "editor_settings" => json!(proof.editor_settings(a["workspaceId"].as_str())?),
+        "set_editor_settings" => json!(proof.set_editor_settings(
+            a["workspaceId"].as_str(),
+            serde_json::from_value(a["update"].clone())?
+        )?),
         "set_preferences" => {
             json!(proof.set_preferences(serde_json::from_value(a["preferences"].clone())?)?)
         }
