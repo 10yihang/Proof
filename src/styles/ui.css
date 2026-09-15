@@ -1,0 +1,447 @@
+@reference "./theme.css";
+/* Application tokens override imported legacy rules; components use Tailwind. */
+:root {
+  --bg: #fff;
+  --surface: #f3f4f6;
+  --surface-2: #e9edf2;
+  --text: #202631;
+  --muted: #626b78;
+  --faint: #6b7482;
+  --border: #e0e5eb;
+  --border-strong: #cbd3df;
+  --chrome: #f3f4f6;
+  --accent: #2563eb;
+  --accent-soft: #e9f0fd;
+  --on-accent: #fff;
+  --hover: #eaf0f7;
+}
+:root[data-theme="dark"] {
+  --bg: #17191d;
+  --surface: #202329;
+  --surface-2: #2b3039;
+  --text: #e8edf5;
+  --muted: #a8b2c1;
+  --faint: #99a4b5;
+  --border: #343b46;
+  --border-strong: #475264;
+  --chrome: #202329;
+  --accent: #8bb8ff;
+  --accent-soft: #263956;
+  --on-accent: #132849;
+  --hover: #2b3544;
+}
+:root {
+  font-size: 14px;
+}
+.proof-action {
+  @apply rounded-md text-[12px] leading-4;
+}
+.proof-input,
+[data-slot="textarea"] {
+  @apply rounded-md border border-border bg-background text-[12px] leading-5 shadow-xs;
+}
+[data-slot="textarea"] {
+  @apply min-h-20;
+}
+.proof-select {
+  @apply rounded-md border border-border bg-background px-2.5 py-1 text-[12px] shadow-xs;
+}
+.field-label > .proof-select,
+.field-label > [data-slot="select-trigger"] {
+  @apply w-full;
+}
+.proof-checkbox {
+  @apply size-4 shrink-0 rounded-[4px] border border-input;
+}
+.proof-menu [role="menuitem"] {
+  @apply flex min-h-8 w-full items-center rounded-md px-2.5 py-1.5 text-left text-[12px] outline-none data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:opacity-40;
+}
+.proof-menu hr {
+  @apply my-1 border-t border-border;
+}
+.proof-menu .history-menu-label {
+  @apply truncate px-2.5 py-2 text-[11px] text-muted-foreground;
+}
+.proof-dialog {
+  width: 480px;
+  max-width: calc(100vw - 48px);
+  max-height: calc(100dvh - 64px);
+  overflow: auto;
+  transition:
+    opacity 160ms,
+    scale 160ms;
+}
+.proof-dialog.modal-wide {
+  width: 720px;
+}
+.proof-dialog[data-starting-style],
+.proof-dialog[data-ending-style] {
+  opacity: 0;
+  scale: 0.98;
+}
+.proof-dialog-backdrop {
+  transition: opacity 160ms;
+}
+.proof-dialog-backdrop[data-starting-style],
+.proof-dialog-backdrop[data-ending-style] {
+  opacity: 0;
+}
+.proof-dialog .modal-header {
+  @apply mb-5;
+}
+.proof-dialog .field-label {
+  @apply text-[12px] font-medium;
+}
+.proof-dialog .modal-actions {
+  @apply mt-5 gap-2;
+}
+.branch-search input,
+.graph-search input,
+.file-search input,
+.search-field input,
+.command-search input,
+.diff-search input {
+  @apply h-full border-0 bg-transparent px-0 shadow-none ring-0 focus-visible:border-transparent focus-visible:ring-0;
+}
+[data-slot="toast-viewport"] {
+  bottom: 40px;
+}
+[data-slot="tooltip-content"] {
+  @apply max-w-96 rounded-md text-[11px] leading-4;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+.proof-workbench {
+  display: flex !important;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.proof-panel-slot > .files-panel,
+.proof-panel-slot > .context-panel,
+.proof-panel-slot > .inspector {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  flex: 1;
+  height: 100%;
+}
+.proof-panel-slot > .files-panel[hidden] {
+  display: none;
+}
+.proof-panel-slot > .files-drawer {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: min(320px, calc(100% - 32px));
+  z-index: 21;
+  box-shadow: var(--shadow);
+}
+.proof-panel-slot > .context-drawer {
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: min(var(--saved-context-width, 300px), calc(100% - 32px));
+  z-index: 21;
+  box-shadow: var(--shadow);
+}
+.proof-center-slot > * {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.proof-separator {
+  position: relative;
+  width: 4px;
+  min-width: 4px;
+  z-index: 20;
+  cursor: col-resize;
+  background: var(--border);
+  outline: none;
+  transition: background-color 120ms;
+}
+.proof-separator:hover,
+.proof-separator:focus-visible,
+.proof-separator[data-separator="active"] {
+  background: var(--accent);
+}
+.proof-separator:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.workspace-tab-list {
+  height: 100%;
+  overflow: hidden;
+}
+.workspace-tabs .view-tab,
+.workspace-tabs .diff-tab-item {
+  position: relative;
+}
+.workspace-tabs .view-tab.active,
+.workspace-tabs .diff-tab-item.active {
+  border-bottom-color: transparent;
+}
+.workspace-tab-indicator {
+  position: absolute;
+  height: 2px;
+  bottom: 0;
+  left: 9px;
+  right: 9px;
+  border-radius: 2px;
+  background: var(--accent);
+  pointer-events: none;
+}
+.diff-tab-item.is-dragging {
+  opacity: 0.35;
+}
+.diff-tab-button {
+  touch-action: none;
+}
+.group-drag-handle {
+  width: 20px !important;
+  height: 24px !important;
+  opacity: 0.55;
+  flex-shrink: 0;
+  cursor: grab;
+}
+.group-drag-handle:active {
+  cursor: grabbing;
+}
+.change-group-file.is-dragging {
+  opacity: 0.3;
+}
+.change-group.is-drop-target {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  background: var(--accent-soft);
+}
+.proof-select.group-file-move {
+  flex: 0 0 28px;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  justify-content: center;
+  padding: 3px;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+.group-file-move:hover,
+.group-file-move[data-popup-open] {
+  background: var(--hover);
+}
+.group-file-move [data-slot="select-value"] {
+  display: none;
+}
+.group-file-move-menu {
+  width: max-content;
+  min-width: 220px;
+  max-width: min(360px, var(--available-width));
+}
+.group-file-move-menu [data-slot="select-item-text"] {
+  min-width: 0;
+  flex-shrink: 1;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.change-group-file .group-file-select {
+  min-width: 0;
+}
+.settings-nav [role="tab"] {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: 6px;
+  text-align: left;
+  color: var(--muted);
+  font-size: 12px;
+}
+.settings-nav [role="tab"][data-active],
+.settings-nav [role="tab"][aria-selected="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.settings-nav [role="tab"]:hover {
+  background: var(--hover);
+}
+.settings-scroll-root {
+  height: 100%;
+  overflow: hidden;
+}
+.settings-scroll-root [data-slot="scroll-area-content"] {
+  min-width: 0;
+}
+.settings-scroll-root .settings-content {
+  height: 100%;
+  padding: 24px;
+  overflow: auto;
+}
+.proof-switch {
+  flex-shrink: 0;
+}
+.workspace-page {
+  animation: none !important;
+  transition: none !important;
+}
+.workspace-page[hidden] {
+  display: none !important;
+}
+.workspace-tabs .view-tab.active::after,
+.workspace-tabs .diff-tab-item.active::after {
+  display: none;
+}
+:root[data-theme-changing] *,
+:root[data-theme-changing] *::before,
+:root[data-theme-changing] *::after {
+  transition: none !important;
+}
+.diff-scroll.is-monaco {
+  position: relative;
+  overflow: hidden;
+  min-height: 0;
+  padding: 0;
+}
+.proof-monaco-surface {
+  contain: layout style;
+  text-align: left;
+}
+.proof-code-editor {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+}
+.proof-monaco-surface .monaco-editor .line-numbers {
+  white-space: pre;
+}
+.proof-monaco-surface .proof-added-line {
+  background: color-mix(in srgb, var(--green, #228653) 11%, transparent);
+}
+.proof-monaco-surface .proof-deleted-line {
+  background: color-mix(in srgb, var(--red, #c84152) 11%, transparent);
+}
+.proof-monaco-surface .proof-added-glyph:before {
+  content: "+";
+  color: var(--green, #228653);
+}
+.proof-monaco-surface .proof-deleted-glyph:before {
+  content: "−";
+  color: var(--red, #c84152);
+}
+.proof-monaco-surface .proof-inline-addition {
+  background: color-mix(in srgb, var(--green, #228653) 24%, transparent);
+  border-radius: 2px;
+}
+.proof-monaco-surface .proof-inline-deletion {
+  background: color-mix(in srgb, var(--red, #c84152) 24%, transparent);
+  border-radius: 2px;
+}
+.proof-monaco-surface .is-finding-target {
+  background: color-mix(in srgb, var(--accent) 17%, transparent) !important;
+  border-left: 2px solid var(--accent);
+}
+.proof-monaco-surface .proof-search-match {
+  background: color-mix(in srgb, #eab308 36%, transparent);
+}
+.proof-monaco-surface .is-search-result {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+.proof-monaco-surface .proof-eol-note,
+.proof-eof-note {
+  color: var(--muted);
+  font-size: 11px;
+}
+.proof-eof-note {
+  padding-left: 16px;
+}
+.proof-git-zone {
+  box-sizing: border-box;
+  overflow: hidden;
+  width: 100%;
+  background: var(--bg);
+}
+.proof-git-zone .hunk-header {
+  height: 48px;
+  width: 100%;
+  min-width: 0;
+  padding: 0 10px;
+  gap: 8px;
+}
+.proof-git-zone .hunk-header code {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.proof-git-zone .hunk-state {
+  display: none;
+}
+.proof-review-content {
+  padding: 8px 12px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.proof-review-content:empty {
+  padding: 0;
+}
+.proof-review-content .inline-review {
+  margin: 0;
+  max-width: none;
+}
+.proof-review-content > div + div {
+  margin-top: 8px;
+}
+.proof-alignment-zone {
+  background: var(--surface);
+}
+.proof-diff-separator {
+  cursor: col-resize;
+  z-index: 2;
+}
+.proof-reading-options label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+.proof-reading-options [role="status"] {
+  color: var(--muted);
+  font-size: 11px;
+}
+.proof-review-content .ai-inline-review {
+  width: 100%;
+  margin: 0;
+}
+.proof-monaco-surface .view-zones {
+  z-index: 4;
+  pointer-events: none;
+}
+.proof-monaco-surface .proof-git-zone {
+  pointer-events: auto;
+}
+.proof-git-zone > * {
+  width: var(--editor-width, 100%);
+  max-width: var(--editor-width, 100%);
+  transform: translateX(var(--editor-left, 0px));
+}
+.proof-panel-slot > .comparison-ai {
+  width: 100%;
+  min-width: 0;
+  flex: 1;
+}
+.ai-provider .proof-select {
+  min-width: 0;
+  flex: 1;
+}
+.ai-report-history .proof-select {
+  width: 100%;
+  min-width: 0;
+}

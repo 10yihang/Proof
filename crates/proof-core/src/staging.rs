@@ -77,7 +77,11 @@ impl Proof {
         let index_path = private.path().join("index");
         let bytes = git.index_bytes(&workspace)?;
         if !bytes.is_empty() {
+            // Keep Git's racy-stat cutoff. A newly dated copy can make an
+            // equal-size edit with the cached timestamp look falsely clean.
+            let modified = fs::metadata(Path::new(&workspace.git_dir).join("index"))?.modified()?;
             fs::write(&index_path, &bytes)?;
+            fs::File::open(&index_path)?.set_modified(modified)?;
         }
         let mut command = git.command(&workspace)?;
         git::index_override(&mut command, &index_path);

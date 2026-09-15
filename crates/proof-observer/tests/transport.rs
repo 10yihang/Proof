@@ -507,7 +507,12 @@ fn check_queued_authorization(pause: bool) {
         "unauthorized-window",
         "SECRET_RECEIVED_WITHOUT_AUTHORIZATION",
     );
-    wait_until(|| metrics.snapshot().received == 2);
+    wait_until(|| {
+        let m = metrics.snapshot();
+        m.received == 2 && m.queued == 1 && m.processing == 1
+    });
+    assert_eq!(metrics.snapshot().queued, 1);
+    assert_eq!(metrics.snapshot().processing, 1);
     if pause {
         f.proof.set_observer_consent(&f.consent).unwrap();
     } else {

@@ -1,5 +1,79 @@
 # Proof 验收记录
 
+## 最新检查点 · 2026-09-14 原生阅读、恢复与重试
+
+原生 macOS 验证了指定版本/Worktree Blame、旧路径、分页、返回第 250 行；原生应用选择器与真实 TextEdit 保存后自动刷新；单 Hunk 丢弃/恢复及新编辑后的 `STALE_CONTENT` 拒绝。文件、Index、HEAD、配置和 Review 前后断言保留于 `.artifacts/native-git-reading-01/`，详见 `NATIVE-GIT-READING.md`。
+
+另修复同版本/路径的读取失败无法重试，完整 UI 70 条通过。最新应用以暂时移出并恢复自建文件的方式触发真实 FILE_MISSING，显式重试恢复 500 行；第二页失败重试保留 401–500 范围。当前原生报告为 `.artifacts/file-history-native-01/native-acceptance.json`。源码相对上一包只改 FileHistory 及 UI 用例，未重复运行未变化的 Rust/模型测试。本轮不是完整 P0 或全平台/NFR 完成声明。
+
+## 最新检查点 · 2026-09-14 大 Diff 与读取取消
+
+本地新包 `.artifacts/builds/52aaf2a-large-diff-worktree/Proof-macOS-arm64.zip` 已完成 162 项输入、签名、ZIP CRC 核验，当前构建记录为 `.artifacts/latest-build.json`。使用 ad-hoc 签名，未公证；源码仍是未提交的工作区。
+
+Changes / 独立历史 tab 已接入摘要、主动加载和有界取消；Core、Changes 与历史缓存按内容容量回收。普通 Commit 预览对无法统计的 Review 明确标为未知，Strict Review 保持写入前拦截。后台刷新不再取消同文件版本的显式加载；大历史 Diff 重建按实际源行恢复。见 `LARGE-DIFF.md` 与双轴 `CODE-REVIEW-17.md`。
+
+完整 Rust 205 通过、2 opt-in，前端单元 35、完整 UI 47 通过；最后的原生状态参数和导航键补丁分别完成桌面 6 项与 UI 4 项定向复验。原生旧并发读取包已实际验证 Cmd+3、History→独立 Diff、Cmd+W 只关闭 Diff、全屏进出和 About 面板关闭。
+
+新版隔离 Release 应用已通过真实 Tauri IPC 的大 Diff 摘要/加载、读取取消和后续文件切换、单文件 Stage/Commit、History→独立大 Diff 验收。测试 Commit 仅含 `generated.js`，另外 1,002 个未暂存文件保持，Review marks/events 均为 0。20 秒受控进程在取消后提前回收且无残留进程组。详见 `.artifacts/large-diff-native-01/native-acceptance.json`；进程生存期包含点击前时间，未作为取消延迟或完整 NFR 预算。
+
+## 最新检查点 · 2026-09-14 独立 Git 读取并发
+
+文件 guard、Changes 元数据及 config / attributes 的独立读取已并发执行，每请求最多两个辅助线程、三个直接 Git 子进程。捕获身份、全部写入校验、Index 锁与发布顺序保持。完整 Core 163 项通过、0 失败、2 项 opt-in 未执行；新增环境变动和读取失败回归均核对源码 / Index 保持，两轴复核关闭，见 `CODE-REVIEW-16.md`。
+
+最终标准规模测量 `.artifacts/git-standard-parallel-reads-02.json` 每场景 30 次，8 个写入场景的 P95 全部低于 500 ms。File Diff 146.33 ms，Reviewed 整文件 Stage / Unstage 394.83 / 392.82 ms，Stage All / Unstage All 475.89 / 470.17 ms。All 的单次最大值仍超过 500 ms，完整内容断言通过。3,353 个资源样本观察到最大进程树 RSS 约 35.8 MiB、最多 4 个进程；范围不含 WebView / 独立采集器，也不是完整 UI 或 16 GiB 参考机 NFR 验收。
+
+真实 Git 界面回归通过，涵盖自动刷新、部分提交、Amend、Commit all 与数据删除后的源文件保持。前端源码相对上轮完整 40 项 UI / 30 项单元回归没有变化，本轮单独复验了新 Core 的实际 Git 链路。Core Clippy、格式、前端生产构建、Release 构建通过。
+
+新包为 `.artifacts/builds/52aaf2a-parallel-reads-worktree/Proof-macOS-arm64.zip`，SHA-256 `1825c6d093fb548a179e5aa7bf9438c83da04f7d8dc1db976127dbd271f143a5`。149 个输入在构建及归档后逐项核对一致，严格签名和 ZIP CRC 通过，来源见 `.artifacts/latest-build.json`。仍为未提交、未公证的 ad-hoc Alpha。Computer Use 再次确认 Mac 锁定，原生窗口 / IPC 与剩余 P0 继续保留。
+
+## 最新检查点 · 2026-09-14 单文件捕获与回复版本
+
+单文件 Diff 不再生成整个 Changes 页的附加信息；仍从全局 status 解析 rename 与两侧状态，保留所有 guard。base 从同次受验证的 HEAD / Branch 捕获，真实 Git 回归验证了 status 期间切换 Branch 后内容与基准一致。前端等待 Branch 匹配后展示 Diff；同 Branch 内晚到的 Review 回复也不能覆盖已刷新文件的内容和 Review 状态。三条路径都有失败反例及通过回归，两轴复核见 `CODE-REVIEW-15.md`。
+
+标准规模同脚本重新测得 File Diff P95 196.93 ms（前次 273.75 ms），Reviewed 整文件 Stage / Unstage 为 534.84 / 514.11 ms。完整 Index / Worktree 校验通过，仍有 7 个写入场景超出 500 ms。资源采样仅覆盖 Core 及可见后代，不是原生 UI 或完整 NFR 通过，详见 `PERFORMANCE.md`。
+
+本轮完整 proof-core 160 通过、0 失败、2 项 opt-in 未执行；前端单元 30 通过；最终完整 UI 40 通过，实际 Release Core / Git 流程已启用。类型、修改文件格式及 Core Clippy 通过。浏览器重看了浅色 History 与现有独立 Diff tab；新界面回归生成的 1440×900 深色 History 截图也已查看。它们使用明确的测试 / 演示数据，不能证明实际 macOS 交通灯位置。
+
+Computer Use 再次返回 Mac 锁定；已有操作授权不变，原生拖动、全屏、About 和菜单点击仍待可用桌面。完整 P0 保持未完成。
+
+更新的 macOS ARM64 Release 包为 `.artifacts/builds/52aaf2a-git-capture-worktree/Proof-macOS-arm64.zip`，SHA-256 `ca93b8952aef25e11d360923373ae086cab3cb6704e918670a00e743531870ae`。149 个输入在构建前捕获、构建及打包后核对一致；ad-hoc 签名和 ZIP CRC 通过。JS 主包 589.36 kB（gzip 170.56 kB）的体积提示保留。新包包含本轮 Core 和回复版本修复，旧包均保留；未提交、未公证，构建记录见 `.artifacts/latest-build.json`。
+
+## 最新检查点 · 2026-09-14 标准计时与演示 Parent 修正
+
+标准 10,000 文件 / 100,000 Commit 夹具完成每场景 30 次测量，逐次核对完整 Index 和 Worktree。Core File Diff P95 为 273.75 ms，Reviewed 整文件 Stage / Unstage 为 604.20 / 598.55 ms；共 7 个写入场景超过 500 ms，性能门禁按原预算失败。脚本 4 项回归及两轴复核完成。详见 `PERFORMANCE.md`，不是原生 UI / 全部 NFR 通过。
+
+浏览器发现并修正演示 Merge Diff 起点的 Empty tree 错误，Parent 1 / 2 切换实际显示对应 Commit。类型、格式及 Release 构建通过；149 个构建输入核对一致，只有演示 Parent 解析相对此前完整回归发生变化。新包位于 `.artifacts/builds/52aaf2a-desktop-chrome-followup-worktree/`。Mac 仍锁定，原生窗口验收及完整 P0 继续保留。
+
+## 最新检查点 · 2026-09-14 Desktop chrome
+
+按用户再次提出的 Fork / GitKraken 参考要求，整理中性灰主题、仓库工具栏与固定 tabs、紧凑文件树和提交图；Diff 继续独立打开，合并重复标题，增加页面快捷键、中键关闭及当前比较的文件搜索。详见 `DESKTOP-CHROME.md`。
+
+macOS 使用 Overlay + hiddenTitle，把系统红黄绿保留在应用顶栏；增加明确拖动区域。原生 File 菜单接管 Cmd+W，活动 Diff 只关闭 tab；原生 About 等面板关闭时不会误作用于后台主窗口。独立弹窗和普通 Commit 输入的快捷键边界均有回归，两轴复核见 `CODE-REVIEW-14.md`。
+
+完整 Rust 190 通过、2 项 opt-in 未执行；最终菜单版本桌面 3 项通过；前端单元 29 通过、最终完整 UI 38 通过（真实 Git 工作流已启用）；类型、Clippy 和格式检查通过。受限沙箱中的一次 FSEvents 失败已在具备文件事件访问的同一测试中通过，不归因为产品修复。
+
+Computer Use 仍检测到 Mac 锁定。原生按钮位置、拖动、全屏、About 与真实菜单快捷键仍待解锁验收；浏览器和菜单事件模拟不能替代它们。Stage 重复读取/退出等待优化已通过功能回归，但最终标准仓库全路径及原生 UI 性能尚未完成。完整 P0 目标保持不变。
+
+## 最新检查点 · 2026-09-14 Context 人工关联修正
+
+CTX-04 的文件级关联、解除、备注、恢复原始关联与追加式撤销历史已接入。Context 默认显示摘要，原始记录按会话分页展开；候选限定同 Worktree，使用稳定游标，字段缺失与到期原因明确。后台新增事件保留已读页，后端提供的保留期限用于逐条清理已加载缓存。保留期结束后旧编辑版本不会复活，All 删除后同一进程可重新使用。见 `CONTEXT-ASSOCIATIONS.md` 与独立双轴 `CODE-REVIEW-13.md`。
+
+最终完整回归：Rust 185 通过、0 失败、2 项 opt-in 未执行；前端单元 29 通过；完整 UI 36 通过。新增 12 条 Context 核心测试、5 条 Context 页面测试。核心测试核对原始事件与 Git 字节不变；实际 Git/SQLite UI 流程增加关联、备注持久化与撤销，并核对源码、Index、HEAD、配置保持。最初页面全套出现保存状态 locator 与加载状态歧义，改为具名保存状态后完整复验通过。类型检查、Clippy、Rust/Prettier 格式、生产构建通过。JS 主包 570.17 kB（gzip 166.09 kB），体积警告保留。
+
+macOS ARM64 Release 构建与 ZIP 完整性、ad-hoc 签名校验通过。131 项构建输入在构建前捕获，并在构建后及验收工具失败后验证无漂移。安装包为 `.artifacts/builds/52aaf2a-context-worktree/Proof-macOS-arm64.zip`；源、安装包、主程序和 Helper 的指纹记录于 `.artifacts/latest-build.json`。本地改动尚未提交，包明确标为 worktree 构建；未公证。
+
+原生点击验收未完成。Computer Use 选择新隔离应用时返回 `Sky Computer Use service startup request failed`，工具报告耗时 6903.457 秒；这不是应用启动耗时，也没有产生窗口点击结果。随后使用固定隔离配置启动应用，确认进程存在、Context 数据版本已初始化，源码/Index/HEAD/配置及 2 条原始夹具事件一致，关联修改数仍为 0。证据在 `.artifacts/context-native-01/acceptance-pending.json`。不能以进程启动替代原生 UI 验收，也不把模拟 Hook 输入称为新一轮真实 Agent 测试。
+
+完整 P0 仍未结束：本轮原生点击、其他 Agent/平台、完整证据级别与验证时效、NFR/兼容性和其余 AT 矩阵继续保留。
+
+## 此前检查点 · 2026-09-13 本地诊断与存储故障入口
+
+SET-03 已接入设置：默认固定字段的 JSON 诊断、附加类别逐项确认、内存预览与原生 Save 对话框。普通报告绑定原数据代次并在保存期间保护删除顺序；实际只读连接不能绕过保护。Core 无法初始化时仍显示窗口，并可导出不含本地记录的 application_only 报告。详见 `DIAGNOSTICS.md`，独立双轴复核见 `CODE-REVIEW-12.md`。
+
+本轮完整验证：Rust 173 通过、0 失败、2 项 opt-in 未执行；前端单元 29 通过；完整 UI 31 通过，实际 Git 工作流已启用。两组原生调试窗口分别验证正常保存及 Core 初始化失败后的导出，均核对文件内容、权限及源数据保持。独立 Diff tab 另补窄窗口/窗口缩放时完整显示关闭按钮，关闭后返回 History 焦点。
+
+这些结果证明当前增量，不构成完整 PRD 或全平台/完整性能预算的完成声明。
+
 ## 最新检查点 · 2026-09-13 Hook、Commit 与 History Diff tabs
 
 按用户最终要求：Changes 专注文件 Diff；Commit/Amend 独立成页；History 选择单个/两个 Commit 或 Branch，在新的可关闭 Diff tab 中阅读文件差异，不要求再次填写比较表单。History 的选择与滚动位置保留，Merge Parent 和比较方向可以调整。详见 `HISTORY-DIFF.md`。
@@ -148,14 +222,14 @@ Blame 证据包括：未跟踪/已暂存新增行不指定作者、真实提交�
 | AT-08 | 已有文件范围提示、配对空白折叠与真实计数、隐藏时禁止相关 Review；原生验证阅读不改 index/Review，显式暂存只含所选 Hunk；完整过滤组合仍待验收 |
 | AT-09 | 拒绝提交的 Hook 测试通过；签名失败与弹层内错误反馈待补 |
 | AT-10 | 外部 index 改变拒绝旧预览；已有锁不删除；并发压力测试待补 |
-| AT-11 | 恢复点、精确丢弃、撤销新编辑保护、中断恢复及存储/容量故障回归通过；原生交互复验待做 |
+| AT-11 | 恢复点、精确丢弃、撤销新编辑保护、中断恢复及存储/容量故障回归通过；macOS 原生单 Hunk 丢弃/恢复与新编辑拒绝已核对实际文件、Index 和恢复点。完整故障矩阵仍保留 |
 | AT-12 | 中文、空格、换行、前导短横线文件名的真实暂存测试通过 |
 | AT-13 | 模式/类型切换、CRLF、无末尾换行、过滤器丢弃及 Blame 降级有回归；暂存过滤器与完整特殊文件矩阵待补 |
 | AT-14 | 二进制等摘要/禁用规则初步实现；完整特殊文件矩阵待补 |
 | AT-15 | SQLite 事务与重启覆盖；磁盘满、崩溃注入待补 |
 | AT-16—28 | Agent 观察、完整数据生命周期、证据关联和安全专项尚未完成 |
 | AT-29 | 已检查统一/并排、深浅主题、逐块标记、可键盘调整面板、窄窗焦点及 26px 代码字号；完整平台缩放/键盘矩阵待补 |
-| AT-30 | 性能预算、压力夹具与故障注入尚未执行 |
+| AT-30 | 已有标准规模每场景 30 次 Core 计时、逐操作 Index / Worktree 校验与采样 RSS；部分写入预算未达标。原生 UI、完整压力与桥接突发负载仍待完成，见 PERFORMANCE.md |
 
 ## 发布门槛尚未满足
 

@@ -379,6 +379,129 @@ fn attributes_and_included_config_invalidate_cached_diff_versions() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn environment_changes_during_capture_reject_diff_and_old_stage() {
+    use std::os::unix::fs::PermissionsExt;
+    for change in ["config", "attribute"] {
+        let mut f = Fixture::new();
+        f.change();
+        fs::write(
+            f.repo.join(".git/proof-diff-config"),
+            "[diff]\n algorithm = patience\n",
+        )
+        .unwrap();
+        git(&f.repo, &["config", "include.path", "proof-diff-config"]);
+        fs::write(f.repo.join(".git/info/attributes"), "code.txt diff\n").unwrap();
+        let before = f
+            .proof
+            .file_diff(&f.workspace.id, "code.txt", Side::Unstaged)
+            .unwrap();
+        let source = fs::read(f.repo.join("code.txt")).unwrap();
+        let index = fs::read(f.repo.join(".git/index")).unwrap();
+        let head = git(&f.repo, &["rev-parse", "HEAD"]);
+        let wrapper = f._temp.path().join("git-change-diff-environment");
+        fs::write(
+            &wrapper,
+            r#"#!/bin/sh
+is_diff=0
+previous=
+repo=
+for arg in "$@"; do
+ [ "$arg" = diff ] && is_diff=1
+ [ "$previous" = -C ] && repo="$arg"
+ previous="$arg"
+done
+/usr/bin/git "$@"
+result=$?
+if [ "$is_diff" = 1 ]; then
+ if [ '__CASE__' = config ]; then
+  printf '[diff]\n algorithm = histogram\n' > "$repo/.git/proof-diff-config"
+ else
+  printf 'code.txt -diff\n' > "$repo/.git/info/attributes"
+ fi
+fi
+exit "$result"
+"#
+            .replace("__CASE__", change),
+        )
+        .unwrap();
+        fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o700)).unwrap();
+        let mut preferences = f.proof.preferences().unwrap();
+        preferences.git_path = wrapper.to_str().unwrap().into();
+        f.proof.set_preferences(preferences).unwrap();
+        assert_eq!(
+            f.proof
+                .file_diff(&f.workspace.id, "code.txt", Side::Unstaged)
+                .unwrap_err()
+                .code,
+            "STALE_CONTENT"
+        );
+        assert_eq!(
+            f.proof.stage(&before.id, None).unwrap_err().code,
+            "STALE_CONTENT"
+        );
+        assert_eq!(fs::read(f.repo.join("code.txt")).unwrap(), source);
+        assert_eq!(fs::read(f.repo.join(".git/index")).unwrap(), index);
+        assert_eq!(git(&f.repo, &["rev-parse", "HEAD"]), head);
+        assert!(!f.repo.join(".git/index.lock").exists());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn failed_guard_read_after_apply_does_not_publish_private_index() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut f = Fixture::new();
+    f.change();
+    let diff = f
+        .proof
+        .file_diff(&f.workspace.id, "code.txt", Side::Unstaged)
+        .unwrap();
+    let source = fs::read(f.repo.join("code.txt")).unwrap();
+    let index = fs::read(f.repo.join(".git/index")).unwrap();
+    let wrapper = f._temp.path().join("git-fail-guard-after-apply");
+    fs::write(
+        &wrapper,
+        r#"#!/bin/sh
+command=
+check=0
+previous=
+repo=
+for arg in "$@"; do
+ case "$arg" in apply|config) command="$arg";; esac
+ [ "$arg" = --check ] && check=1
+ [ "$previous" = -C ] && repo="$arg"
+ previous="$arg"
+done
+if [ "$command" = config ] && [ -e "$repo/.git/proof-applied" ]; then
+ printf 'Fixture config read failed\n' >&2
+ exit 128
+fi
+/usr/bin/git "$@"
+result=$?
+if [ "$command" = apply ] && [ "$check" = 0 ] && [ "$result" = 0 ]; then
+ : > "$repo/.git/proof-applied"
+fi
+exit "$result"
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o700)).unwrap();
+    let mut preferences = f.proof.preferences().unwrap();
+    preferences.git_path = wrapper.to_str().unwrap().into();
+    f.proof.set_preferences(preferences).unwrap();
+    let error = f.proof.stage(&diff.id, None).unwrap_err();
+    assert!(
+        error.detail.contains("Fixture config read failed"),
+        "{error:?}"
+    );
+    assert!(f.repo.join(".git/proof-applied").exists());
+    assert_eq!(fs::read(f.repo.join("code.txt")).unwrap(), source);
+    assert_eq!(fs::read(f.repo.join(".git/index")).unwrap(), index);
+    assert!(!f.repo.join(".git/index.lock").exists());
+}
+
 #[test]
 fn batch_unstage_rename_rejects_unselected_index_descendant_changes() {
     let mut f = Fixture::new();
@@ -1009,6 +1132,150 @@ fn exact_review_can_move_to_the_staged_comparison() {
         .file_diff(&f.workspace.id, "code.txt", Side::Unstaged)
         .unwrap();
     assert!(unstaged.hunks.iter().all(|h| h.review_state != "reviewed"));
+}
+
+#[test]
+fn reviewed_unstage_can_leave_no_remaining_worktree_diff() {
+    let mut f = Fixture::new();
+    f.change();
+    git(&f.repo, &["add", "--", "code.txt"]);
+    fs::write(f.repo.join("code.txt"), baseline()).unwrap();
+    let staged = f
+        .proof
+        .file_diff(&f.workspace.id, "code.txt", Side::Staged)
+        .unwrap();
+    f.proof.mark_reviewed(&staged.id, None, true).unwrap();
+    let result = f.proof.stage(&staged.id, None).unwrap();
+    assert!(result.ok && result.warning.is_none(), "{result:?}");
+    assert!(f.proof.changes(&f.workspace.id).unwrap().files.is_empty());
+    assert_eq!(git(&f.repo, &["show", ":code.txt"]), baseline());
+    assert_eq!(
+        fs::read_to_string(f.repo.join("code.txt")).unwrap(),
+        baseline()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn diff_base_matches_the_validated_content_after_a_branch_switch_during_status() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut f = Fixture::new();
+    let other = git(
+        &f.repo,
+        &[
+            "commit-tree",
+            "HEAD^{tree}",
+            "-p",
+            "HEAD",
+            "-m",
+            "Other base",
+        ],
+    )
+    .trim()
+    .to_string();
+    git(&f.repo, &["update-ref", "refs/heads/other", &other]);
+    f.change();
+    let source = fs::read(f.repo.join("code.txt")).unwrap();
+    let index = fs::read(f.repo.join(".git/index")).unwrap();
+    let wrapper = f._temp.path().join("git-switch-after-status");
+    fs::write(
+        &wrapper,
+        r#"#!/bin/sh
+is_status=0
+previous=
+repo=
+for arg in "$@"; do
+ [ "$arg" = status ] && is_status=1
+ [ "$previous" = -C ] && repo="$arg"
+ previous="$arg"
+done
+/usr/bin/git "$@"
+result=$?
+if [ "$is_status" = 1 ] && [ ! -e "$repo/.git/proof-switched" ]; then
+ : > "$repo/.git/proof-switched"
+ /usr/bin/git -C "$repo" symbolic-ref HEAD refs/heads/other || exit 1
+fi
+exit "$result"
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o700)).unwrap();
+    let mut preferences = f.proof.preferences().unwrap();
+    preferences.git_path = wrapper.to_str().unwrap().into();
+    f.proof.set_preferences(preferences).unwrap();
+
+    let diff = f
+        .proof
+        .file_diff(&f.workspace.id, "code.txt", Side::Unstaged)
+        .unwrap();
+    assert_eq!(diff.base, format!("{other}:other"));
+    assert_eq!(fs::read(f.repo.join("code.txt")).unwrap(), source);
+    assert_eq!(fs::read(f.repo.join(".git/index")).unwrap(), index);
+    f.proof.mark_reviewed(&diff.id, None, true).unwrap();
+    let result = f.proof.stage(&diff.id, None).unwrap();
+    assert!(result.ok && result.warning.is_none(), "{result:?}");
+    assert_eq!(result.actual_head.as_deref(), Some(other.as_str()));
+    assert_eq!(result.actual_branch.as_deref(), Some("other"));
+}
+
+#[cfg(unix)]
+#[test]
+fn staging_without_review_does_not_depend_on_reading_a_review_migration_target() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut f = Fixture::new();
+    f.change();
+    let wrapper = f._temp.path().join("git-without-target-reader");
+    fs::write(&wrapper, "#!/bin/sh\nis_diff=0\nis_cached=0\nfor arg in \"$@\"; do\n [ \"$arg\" = diff ] && is_diff=1\n [ \"$arg\" = --cached ] && is_cached=1\ndone\nif [ \"$is_diff:$is_cached\" = 1:1 ]; then\n echo 'Review migration target reader unavailable' >&2\n exit 1\nfi\nexec /usr/bin/git \"$@\"\n").unwrap();
+    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o700)).unwrap();
+    let mut preferences = f.proof.preferences().unwrap();
+    preferences.git_path = wrapper.to_str().unwrap().into();
+    f.proof.set_preferences(preferences).unwrap();
+    let diff = f
+        .proof
+        .file_diff(&f.workspace.id, "code.txt", Side::Unstaged)
+        .unwrap();
+    let result = f.proof.stage(&diff.id, Some(&diff.hunks[0].id)).unwrap();
+    assert!(result.ok);
+    assert!(
+        result.warning.is_none(),
+        "Unreviewed Stage should not read a migration target: {:?}",
+        result.warning
+    );
+    let staged = git(&f.repo, &["show", ":code.txt"]);
+    assert!(staged.contains("changed 3") && !staged.contains("changed 25"));
+    assert!(fs::read_to_string(f.repo.join("code.txt"))
+        .unwrap()
+        .contains("changed 25"));
+    let remaining = f
+        .proof
+        .file_diff(&f.workspace.id, "code.txt", Side::Unstaged)
+        .unwrap();
+    f.proof.mark_reviewed(&remaining.id, None, true).unwrap();
+    let captured = f
+        .proof
+        .file_diff(&f.workspace.id, "code.txt", Side::Unstaged)
+        .unwrap();
+    assert!(captured.hunks.iter().all(|h| h.review_state == "reviewed"));
+    f.proof.mark_reviewed(&captured.id, None, false).unwrap();
+    let after_revoke = f.proof.stage(&captured.id, None).unwrap();
+    assert!(after_revoke.ok && after_revoke.warning.is_none());
+
+    git(&f.repo, &["reset", "--quiet", "HEAD", "--", "code.txt"]);
+    let reviewed = f
+        .proof
+        .file_diff(&f.workspace.id, "code.txt", Side::Unstaged)
+        .unwrap();
+    f.proof.mark_reviewed(&reviewed.id, None, true).unwrap();
+    let with_review = f.proof.stage(&reviewed.id, None).unwrap();
+    assert!(with_review.ok);
+    assert!(with_review
+        .warning
+        .as_deref()
+        .is_some_and(|warning| warning.contains("GIT_FAILED")));
+    assert_eq!(
+        git(&f.repo, &["show", ":code.txt"]),
+        fs::read_to_string(f.repo.join("code.txt")).unwrap()
+    );
 }
 
 #[test]

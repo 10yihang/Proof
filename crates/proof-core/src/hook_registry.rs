@@ -51,16 +51,30 @@ impl Proof {
         Ok(())
     }
     pub fn observer_hook_program_matches(&self, record: &ObserverHookRecord) -> Result<bool> {
-        let Some(path) = record.ownership["program"]["path"].as_str() else {
-            return Ok(false);
-        };
         let Some(expected) = record.ownership["program"]["identity"].as_str() else {
             return Ok(false);
+        };
+        Ok(self.observer_hook_program_identity(record)?.as_deref() == Some(expected))
+    }
+    /// A passive Hook invokes our helper, not the Agent executable. Agent updates
+    /// do not revoke existing capture consent; source trust and permissions still do.
+    pub fn observer_hook_program_source_trusted(
+        &self,
+        record: &ObserverHookRecord,
+    ) -> Result<bool> {
+        Ok(self.observer_hook_program_identity(record)?.is_some())
+    }
+    fn observer_hook_program_identity(
+        &self,
+        record: &ObserverHookRecord,
+    ) -> Result<Option<String>> {
+        let Some(path) = record.ownership["program"]["path"].as_str() else {
+            return Ok(None);
         };
         let Ok((resolved, mut origins)) =
             crate::program::resolve_program_path(std::path::Path::new(path))
         else {
-            return Ok(false);
+            return Ok(None);
         };
         if let Some(parent) = resolved.parent() {
             origins.push(parent.to_owned());
@@ -69,10 +83,10 @@ impl Proof {
         for origin in origins {
             if crate::program::trusted_program_workspace(&self.store, &origin, &workspaces).is_err()
             {
-                return Ok(false);
+                return Ok(None);
             }
         }
-        Ok(crate::program::program_identity(&resolved).is_ok_and(|actual| actual == expected))
+        Ok(crate::program::program_identity(&resolved).ok())
     }
     pub(crate) fn check_observer_hook_program(&self, id: &str) -> Result<bool> {
         let Some(record) = self
@@ -82,7 +96,7 @@ impl Proof {
         else {
             return Ok(true);
         };
-        if self.observer_hook_program_matches(&record)? {
+        if self.observer_hook_program_source_trusted(&record)? {
             return Ok(true);
         }
         let tx =
@@ -332,7 +346,7 @@ impl Proof {
                     "Missing installation",
                 )
             })?;
-        if !self.observer_hook_program_matches(&record)? {
+        if !self.observer_hook_program_source_trusted(&record)? {
             return Err(Error::new(
                 "OBSERVER_PROGRAM_CHANGED",
                 "Agent 程序已改变，请重新检测并更新接入。",

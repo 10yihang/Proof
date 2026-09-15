@@ -27,6 +27,8 @@ fn a_version_string_never_promotes_runtime_compatibility_or_grants_collection() 
     for (agent, output) in [
         (ObserverAgent::Codex, "codex-cli 0.153.4"),
         (ObserverAgent::Claude, "2.1.236 (Claude Code)"),
+        (ObserverAgent::Codex, "codex-cli 9.9.9-alpha.2"),
+        (ObserverAgent::Claude, "3.1.0 (Claude Code)"),
     ] {
         let f = Fixture::new(&format!(
             "#!/bin/sh\n[ \"$1\" = --version ] || exit 91\nprintf '%s\\n' '{output}'\n"
@@ -49,8 +51,8 @@ fn a_version_string_never_promotes_runtime_compatibility_or_grants_collection() 
         .probe_observer(ObserverAgent::Codex, f.program.to_str().unwrap())
         .unwrap();
     assert_eq!(result.version, "9.9.9");
-    assert_eq!(result.status, "unsupported_version");
-    assert!(result.profile.is_none());
+    assert_eq!(result.status, "candidate_unverified");
+    assert!(!result.profile.unwrap().runtime_verified);
 }
 
 #[test]

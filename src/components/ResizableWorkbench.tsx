@@ -1,12 +1,21 @@
 import {
-  useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
   type ReactNode,
 } from "react";
+import {
+  Group,
+  Panel,
+  Separator,
+  type GroupImperativeHandle,
+  type Layout,
+} from "react-resizable-panels";
+import { t } from "../i18n";
 import {
   clamp,
   defaultRepositoryLayout,
@@ -28,6 +37,8 @@ export function ResizableWorkbench({
   children,
   onChange,
   onCollapse,
+  sidebarId = "files-panel",
+  contextId = "context-panel",
 }: {
   layout: RepositoryLayout;
   scopeKey: string;
@@ -40,28 +51,56 @@ export function ResizableWorkbench({
   children: ReactNode;
   onChange: (partial: Partial<RepositoryLayout>) => void;
   onCollapse: (side: PanelWidth) => void;
+  sidebarId?: string;
+  contextId?: string;
 }) {
-  const root = useRef<HTMLElement>(null);
+  const id = useId(),
+    left = `${id}-files`,
+    center = `${id}-diff`,
+    right = `${id}-context`;
+  const root = useRef<HTMLElement>(null),
+    group = useRef<GroupImperativeHandle>(null);
   const [width, setWidth] = useState(window.innerWidth);
-  const [draft, setDraft] = useState<{
-    side: PanelWidth;
-    value: number;
-    start: number;
-    x: number;
-    pointer: number | null;
+  const interaction = useRef<{
     scope: string;
+    side: PanelWidth;
+    before: Layout;
+    keyboard: boolean;
+    pending?: Layout;
   } | null>(null);
-  const draftRef = useRef(draft);
-  draftRef.current = draft;
-  const cancelDraft = useCallback(() => {
-    draftRef.current = null;
-    setDraft(null);
-  }, []);
-  const preview =
-    draft && draft.scope === scopeKey
-      ? { ...layout, [draft.side]: draft.value }
-      : layout;
-  const fit = fitPanels(width, preview, sidebarVisible, contextDocked);
+  const latest = useRef({
+    scopeKey,
+    enabled,
+    active,
+    layout,
+    sidebarVisible,
+    contextDocked,
+    onChange,
+    onCollapse,
+  });
+  latest.current = {
+    scopeKey,
+    enabled,
+    active,
+    layout,
+    sidebarVisible,
+    contextDocked,
+    onChange,
+    onCollapse,
+  };
+  const gap = (Number(sidebarVisible) + Number(contextDocked)) * 4;
+  const fit = fitPanels(width - gap, layout, sidebarVisible, contextDocked);
+  const desired = useMemo(
+    () => ({
+      [left]: (fit.sidebarWidth / Math.max(1, width - gap)) * 100,
+      [center]:
+        (Math.max(0, width - gap - fit.sidebarWidth - fit.contextWidth) /
+          Math.max(1, width - gap)) *
+        100,
+      [right]: (fit.contextWidth / Math.max(1, width - gap)) * 100,
+    }),
+    [left, center, right, fit.sidebarWidth, fit.contextWidth, width, gap],
+  );
   useLayoutEffect(() => {
     const node = root.current;
     if (!node) return;
@@ -69,176 +108,127 @@ export function ResizableWorkbench({
       if (node.clientWidth) setWidth(node.clientWidth);
     });
     observer.observe(node);
+    if (node.clientWidth) setWidth(node.clientWidth);
     return () => observer.disconnect();
   }, []);
-  useEffect(() => {
-    cancelDraft();
-  }, [scopeKey, active, sidebarVisible, contextDocked, cancelDraft]);
-  useEffect(() => {
-    window.addEventListener("blur", cancelDraft);
-    document.addEventListener("visibilitychange", cancelDraft);
-    return () => {
-      window.removeEventListener("blur", cancelDraft);
-      document.removeEventListener("visibilitychange", cancelDraft);
-    };
-  }, [cancelDraft]);
-  function limits(side: PanelWidth) {
-    const other = side === "sidebarWidth" ? fit.contextWidth : fit.sidebarWidth;
-    return {
-      min: panelBounds[side].min,
-      max: Math.max(
-        panelBounds[side].min,
-        Math.min(panelBounds[side].max, width - other - 360),
-      ),
-    };
+  useLayoutEffect(() => {
+    interaction.current = null;
+    if (active) {
+      const frame = requestAnimationFrame(() =>
+        group.current?.setLayout(desired),
+      );
+      return () => cancelAnimationFrame(frame);
+    }
+  }, [desired, scopeKey, active]);
+  function cancel() {
+    const previous = interaction.current;
+    interaction.current = null;
+    if (previous?.scope === scopeKey) group.current?.setLayout(previous.before);
   }
-  function finish() {
-    const value = draftRef.current;
+  useEffect(() => {
+    window.addEventListener("blur", cancel);
+    document.addEventListener("visibilitychange", cancel);
+    return () => {
+      window.removeEventListener("blur", cancel);
+      document.removeEventListener("visibilitychange", cancel);
+    };
+  }, [scopeKey]);
+  function begin(side: PanelWidth, keyboard: boolean) {
+    if (!enabled || !active) return;
+    if (!interaction.current)
+      interaction.current = {
+        scope: scopeKey,
+        side,
+        keyboard,
+        before: group.current?.getLayout() ?? desired,
+      };
+  }
+  function commit(value: Layout) {
+    const start = interaction.current,
+      live = latest.current;
+    interaction.current = null;
     if (
-      value &&
-      enabled &&
-      active &&
-      (value.side === "sidebarWidth" ? sidebarVisible : contextDocked) &&
-      value.scope === scopeKey &&
-      value.value !== value.start
+      !start ||
+      start.scope !== live.scopeKey ||
+      !live.enabled ||
+      !live.active
     )
-      onChange({ [value.side]: value.value });
-    draftRef.current = null;
-    setDraft(null);
+      return;
+    const key = start.side === "sidebarWidth" ? left : right;
+    const pixels = Math.round((value[key] / 100) * (width - gap));
+    if (pixels <= 1) {
+      live.onCollapse(start.side);
+      return;
+    }
+    const bounds = panelBounds[start.side];
+    const next = clamp(pixels, bounds.min, bounds.max);
+    if (next !== live.layout[start.side]) live.onChange({ [start.side]: next });
   }
   function separator(side: PanelWidth) {
-    const bounds = limits(side);
-    const name = side === "sidebarWidth" ? "变化文件" : "上下文与证据";
+    const forFiles = side === "sidebarWidth";
     return (
-      <div
-        key={side}
-        className={`panel-separator ${side === "sidebarWidth" ? "for-files" : "for-context"} ${draft?.side === side ? "is-resizing" : ""}`}
-        role="separator"
-        aria-label={name}
-        aria-orientation="vertical"
-        aria-controls={
-          side === "sidebarWidth" ? "files-panel" : "context-panel"
-        }
-        aria-valuenow={fit[side]}
-        aria-valuemin={bounds.min}
-        aria-valuemax={bounds.max}
-        aria-valuetext={`${name} ${fit[side]} 像素`}
-        aria-disabled={!enabled}
-        aria-describedby="resize-help"
-        tabIndex={enabled ? 0 : -1}
-        style={
-          side === "sidebarWidth"
-            ? { left: fit.sidebarWidth - 4 }
-            : { right: fit.contextWidth - 4 }
-        }
-        title="拖动或左右方向键调整；Shift 加速；Enter 收起；双击恢复默认宽度"
-        onPointerDown={(event) => {
-          if (!enabled || !active || event.button !== 0 || !event.isPrimary)
-            return;
-          event.preventDefault();
-          event.currentTarget.focus();
-          event.currentTarget.setPointerCapture(event.pointerId);
-          const next = {
-            side,
-            start: fit[side],
-            value: fit[side],
-            x: event.clientX,
-            pointer: event.pointerId,
-            scope: scopeKey,
-          };
-          draftRef.current = next;
-          setDraft(next);
+      <Separator
+        id={`${id}-${side}`}
+        className={`proof-separator ${forFiles ? "for-files" : "for-context"}`}
+        disabled={!enabled || !active}
+        disableDoubleClick
+        aria-label={forFiles ? t("变化文件") : t("上下文与证据")}
+        aria-controls={forFiles ? sidebarId : contextId}
+        aria-describedby={`${id}-help`}
+        title={t(
+          "拖动或左右方向键调整；Shift 加速；Enter 收起；双击恢复默认宽度",
+        )}
+        onPointerDownCapture={(event) => {
+          if (event.button === 0) begin(side, false);
         }}
-        onPointerMove={(event) => {
-          const value = draftRef.current;
-          if (
-            !enabled ||
-            !active ||
-            !value ||
-            value.scope !== scopeKey ||
-            value.pointer !== event.pointerId
-          )
-            return;
-          const direction = side === "sidebarWidth" ? 1 : -1;
-          const next = {
-            ...value,
-            value: clamp(
-              value.start + (event.clientX - value.x) * direction,
-              bounds.min,
-              bounds.max,
-            ),
-          };
-          draftRef.current = next;
-          setDraft(next);
-        }}
-        onPointerUp={(event) => {
-          if (draftRef.current?.pointer !== event.pointerId) return;
-          finish();
-          if (event.currentTarget.hasPointerCapture(event.pointerId))
-            event.currentTarget.releasePointerCapture(event.pointerId);
-        }}
-        onPointerCancel={cancelDraft}
-        onLostPointerCapture={cancelDraft}
+        onPointerCancelCapture={cancel}
         onDoubleClick={() => {
           if (enabled && active)
             onChange({ [side]: defaultRepositoryLayout[side] });
         }}
-        onKeyDown={(event) => {
+        onKeyDownCapture={(event) => {
           if (
-            !enabled ||
-            !active ||
             event.nativeEvent.isComposing ||
             event.metaKey ||
             event.ctrlKey ||
             event.altKey
-          )
+          ) {
+            event.stopPropagation();
             return;
+          }
           if (event.key === "Escape") {
             event.preventDefault();
             event.stopPropagation();
-            cancelDraft();
+            cancel();
             return;
           }
           if (event.key === "Enter") {
             event.preventDefault();
-            finish();
-            onCollapse(side);
+            event.stopPropagation();
+            if (enabled && active) onCollapse(side);
             return;
           }
-          if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key))
-            return;
-          event.preventDefault();
-          event.stopPropagation();
-          const direction =
-            (event.key === "ArrowRight" ? 1 : -1) *
-            (side === "sidebarWidth" ? 1 : -1);
-          const value =
-            event.key === "Home"
-              ? bounds.min
-              : event.key === "End"
-                ? bounds.max
-                : clamp(
-                    fit[side] + direction * (event.shiftKey ? 40 : 10),
-                    bounds.min,
-                    bounds.max,
-                  );
-          const next = {
-            side,
-            value,
-            start: draftRef.current?.start ?? fit[side],
-            x: 0,
-            pointer: null,
-            scope: scopeKey,
-          };
-          draftRef.current = next;
-          setDraft(next);
-        }}
-        onKeyUp={(event) => {
           if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key))
-            finish();
+            begin(side, true);
+        }}
+        onKeyUpCapture={(event) => {
+          if (
+            ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key) &&
+            interaction.current?.keyboard
+          )
+            commit(
+              interaction.current.pending ??
+                group.current?.getLayout() ??
+                desired,
+            );
         }}
         onBlur={() => {
-          if (draftRef.current?.pointer === null) finish();
+          if (interaction.current?.keyboard)
+            commit(
+              interaction.current.pending ??
+                group.current?.getLayout() ??
+                desired,
+            );
         }}
       />
     );
@@ -246,22 +236,71 @@ export function ResizableWorkbench({
   return (
     <main
       ref={root}
-      className={`workbench resizable ${draft ? "is-resizing" : ""}`}
+      className="workbench resizable proof-workbench"
       style={
-        {
-          gridTemplateColumns: `${sidebarVisible ? `${fit.sidebarWidth}px ` : ""}minmax(0,1fr)${contextDocked ? ` ${fit.contextWidth}px` : ""}`,
-          "--saved-context-width": `${layout.contextWidth}px`,
-        } as CSSProperties
+        { "--saved-context-width": `${layout.contextWidth}px` } as CSSProperties
       }
     >
-      {sidebar}
-      {sidebarVisible && separator("sidebarWidth")}
-      {children}
-      {contextDocked && separator("contextWidth")}
-      {context}
-      <span className="sr-only" id="resize-help">
-        左右方向键调整，Shift 加速，Home 和 End 调到边界，Enter 收起面板，Esc
-        取消调整。设置中也可直接输入宽度。
+      <Group
+        key={scopeKey}
+        groupRef={group}
+        orientation="horizontal"
+        defaultLayout={desired}
+        disabled={!enabled || !active}
+        resizeTargetMinimumSize={{ coarse: 16, fine: 8 }}
+        className="min-h-0 min-w-0 flex-1"
+        onLayoutChanged={(value, meta) => {
+          if (!meta.isUserInteraction || !interaction.current) return;
+          if (interaction.current.keyboard) interaction.current.pending = value;
+          else commit(value);
+        }}
+      >
+        <Panel
+          id={left}
+          className="proof-panel-slot"
+          style={{ overflow: "visible", minWidth: 0, display: "flex" }}
+          defaultSize={fit.sidebarWidth}
+          minSize={sidebarVisible ? 180 : 0}
+          maxSize={sidebarVisible ? 480 : 0}
+          disabled={!sidebarVisible}
+          collapsible
+          groupResizeBehavior="preserve-pixel-size"
+        >
+          {sidebar}
+        </Panel>
+        {sidebarVisible && separator("sidebarWidth")}
+        <Panel
+          id={center}
+          className="proof-center-slot"
+          style={{
+            overflow: "hidden",
+            display: "flex",
+            minWidth: 0,
+            minHeight: 0,
+          }}
+          minSize={Math.min(360, width - gap)}
+        >
+          {children}
+        </Panel>
+        {contextDocked && separator("contextWidth")}
+        <Panel
+          id={right}
+          className="proof-panel-slot"
+          style={{ overflow: "visible", minWidth: 0, display: "flex" }}
+          defaultSize={fit.contextWidth}
+          minSize={contextDocked ? 240 : 0}
+          maxSize={contextDocked ? 520 : 0}
+          disabled={!contextDocked}
+          collapsible
+          groupResizeBehavior="preserve-pixel-size"
+        >
+          {context}
+        </Panel>
+      </Group>
+      <span id={`${id}-help`} className="sr-only">
+        {t(
+          "左右方向键调整，Shift 加速，Home 和 End 调到边界，Enter 收起面板，Esc 取消调整。设置中也可直接输入宽度。",
+        )}
       </span>
     </main>
   );

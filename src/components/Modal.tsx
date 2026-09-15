@@ -1,7 +1,17 @@
-import { useEffect, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
+import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { X } from "@phosphor-icons/react";
+import { t, uiMessage } from "../i18n";
 import type { ProofError } from "../types";
+import { Button } from "./ui/controls";
+import {
+  Dialog,
+  DialogPortal,
+  DialogOverlay,
+  DialogTitle,
+  DialogClose,
+} from "./ui/dialog";
+import { cn } from "../lib/utils";
 
 export function Modal({
   title,
@@ -10,6 +20,7 @@ export function Modal({
   wide = false,
   error,
   className = "",
+  dismissible = true,
 }: {
   title: string;
   children: ReactNode;
@@ -17,80 +28,79 @@ export function Modal({
   wide?: boolean;
   error?: ProofError | null;
   className?: string;
+  dismissible?: boolean;
 }) {
-  const ref = useRef<HTMLDialogElement>(null);
-  const [closing, setClosing] = useState(false);
-  const closingRef = useRef(false);
-  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  function close() {
-    if (closingRef.current) return;
-    closingRef.current = true;
-    if (ref.current) ref.current.inert = true;
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      onClose();
-      return;
-    }
-    setClosing(true);
-    closeTimer.current = setTimeout(onClose, 140);
-  }
-  useEffect(() => {
-    const dialog = ref.current;
-    const focused = document.activeElement as HTMLElement | null;
-    dialog?.showModal();
-    return () => {
-      if (closeTimer.current) clearTimeout(closeTimer.current);
-      dialog?.close();
-      focused?.focus();
-    };
-  }, []);
+  const [open, setOpen] = useState(true);
+  const popup = useRef<HTMLDivElement>(null);
+  const focus = useRef(document.activeElement as HTMLElement | null);
   return (
-    <dialog
-      ref={ref}
-      className={`modal ${wide ? "modal-wide" : ""} ${closing ? "is-closing" : ""} ${className}`}
-      aria-label={title}
-      onSubmitCapture={(event) => {
-        if (closingRef.current) {
-          event.preventDefault();
-          event.stopPropagation();
+    <Dialog
+      open={open}
+      disablePointerDismissal={!dismissible}
+      onOpenChange={(value, details) => {
+        if (!dismissible) {
+          details.cancel();
+          return;
         }
+        setOpen(value);
       }}
-      onKeyDownCapture={(event) => {
-        if (closingRef.current) {
-          event.preventDefault();
-          event.stopPropagation();
-        }
-      }}
-      onCancel={(e) => {
-        e.preventDefault();
-        close();
-      }}
-      onClick={(e) => {
-        if (e.target === ref.current) close();
+      onOpenChangeComplete={(value) => {
+        if (!value) onClose();
       }}
     >
-      <div className="modal-content">
-        <header className="modal-header">
-          <h2>{title}</h2>
-          <button
-            className="icon-button"
-            title="关闭"
-            aria-label="关闭"
-            onClick={close}
-          >
-            <X size={18} />
-          </button>
-        </header>
-        {error && (
-          <div className="modal-error" role="alert">
-            <strong>{error.message}</strong>
-            <details>
-              <summary>{error.code} · 查看详情</summary>
-              <pre>{error.detail}</pre>
-            </details>
+      <DialogPortal>
+        <DialogOverlay className="proof-dialog-backdrop z-[200] bg-slate-950/35 backdrop-blur-[2px]" />
+        <DialogPrimitive.Popup
+          ref={popup}
+          aria-label={title}
+          initialFocus={() =>
+            popup.current?.querySelector<HTMLElement>(
+              "[data-autofocus], [autofocus]",
+            ) ?? true
+          }
+          finalFocus={() => (focus.current?.isConnected ? focus.current : true)}
+          className={cn(
+            "modal proof-dialog fixed left-1/2 top-1/2 z-[201] m-0 -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-popover text-[12px] text-popover-foreground shadow-2xl outline-none",
+            wide && "modal-wide",
+            className,
+          )}
+          onSubmitCapture={(event) => {
+            if (!open) {
+              event.preventDefault();
+              event.stopPropagation();
+            }
+          }}
+        >
+          <div className="modal-content">
+            <header className="modal-header">
+              <DialogTitle className="text-[15px] font-semibold leading-6">
+                {title}
+              </DialogTitle>
+              <DialogClose
+                disabled={!dismissible}
+                render={
+                  <Button className="icon-button" aria-label={t("关闭")} />
+                }
+              >
+                <X size={17} />
+              </DialogClose>
+            </header>
+            {error && (
+              <div className="modal-error" role="alert">
+                <strong>{uiMessage(error.message)}</strong>
+                <details>
+                  <summary>
+                    {error.code}
+                    {t(" · 查看详情")}
+                  </summary>
+                  <pre>{error.detail}</pre>
+                </details>
+              </div>
+            )}
+            {children}
           </div>
-        )}
-        {children}
-      </div>
-    </dialog>
+        </DialogPrimitive.Popup>
+      </DialogPortal>
+    </Dialog>
   );
 }

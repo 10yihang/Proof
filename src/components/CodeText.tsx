@@ -1,3 +1,5 @@
+import { t } from "../i18n";
+import type { SyntaxSpan } from "../syntax";
 import {
   highlightedParts,
   whitespaceDecorationsAllowed,
@@ -9,13 +11,17 @@ export function CodeText({
   search,
   ranges,
   showWhitespace,
+  path,
+  syntax,
 }: {
+  path?: string;
+  syntax?: SyntaxSpan[];
   text: string;
   search: string;
   ranges?: TextRange[];
   showWhitespace: boolean;
 }) {
-  const parts = highlightedParts(text, ranges, search);
+  const parts = highlightedParts(text, ranges, search, path, syntax);
   const whitespace = showWhitespace && whitespaceDecorationsAllowed(text);
   const simplified =
     parts.some((part) => part.simplified) || (showWhitespace && !whitespace);
@@ -23,7 +29,7 @@ export function CodeText({
     <span
       title={
         simplified
-          ? "此行使用简化高亮；原始代码完整保留，可正常选择和复制。"
+          ? t("此行使用简化高亮；原始代码完整保留，可正常选择和复制。")
           : undefined
       }
     >

@@ -1,3 +1,5 @@
+import { Button, Input } from "./ui/controls";
+import { t } from "../i18n";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
@@ -76,7 +78,7 @@ export function FileTree({
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => parent.current,
-    estimateSize: (i) => (rows[i].kind === "group" ? 38 : 30),
+    estimateSize: (i) => (rows[i].kind === "group" ? 34 : 28),
     getItemKey: (i) => rows[i].key,
     overscan: 14,
   });
@@ -117,87 +119,91 @@ export function FileTree({
   return (
     <>
       <div className="sidebar-heading file-heading">
-        <strong>Changes</strong>
+        <strong>{readOnly ? t("Changed files") : t("Local changes")}</strong>
         <span className="count-badge">{files.length}</span>
         <span className="toolbar-spacer" />
-        <button
+        <Button
           className="icon-button"
-          aria-label="文件树视图"
-          title="Tree view"
+          aria-label={t("文件树视图")}
+          title={t("Tree view")}
           aria-pressed={mode === "tree"}
           onClick={() => chooseView("tree")}
         >
           <TreeStructure size={16} />
-        </button>
-        <button
+        </Button>
+        <Button
           className="icon-button"
-          aria-label="文件列表视图"
-          title="List view"
+          aria-label={t("文件列表视图")}
+          title={t("List view")}
           aria-pressed={mode === "list"}
           onClick={() => chooseView("list")}
         >
           <List size={16} />
-        </button>
+        </Button>
       </div>
       <div className="file-search">
         <MagnifyingGlass size={15} />
-        <input
+        <Input
           id={searchId}
-          aria-label="搜索变化文件"
-          placeholder="Filter files…"
+          aria-label={t("搜索变化文件")}
+          placeholder={t("Filter files…")}
           value={search}
           onChange={(event) => onSearch(event.target.value)}
         />
-        {!readOnly && <kbd>⌘ P</kbd>}
+        {!readOnly && <kbd>{t("⌘ P")}</kbd>}
       </div>
       {!readOnly && (
-        <div className="file-filters" role="group" aria-label="比较范围">
+        <div className="file-filters" role="group" aria-label={t("比较范围")}>
           {(
             [
-              ["all", "All"],
+              ["all", t("All")],
               ["unstaged", "Unstaged"],
               ["staged", "Staged"],
             ] as const
           ).map(([value, label]) => (
-            <button
+            <Button
               key={value}
               aria-pressed={scope === value}
               onClick={() => onScope(value)}
             >
               {label}
-            </button>
+            </Button>
           ))}
         </div>
       )}
       {!readOnly && selectedFiles.length > 0 && (
         <div className="file-selection-actions">
-          <span>{selectedFiles.length} selected</span>
+          <span>
+            {selectedFiles.length} {t(" selected")}
+          </span>
           {(["unstaged", "staged"] as const).map((side) => {
             const batch = selectedFiles.filter((file) => file.side === side);
             return (
               !!batch.length && (
-                <button
+                <Button
                   key={side}
                   disabled={disabled}
                   onClick={() => {
                     onStage(batch, side);
                   }}
-                  aria-label={`${side === "staged" ? "Unstage" : "Stage"} selected files`}
+                  aria-label={t("{v0} selected files", {
+                    v0: side === "staged" ? "Unstage" : "Stage",
+                  })}
                 >
                   {side === "staged" ? <Minus size={13} /> : <Plus size={13} />}{" "}
                   {side === "staged" ? "Unstage" : "Stage"} {batch.length}
-                </button>
+                </Button>
               )
             );
           })}
-          <button onClick={() => setChecked(new Set())}>清除</button>
+          <Button onClick={() => setChecked(new Set())}>{t("清除")}</Button>
         </div>
       )}
       <div
         className="file-tree"
         ref={parent}
         role="tree"
-        aria-label="变化文件树"
+        aria-label={t("变化文件树")}
         onKeyDown={(event) => {
           if (
             !(event.target instanceof HTMLElement) ||
@@ -276,10 +282,13 @@ export function FileTree({
                 {row.kind === "file" ? (
                   <>
                     {!readOnly && (
-                      <input
+                      <Input
                         type="checkbox"
                         className="file-check"
-                        aria-label={`选择 ${row.file.path} (${row.side})`}
+                        aria-label={t("选择 {v0} ({v1})", {
+                          v0: row.file.path,
+                          v1: row.side,
+                        })}
                         checked={checked.has(row.key)}
                         onChange={(event) =>
                           setChecked((previous) => {
@@ -291,14 +300,14 @@ export function FileTree({
                         }
                       />
                     )}
-                    <button
+                    <Button
                       className="tree-file"
                       tabIndex={-1}
                       onClick={() => onSelect(row.file)}
                       title={
                         readOnly
                           ? row.file.path
-                          : `${row.file.path}\n${row.side === "staged" ? "HEAD → Index" : "Index → Worktree"}`
+                          : `${row.file.path}\n${row.side === "staged" ? t("HEAD → Index") : t("Index → Worktree")}`
                       }
                     >
                       {row.file.path.endsWith(".md") ? (
@@ -317,14 +326,16 @@ export function FileTree({
                       >
                         {row.file.status === "?" ? "U" : row.file.status}
                       </span>
-                    </button>
+                    </Button>
                     {!readOnly && (
-                      <button
+                      <Button
                         className="row-stage"
                         disabled={disabled || row.file.conflicted}
                         aria-label={`${row.side === "staged" ? "Unstage" : "Stage"} ${row.file.path}`}
                         title={
-                          row.side === "staged" ? "Unstage file" : "Stage file"
+                          row.side === "staged"
+                            ? t("Unstage file")
+                            : t("Stage file")
                         }
                         onClick={() => onStage([row.file], row.side)}
                       >
@@ -333,17 +344,22 @@ export function FileTree({
                         ) : (
                           <Plus size={14} />
                         )}
-                      </button>
+                      </Button>
                     )}
                   </>
                 ) : (
                   <>
-                    <button
+                    <Button
                       className={
                         row.kind === "group" ? "tree-group" : "tree-folder"
                       }
                       tabIndex={-1}
-                      aria-label={`${readOnly && row.kind === "group" ? "Files" : row.label} 文件夹`}
+                      aria-label={t("{v0} 文件夹", {
+                        v0:
+                          readOnly && row.kind === "group"
+                            ? t("Files")
+                            : row.label,
+                      })}
                       onClick={() => toggle(row.key)}
                     >
                       {row.expanded ? (
@@ -358,16 +374,21 @@ export function FileTree({
                           <Folder size={15} />
                         ))}
                       <span>
-                        {readOnly && row.kind === "group" ? "Files" : row.label}
+                        {readOnly && row.kind === "group"
+                          ? t("Files")
+                          : row.label}
                       </span>
                       <small>{row.files.length}</small>
-                    </button>
+                    </Button>
                     {!readOnly && (
-                      <button
+                      <Button
                         className="row-stage"
                         disabled={disabled || !row.files.length}
-                        aria-label={`${row.side === "staged" ? "Unstage" : "Stage"} ${row.kind === "group" ? (search ? "filtered files" : "all") : row.label}`}
-                        title={`${row.side === "staged" ? "Unstage" : "Stage"} ${row.files.length} files`}
+                        aria-label={`${row.side === "staged" ? "Unstage" : "Stage"} ${row.kind === "group" ? (search ? t("filtered files") : t("all")) : row.label}`}
+                        title={t("{v0} {v1} files", {
+                          v0: row.side === "staged" ? "Unstage" : "Stage",
+                          v1: row.files.length,
+                        })}
                         onClick={() => onStage(row.files, row.side)}
                       >
                         {row.side === "staged" ? (
@@ -376,8 +397,8 @@ export function FileTree({
                           <Plus size={14} />
                         )}{" "}
                         {row.kind === "group" &&
-                          (row.side === "staged" ? "Unstage" : "Stage all")}
-                      </button>
+                          (row.side === "staged" ? "Unstage" : t("Stage all"))}
+                      </Button>
                     )}
                   </>
                 )}
@@ -388,10 +409,10 @@ export function FileTree({
         {!rows.some((row) => row.kind === "file") && (
           <p className="empty-list">
             {search
-              ? "没有匹配的文件"
+              ? t("没有匹配的文件")
               : files.length
-                ? "展开文件夹查看变化"
-                : "Worktree clean"}
+                ? t("展开文件夹查看变化")
+                : t("Worktree clean")}
           </p>
         )}
       </div>

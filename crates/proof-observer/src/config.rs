@@ -24,8 +24,8 @@ impl HookSpec {
         self.validate_identity()?;
         if proof_core::observer_adapter_profile(self.agent, &self.agent_version).is_none() {
             return Err(config_error(
-                "OBSERVER_VERSION_UNSUPPORTED",
-                "当前版本没有配置适配方案，请先完成版本验证。",
+                "OBSERVER_VERSION_FORMAT",
+                "Agent 版本格式无法识别，请重新检测程序。",
             ));
         }
         Ok(())

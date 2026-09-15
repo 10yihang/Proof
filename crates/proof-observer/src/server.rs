@@ -14,7 +14,7 @@ use std::{
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, TrySendError},
-        Arc,
+        Arc, Mutex,
     },
     thread,
     time::{Duration, Instant},
@@ -48,6 +48,12 @@ pub struct Metrics {
     expired: AtomicU64,
     queue_full: AtomicU64,
     storage_rejected: AtomicU64,
+    queue: Mutex<QueueGauges>,
+}
+#[derive(Default)]
+struct QueueGauges {
+    queued: usize,
+    processing: usize,
 }
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -62,9 +68,12 @@ pub struct MetricsSnapshot {
     pub storage_rejected: u64,
     pub max_connections: usize,
     pub queue_capacity: usize,
+    pub queued: usize,
+    pub processing: usize,
 }
 impl Metrics {
     pub fn snapshot(&self) -> MetricsSnapshot {
+        let queue = self.queue.lock().unwrap_or_else(|e| e.into_inner());
         MetricsSnapshot {
             schema_version: SCHEMA_VERSION,
             received: self.received.load(Ordering::Relaxed),
@@ -76,6 +85,8 @@ impl Metrics {
             storage_rejected: self.storage_rejected.load(Ordering::Relaxed),
             max_connections: MAX_CONNECTIONS,
             queue_capacity: QUEUE_SIZE,
+            queued: queue.queued,
+            processing: queue.processing,
         }
     }
     pub fn note_storage_rejection(&self) {
@@ -156,6 +167,11 @@ impl Server {
             .name("proof-observe-store".into())
             .spawn(move || {
                 while let Ok(envelope) = receive.recv() {
+                    {
+                        let mut queue = metrics.queue.lock().unwrap_or_else(|e| e.into_inner());
+                        queue.queued = queue.queued.saturating_sub(1);
+                        queue.processing = 1;
+                    }
                     if !worker_running.load(Ordering::Acquire) {
                         break;
                     }
@@ -165,7 +181,13 @@ impl Server {
                     } else {
                         metrics.rejected.fetch_add(1, Ordering::Relaxed);
                     }
+                    metrics
+                        .queue
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .processing = 0;
                 }
+                *metrics.queue.lock().unwrap_or_else(|e| e.into_inner()) = QueueGauges::default();
             })
             .map_err(|_| TransportError::Unavailable)?;
         let mut connections: Vec<Connection> = Vec::new();
@@ -211,8 +233,13 @@ impl Server {
                     }
                     Ok(Some(envelope)) => {
                         self.metrics.received.fetch_add(1, Ordering::Relaxed);
+                        // Keep enqueue and its gauge update ordered before the consumer update.
+                        let mut queue =
+                            self.metrics.queue.lock().unwrap_or_else(|e| e.into_inner());
                         match send.try_send(envelope) {
-                            Ok(()) => {}
+                            Ok(()) => {
+                                queue.queued += 1;
+                            }
                             Err(TrySendError::Full(_)) => {
                                 self.metrics.queue_full.fetch_add(1, Ordering::Relaxed);
                             }

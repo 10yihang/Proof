@@ -1,5 +1,20 @@
+import { CommandList } from "./components/CommandList";
+import proofIcon from "../src-tauri/icons/128x128@2x.png";
+import { APP_VERSION } from "./version";
+import { useHotkeys } from "react-hotkeys-hook";
+import { Tabs } from "@base-ui/react/tabs";
+import {
+  createWindowUI,
+  useWindowField,
+  reorderComparisonTabs,
+} from "./window-ui";
+import { toast } from "./components/ui/toast";
+import { Button, Select, Input, Textarea } from "./components/ui/controls";
+import { uiMessage, t, getLanguage } from "./i18n";
+import { DiffLoading } from "./components/DiffLoading";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   ArrowClockwise,
   ArrowRight,
@@ -26,17 +41,20 @@ import {
   asError,
   isDesktop,
   useRequest,
+  useReadRequest,
   useClientStorage,
   watchWorkspace,
 } from "./api";
 import { demoChanges, demoDiff, demoDiffContext } from "./demo";
 import { hiddenWhitespace } from "./diff-reading";
-import { defaultPreferences, fileKey } from "./types";
+import { defaultPreferences, fileKey, readTarget } from "./types";
 import type {
   ChangedFile,
   Changes,
   CommitPreview,
   FileDiff,
+  DiffRead,
+  DiffSummary,
   DiffContext,
   OperationResult,
   Preferences,
@@ -48,7 +66,10 @@ import type {
 } from "./types";
 import { HistoryDiff, type HistoryComparison } from "./components/HistoryDiff";
 import { DiffView } from "./components/DiffView";
-import { FileTree } from "./components/FileTree";
+import { useAi, type DiffJump } from "./ai";
+import { AiReviewPanel } from "./components/AiReviewPanel";
+import { DiffFilePane } from "./components/DiffFilePane";
+import { DeferredDiff } from "./components/DeferredDiff";
 import { ContextInspector } from "./components/ContextInspector";
 import { Modal } from "./components/Modal";
 import { RepositoryView } from "./components/RepositoryView";
@@ -58,35 +79,40 @@ import { RecoveryDialog } from "./components/RecoveryDialog";
 import { FileHistory } from "./components/FileHistory";
 import { ResizableWorkbench } from "./components/ResizableWorkbench";
 import { useRepositoryLayout } from "./use-repository-layout";
-import { DiffCache } from "./diff-cache";
+import { DiffCache, matchesGitBase } from "./diff-cache";
+import { WorkspaceRefresh, type RefreshResult } from "./workspace-refresh";
 import { BranchPicker } from "./components/BranchPicker";
 import { CommitComposer } from "./components/CommitComposer";
 import { CommitWorkspace } from "./components/CommitWorkspace";
 import { shouldDismissDrawer } from "./components/panel-focus";
+import { isMacDesktop, useWindowMenu } from "./use-window-menu";
+import { WorkspaceTabs, type WorkspaceView } from "./components/WorkspaceTabs";
 
 type EditorTarget = Pick<FileDiff, "id" | "workspaceId" | "path" | "side">;
 
-type Dialog =
-  | "open"
-  | "settings"
-  | "trust"
-  | "commit"
-  | "commands"
-  | "mark-file"
-  | "discard"
-  | "recovery"
-  | "file-history"
-  | null;
 export default function App({
   initialWorkspaceId,
+  initialFile,
+  initialComparison,
+  diffWindow = false,
   initialDataNotice,
   onWorkspaceChange,
 }: {
   initialWorkspaceId?: string;
+  initialFile?: { path: string; side: "staged" | "unstaged" };
+  initialComparison?: HistoryComparison;
+  diffWindow?: boolean;
   initialDataNotice?: string;
   onWorkspaceChange?: (id?: string) => void;
 } = {}) {
+  const [windowUI] = useState(() =>
+    createWindowUI(initialDataNotice ? "settings" : null),
+  );
   const request = useRequest();
+  const fileReader = useReadRequest();
+  const contextReader = useReadRequest();
+  const readIntent = useRef<string | null>(null);
+  const cancelledRead = useRef<string | null>(null);
   const clientStorage = useClientStorage();
   const [preferences, setPreferences] = useState(defaultPreferences);
   const preferenceState = useRef(defaultPreferences);
@@ -105,8 +131,18 @@ export default function App({
   const busyRef = useRef(false);
   const refreshGeneration = useRef(0);
   const [diff, setDiff] = useState<FileDiff | null>(null);
+  const [summary, setSummary] = useState<DiffSummary | null>(null);
+  function showReading(read: DiffRead | null) {
+    setDiff(read?.state === "ready" ? read.diff : null);
+    setSummary(read?.state === "deferred" ? read.summary : null);
+  }
   const displayedDiff = useRef<FileDiff | null>(null);
   displayedDiff.current = diff;
+  const [inspectorTab, setInspectorTab] = useWindowField(
+    windowUI,
+    "inspectorTab",
+  );
+  const [aiJump, setAiJump] = useState<DiffJump | null>(null);
   const [reviewTarget, setReviewTarget] = useState<FileDiff | null>(null);
   const [commandTarget, setCommandTarget] = useState<EditorTarget | null>(null);
   const [loaded, setLoaded] = useState<Record<string, FileDiff>>({});
@@ -114,19 +150,10 @@ export default function App({
   const [error, setError] = useState<ProofError | null>(null);
   const [busy, setBusyState] = useState(false),
     [loadingDiff, setLoadingDiff] = useState(false);
-  const [dialog, setDialog] = useState<Dialog>(
-      initialDataNotice ? "settings" : null,
-    ),
-    [tab, setTab] = useState<
-      "changes" | "commit" | "repository" | `diff:${string}`
-    >("changes");
-  const [diffTabs, setDiffTabs] = useState<
-    {
-      id: `diff:${string}`;
-      workspaceId: string;
-      selection: HistoryComparison;
-    }[]
-  >([]);
+  const [dialog, setDialog] = useWindowField(windowUI, "dialog");
+  const [tab, setTab] = useWindowField(windowUI, "tab");
+  const [diffTabs, setDiffTabs] = useWindowField(windowUI, "diffTabs");
+  const historyTab = useRef<HTMLButtonElement>(null);
   function openHistoryDiff(selection: HistoryComparison) {
     if (!changes) return;
     const id =
@@ -154,21 +181,68 @@ export default function App({
         ".diff-tab-item.active .diff-tab-button",
       );
       button?.focus();
-      button?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      button
+        ?.closest(".diff-tab-item")
+        ?.scrollIntoView({ block: "nearest", inline: "nearest" });
     });
   }
   function closeDiffTab(id: string) {
+    if (diffWindow) {
+      void getCurrentWindow()
+        .close()
+        .catch((error) => setError(asError(error)));
+      return;
+    }
+    const origin = document.activeElement;
     setDiffTabs((previous) => previous.filter((t) => t.id !== id));
     if (tab === id) {
       setTab("repository");
       setRepositorySection("history");
+      requestAnimationFrame(() => {
+        // Do not overwrite a newer keyboard or pointer focus after closing.
+        const active = document.activeElement;
+        if (
+          !active ||
+          active === document.body ||
+          active === document.documentElement ||
+          active === origin
+        )
+          historyTab.current?.focus();
+      });
     }
   }
+  useWindowMenu(
+    () => {
+      if (tab.startsWith("diff:")) closeDiffTab(tab);
+      else
+        void getCurrentWindow()
+          .close()
+          .catch((error) => setError(asError(error)));
+    },
+    (error) => setError(asError(error)),
+  );
+  useEffect(() => {
+    if (!tab.startsWith("diff:")) return;
+    const item = document.querySelector<HTMLElement>(".diff-tab-item.active");
+    const strip = item?.parentElement;
+    if (!item || !strip) return;
+    const reveal = () =>
+      item.scrollIntoView({ block: "nearest", inline: "nearest" });
+    const observer = new ResizeObserver(reveal);
+    observer.observe(strip);
+    reveal();
+    return () => observer.disconnect();
+  }, [tab]);
   useEffect(() => {
     setDiffTabs((previous) =>
       previous.filter((t) => t.workspaceId === changes?.workspace.id),
     );
-    if (tab.startsWith("diff:")) {
+    if (
+      tab.startsWith("diff:") &&
+      !diffTabs.some(
+        (item) => item.id === tab && item.workspaceId === changes?.workspace.id,
+      )
+    ) {
       setTab("repository");
       setRepositorySection("history");
     }
@@ -176,22 +250,34 @@ export default function App({
   const [repositoryVisited, setRepositoryVisited] = useState(false);
   const [commitVisited, setCommitVisited] = useState(false);
   const [settingsSection, setSettingsSection] = useState<
-    "appearance" | "review" | "observer" | "data" | "editor"
+    | "appearance"
+    | "review"
+    | "observer"
+    | "data"
+    | "editor"
+    | "diagnostics"
+    | "agents"
   >(initialDataNotice ? "data" : "appearance");
-  const [repositorySection, setRepositorySection] =
-    useState<RepositorySection>("history");
+  const [repositorySection, setRepositorySection] = useWindowField(
+    windowUI,
+    "repositorySection",
+  );
   useEffect(() => {
     if (tab === "repository") setRepositoryVisited(true);
     if (tab === "commit") setCommitVisited(true);
   }, [tab]);
   const [search, setSearch] = useState(""),
     [scope, setScope] = useState<"all" | "unstaged" | "staged">("all");
-  const [focused, setFocused] = useState(false),
+  const [focused, setFocused] = useWindowField(windowUI, "focused"),
     [demo, setDemo] = useState(false);
+  const ai = useAi(changes, diff, demo);
   const [narrow, setNarrow] = useState(window.innerWidth <= 1100),
-    [contextDrawer, setContextDrawer] = useState(false);
+    [contextDrawer, setContextDrawer] = useWindowField(
+      windowUI,
+      "contextDrawer",
+    );
   const [compact, setCompact] = useState(window.innerWidth <= 780),
-    [filesDrawer, setFilesDrawer] = useState(false);
+    [filesDrawer, setFilesDrawer] = useWindowField(windowUI, "filesDrawer");
   const repositoryLayout = useRepositoryLayout(changes?.workspace, demo);
   const [preview, setPreview] = useState<CommitPreview | null>(null),
     [draft, setDraft] = useState("");
@@ -252,8 +338,26 @@ export default function App({
             } catch {
               setDraft("");
             }
-            if (next.files.length)
-              await loadFile(next.files[0], next.workspace);
+            if (initialComparison) {
+              const id =
+                `diff:${initialComparison.base ?? "commit"}:${initialComparison.target}` as const;
+              setDiffTabs([
+                {
+                  id,
+                  workspaceId: next.workspace.id,
+                  selection: initialComparison,
+                },
+              ]);
+              setTab(id);
+            } else if (next.files.length) {
+              const file =
+                next.files.find(
+                  (file) =>
+                    file.path === initialFile?.path &&
+                    file.side === initialFile.side,
+                ) ?? next.files[0];
+              await loadFile(file, next.workspace);
+            }
           })
           .catch((e) => {
             if (restoreEpoch === workspaceEpoch.current) setError(asError(e));
@@ -265,7 +369,7 @@ export default function App({
       setDemo(true);
       setChanges(demoChanges);
       setSelected(fileKey(demoChanges.files[0]));
-      setDiff(demoDiff(demoChanges.files[0]));
+      showReading({ state: "ready", diff: demoDiff(demoChanges.files[0]) });
       setLoaded({
         [fileKey(demoChanges.files[0])]: demoDiff(demoChanges.files[0]),
       });
@@ -296,58 +400,67 @@ export default function App({
   }, [changes?.workspace.id]);
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
+    let themeFrame = 0,
+      settledFrame = 0;
     const apply = () => {
+      cancelAnimationFrame(themeFrame);
+      cancelAnimationFrame(settledFrame);
+      document.documentElement.dataset.themeChanging = "true";
       document.documentElement.dataset.theme =
         preferences.theme === "system"
           ? media.matches
             ? "dark"
             : "light"
           : preferences.theme;
+      themeFrame = requestAnimationFrame(() => {
+        settledFrame = requestAnimationFrame(
+          () => delete document.documentElement.dataset.themeChanging,
+        );
+      });
     };
     apply();
     media.addEventListener("change", apply);
-    return () => media.removeEventListener("change", apply);
+    return () => {
+      media.removeEventListener("change", apply);
+      cancelAnimationFrame(themeFrame);
+      cancelAnimationFrame(settledFrame);
+      delete document.documentElement.dataset.themeChanging;
+    };
   }, [preferences.theme]);
   useEffect(() => {
     if (notification) {
+      const toastId = toast.add({
+        title: uiMessage(notification),
+        type: "info",
+        timeout: 5000,
+      });
       const timer = window.setTimeout(() => setNotification(""), 5000);
-      return () => window.clearTimeout(timer);
+      return () => {
+        window.clearTimeout(timer);
+        toast.close(toastId);
+      };
     }
   }, [notification]);
-  const acceptChangesRef = useRef<(next: Changes) => Promise<void>>(
-    async () => {},
+  const acceptChangesRef = useRef<(next: Changes) => Promise<boolean>>(
+    async () => true,
   );
   const [syncing, setSyncing] = useState(false);
   const pollRef = useRef<() => void>(() => {});
   useEffect(() => {
-    if (!isDesktop || demo || !changes) return;
-    let timer = 0;
-    const stop = watchWorkspace(
-      changes.workspace.id,
-      () => {
-        window.clearTimeout(timer);
-        timer = window.setTimeout(() => pollRef.current(), 120);
-      },
-      (error) => setError(asError(error)),
-    );
-    return () => {
-      window.clearTimeout(timer);
-      stop();
-    };
-  }, [changes?.workspace.id, demo]);
-  useEffect(() => {
+    if (!isDesktop || demo || !changes || (diffWindow && initialComparison))
+      return;
     let cancelled = false;
-    const poll = async () => {
+    const workspaceId = changes.workspace.id;
+    const poll = async (): Promise<RefreshResult> => {
       const active = current.current;
       if (
-        !isDesktop ||
-        demo ||
         !active ||
+        active.workspace.id !== workspaceId ||
         document.visibilityState === "hidden" ||
         polling.current ||
         busyRef.current
       )
-        return;
+        return "busy";
       polling.current = true;
       const epoch = workspaceEpoch.current,
         generation = refreshGeneration.current;
@@ -359,95 +472,170 @@ export default function App({
           (file) => fileKey(file) === selectedRef.current,
         );
         if (
-          !cancelled &&
-          epoch === workspaceEpoch.current &&
-          generation === refreshGeneration.current &&
-          !busyRef.current &&
-          current.current?.workspace.id === next.workspace.id &&
-          (current.current.token !== next.token ||
-            (selectedFile && !cache.current.get(next, selectedFile)))
+          cancelled ||
+          epoch !== workspaceEpoch.current ||
+          current.current?.workspace.id !== next.workspace.id
+        )
+          return "done";
+        if (generation !== refreshGeneration.current || busyRef.current)
+          return "busy";
+        if (
+          current.current.token !== next.token ||
+          (selectedFile &&
+            !cache.current.getRead(next, selectedFile) &&
+            cancelledRead.current !==
+              `${fileKey(selectedFile)}:${cache.current.version(next, selectedFile)}`)
         ) {
-          await acceptChangesRef.current(next);
+          return (await acceptChangesRef.current(next)) ? "done" : "failed";
         }
       } catch (e) {
         if (!cancelled && epoch === workspaceEpoch.current)
           setError(asError(e));
+        return "failed";
       } finally {
         polling.current = false;
       }
+      return "done";
     };
-    pollRef.current = () => void poll();
-    const timer = window.setInterval(() => void poll(), 1200);
-    const focus = () => void poll();
+    const refreshing = new WorkspaceRefresh(poll, (error) => {
+      if (!cancelled) setError(asError(error));
+    });
+    refreshing.setVisible(document.visibilityState !== "hidden");
+    const requestNow = () => refreshing.request(true);
+    pollRef.current = requestNow;
+    const stop = watchWorkspace(
+      workspaceId,
+      () => refreshing.request(),
+      (error) => setError(asError(error)),
+      (ready) => refreshing.setWatching(ready),
+    );
+    const focus = () => {
+      refreshing.setVisible(document.visibilityState !== "hidden");
+      if (document.visibilityState !== "hidden") refreshing.request(true);
+    };
     window.addEventListener("focus", focus);
     document.addEventListener("visibilitychange", focus);
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      refreshing.close();
+      stop();
+      if (pollRef.current === requestNow) pollRef.current = () => {};
       window.removeEventListener("focus", focus);
       document.removeEventListener("visibilitychange", focus);
     };
-  }, [demo]);
+  }, [changes?.workspace.id, demo]);
 
+  // False means the current selection still needs a read. Cancellation and
+  // superseded requests are complete, so background refresh cannot revive them.
   async function loadFile(
     file: ChangedFile,
     workspace = current.current?.workspace,
     force = false,
-  ) {
+    loadLarge = false,
+  ): Promise<boolean> {
     const active = current.current;
-    if (!workspace || !active || active.workspace.id !== workspace.id) return;
+    if (!workspace || !active || active.workspace.id !== workspace.id)
+      return true;
     const epoch = workspaceEpoch.current,
       seq = ++sequence.current;
+    cancelledRead.current = null;
     selectedRef.current = fileKey(file);
     setSelected(fileKey(file));
-    const cached = !force && cache.current.get(active, file);
-    if (cached) {
-      setDiff(cached);
-      setLoadingDiff(false);
-      return;
+    const saved = !force && cache.current.getRead(active, file);
+    const cached =
+      saved && (!loadLarge || saved.state === "ready" || !saved.summary.canLoad)
+        ? saved
+        : undefined;
+    const intent = `${fileKey(file)}:${cache.current.version(active, file)}:${loadLarge}`;
+    if (cached || readIntent.current !== intent) {
+      fileReader.cancel();
+      cache.current.cancelPending();
     }
-    // Keep the same file readable during a refresh. Never label the previous
-    // file as the new selection while its contents are still loading.
-    setDiff((d) => (d && fileKey(d) === fileKey(file) ? d : null));
+    readIntent.current = intent;
+    if (cached) {
+      showReading(cached);
+      setLoadingDiff(false);
+      return true;
+    }
+    // Keep the same file readable within this Git base during a refresh.
+    // A different file or Branch must wait for its own capture.
+    setDiff((d) =>
+      d && fileKey(d) === fileKey(file) && matchesGitBase(active, d) ? d : null,
+    );
+    setSummary((s) =>
+      s && fileKey(s) === fileKey(file) && matchesGitBase(active, s) ? s : null,
+    );
     setLoadingDiff(true);
     try {
-      const next = await cache.current.read(active, file, () =>
-        workspace.id === "demo"
-          ? Promise.resolve(demoDiff(file))
-          : request<FileDiff>("file_diff", {
-              workspaceId: workspace.id,
-              path: file.path,
-              side: file.side,
-            }),
+      const next = await cache.current.read(
+        active,
+        file,
+        () =>
+          workspace.id === "demo"
+            ? Promise.resolve<DiffRead>({
+                state: "ready",
+                diff: demoDiff(file),
+              })
+            : fileReader.read<DiffRead>("read_file_diff", {
+                workspaceId: workspace.id,
+                path: file.path,
+                side: file.side,
+                loadLarge,
+              }),
+        loadLarge,
       );
+      const capture = readTarget(next);
       const now = current.current;
       if (
         epoch !== workspaceEpoch.current ||
         !now ||
         now.workspace.id !== workspace.id ||
-        next.workspaceId !== workspace.id ||
+        capture.workspaceId !== workspace.id ||
         cache.current.version(active, file) !== cache.current.version(now, file)
-      )
-        return;
-      cache.current.put(now, file, next);
+      ) {
+        if (seq !== sequence.current || epoch !== workspaceEpoch.current)
+          return true;
+        pollRef.current();
+        return false;
+      }
+      if (!matchesGitBase(now, capture)) {
+        // An external Commit or Branch switch can happen before the next
+        // repository refresh. Never attach that capture to the old view's base.
+        cache.current.clear();
+        setLoaded({});
+        if (seq === sequence.current) showReading(null);
+        setNotification(t("仓库已更新，正在刷新…"));
+        pollRef.current();
+        return false;
+      }
+      cache.current.putRead(now, file, next);
       setLoaded(cache.current.values());
-      if (seq === sequence.current) setDiff(next);
+      if (seq === sequence.current) showReading(next);
+      return true;
     } catch (e) {
       if (seq === sequence.current && epoch === workspaceEpoch.current) {
         const failure = asError(e);
         if (
           failure.code !== "STALE_CONTENT" &&
-          failure.code !== "CHANGE_MISSING"
+          failure.code !== "CHANGE_MISSING" &&
+          failure.code !== "READ_CANCELLED"
         )
           setError(failure);
-        setDiff(null);
+        showReading(null);
+        if (failure.code !== "READ_CANCELLED") {
+          cache.current.remove(file);
+          setLoaded(cache.current.values());
+          pollRef.current();
+          return false;
+        }
       }
+      return true;
     } finally {
       if (seq === sequence.current && epoch === workspaceEpoch.current)
         setLoadingDiff(false);
     }
   }
-  async function acceptChanges(next: Changes, force = false) {
+  async function acceptChanges(next: Changes, force = false): Promise<boolean> {
     current.current = next;
     setChanges(next);
     if (force) cache.current.clear();
@@ -457,9 +645,18 @@ export default function App({
       next.files.find((file) => file.path === diff?.path) ??
       next.files[0];
     if (file) {
+      if (
+        !force &&
+        cancelledRead.current ===
+          `${fileKey(file)}:${cache.current.version(next, file)}`
+      )
+        return true;
       setSyncing(true);
       try {
-        await loadFile(file, next.workspace, force);
+        const loadLarge =
+          readIntent.current ===
+          `${fileKey(file)}:${cache.current.version(next, file)}:true`;
+        return await loadFile(file, next.workspace, force, loadLarge);
       } finally {
         setSyncing(false);
       }
@@ -467,8 +664,9 @@ export default function App({
       ++sequence.current;
       setSelected(null);
       selectedRef.current = null;
-      setDiff(null);
+      showReading(null);
       setLoadingDiff(false);
+      return true;
     }
   }
   acceptChangesRef.current = acceptChanges;
@@ -476,6 +674,10 @@ export default function App({
   async function openWorkspace(repositoryPath: string) {
     if (!repositoryPath.trim()) return;
     const epoch = ++workspaceEpoch.current;
+    fileReader.cancel();
+    cache.current.cancelPending();
+    readIntent.current = null;
+    cancelledRead.current = null;
     ++sequence.current;
     setBusy(true);
     setError(null);
@@ -494,7 +696,7 @@ export default function App({
       setDemo(false);
       setChanges(next);
       cache.current.clear();
-      setDiff(null);
+      showReading(null);
       setLoaded({});
       setSelected(null);
       setAmendTarget(null);
@@ -527,7 +729,7 @@ export default function App({
       const result = await open({
         directory: true,
         multiple: false,
-        title: "打开 Git 仓库",
+        title: t("打开 Git 仓库"),
       });
       if (typeof result === "string") await openWorkspace(result);
     } catch (e) {
@@ -604,7 +806,7 @@ export default function App({
     ) {
       setError({
         code: "HIDDEN_REVIEW_CONTENT",
-        message: "此范围隐藏了空白变化，请显示全部真实变化后再标记已审查。",
+        message: t("此范围隐藏了空白变化，请显示全部真实变化后再标记已审查。"),
         detail:
           "Review remains bound to the complete original Hunk, including whitespace.",
       });
@@ -615,6 +817,8 @@ export default function App({
       setDialog("mark-file");
       return;
     }
+    const active = current.current;
+    if (!active || !matchesGitBase(active, target)) return;
     const epoch = workspaceEpoch.current;
     setBusy(true);
     try {
@@ -624,11 +828,31 @@ export default function App({
           hunkId,
           reviewed,
         });
+      const now = current.current;
       if (
         epoch !== workspaceEpoch.current ||
-        current.current?.workspace.id !== target.workspaceId
+        !now ||
+        now.workspace.id !== target.workspaceId
       )
         return;
+      if (
+        cache.current.version(active, target) !==
+          cache.current.version(now, target) ||
+        !matchesGitBase(now, target) ||
+        !now.files.some((file) => fileKey(file) === fileKey(target))
+      ) {
+        // A manual refresh can complete while the Review reply is in flight.
+        // Never bind the old capture to the newly observed file version.
+        cache.current.remove(target, target.id);
+        setLoaded(cache.current.values());
+        setDialog(null);
+        const file = now.files.find(
+          (file) => fileKey(file) === selectedRef.current,
+        );
+        if (file && displayedDiff.current?.id === target.id)
+          await loadFile(file, now.workspace, true);
+        return;
+      }
       const next: FileDiff = {
         ...target,
         hunks: target.hunks.map((h) =>
@@ -638,7 +862,7 @@ export default function App({
         ),
       };
       setDiff((d) => (d?.id === target.id ? next : d));
-      if (current.current) cache.current.put(current.current, target, next);
+      cache.current.put(active, target, next);
       setLoaded(cache.current.values());
       setDialog(null);
     } catch (e) {
@@ -683,7 +907,7 @@ export default function App({
       ) {
         setError({
           ...failure,
-          message: "Diff 已更新，请重新选择要操作的内容。",
+          message: t("Diff 已更新，请重新选择要操作的内容。"),
         });
       }
     }
@@ -925,7 +1149,7 @@ export default function App({
     } catch (error) {
       setError({
         code: "DRAFT_STORAGE",
-        message: "Commit 草稿未保存，请保留当前窗口。",
+        message: t("Commit 草稿未保存，请保留当前窗口。"),
         detail: String(error),
       });
     }
@@ -978,7 +1202,7 @@ export default function App({
       )
         throw {
           code: "AMEND_TARGET_CHANGED",
-          message: "上一条 Commit 已变化，请重新选择 Amend。",
+          message: t("上一条 Commit 已变化，请重新选择 Amend。"),
           detail: "HEAD changed since Amend was selected",
         };
       if (all) {
@@ -1000,7 +1224,7 @@ export default function App({
             throw {
               code: "STAGE_CHANGED",
               message: result.message,
-              detail: result.warning ?? "请检查 Index 后再 Commit。",
+              detail: result.warning ?? t("请检查 Index 后再 Commit。"),
             };
           token = result.token;
         }
@@ -1015,7 +1239,7 @@ export default function App({
       if (next.head !== active.head || next.branch !== active.branch)
         throw {
           code: "COMMIT_TARGET_CHANGED",
-          message: "Branch 或 HEAD 已变化，请检查后再 Commit。",
+          message: t("Branch 或 HEAD 已变化，请检查后再 Commit。"),
           detail: "Commit target changed",
         };
       await commit(next);
@@ -1037,7 +1261,7 @@ export default function App({
     cache.current.clear();
     setDemo(true);
     setChanges(demoChanges);
-    setDiff(demoDiff(demoChanges.files[0]));
+    showReading({ state: "ready", diff: demoDiff(demoChanges.files[0]) });
     setLoaded({
       [fileKey(demoChanges.files[0])]: demoDiff(demoChanges.files[0]),
     });
@@ -1069,15 +1293,32 @@ export default function App({
       if (epoch === workspaceEpoch.current) setBusy(false);
     }
   }
-  useEffect(() => {
-    function keydown(event: KeyboardEvent) {
+  useHotkeys(
+    "*",
+    (event) => {
       if (event.defaultPrevented || event.isComposing || event.keyCode === 229)
         return;
+      if (
+        diffWindow &&
+        (event.metaKey || event.ctrlKey) &&
+        /^[1-4ko]$/i.test(event.key)
+      ) {
+        event.preventDefault();
+        return;
+      }
       const editing =
         event.target instanceof HTMLElement &&
         event.target.closest(
           'input,textarea,select,[contenteditable="true"]',
         ) !== null;
+      // Context and recovery editors own dialogs outside App's dialog state.
+      // Their keyboard input must not navigate the workspace behind the modal.
+      if (
+        dialog !== "commands" &&
+        event.target instanceof HTMLElement &&
+        event.target.closest("[role='dialog'][data-open]")
+      )
+        return;
       if (event.key === "Escape" && !dialog) {
         if (contextDrawer) {
           setContextDrawer(false);
@@ -1087,6 +1328,31 @@ export default function App({
           document.getElementById("files-toggle")?.focus();
         } else setFocused(false);
       }
+      if (
+        !dialog &&
+        !isMacDesktop &&
+        (event.metaKey || event.ctrlKey) &&
+        event.key.toLowerCase() === "w" &&
+        (tab.startsWith("diff:") || diffWindow)
+      ) {
+        event.preventDefault();
+        closeDiffTab(tab);
+        return;
+      }
+      if (
+        !dialog &&
+        changes &&
+        (event.metaKey || event.ctrlKey) &&
+        /^[1-4]$/.test(event.key)
+      ) {
+        event.preventDefault();
+        selectWorkspaceView(
+          (["changes", "commit", "history", "branches"] as const)[
+            Number(event.key) - 1
+          ],
+        );
+        return;
+      }
       if (editing || busy || (dialog !== null && dialog !== "commands")) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
@@ -1094,6 +1360,7 @@ export default function App({
         else openCommands();
       }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "p") {
+        if (tab.startsWith("diff:")) return;
         event.preventDefault();
         setFocused(false);
         if (tab === "repository") {
@@ -1102,7 +1369,13 @@ export default function App({
               ".workspace-page:not([hidden]) .graph-search input",
             )
             ?.focus();
-        } else if (tab === "commit")
+        } else if (tab.startsWith("diff:"))
+          document
+            .querySelector<HTMLInputElement>(
+              ".diff-tab-page:not([hidden]) .file-search input",
+            )
+            ?.focus();
+        else if (tab === "commit")
           document.getElementById("commit-file-search")?.focus();
         else showFileSearch();
       }
@@ -1115,21 +1388,25 @@ export default function App({
         event.preventDefault();
         setFocused((f) => !f);
       }
-    }
-    window.addEventListener("keydown", keydown);
-    return () => window.removeEventListener("keydown", keydown);
-  }, [
-    dialog,
-    busy,
-    tab,
-    compact,
-    filesDrawer,
-    contextDrawer,
-    repositoryLayout.ready,
-    repositoryLayout.value.sidebarOpen,
-    repositoryLayout.scopeKey,
-    changes?.workspace.id,
-  ]);
+    },
+    {
+      ignoreModifiers: true,
+      enableOnFormTags: true,
+      enableOnContentEditable: true,
+    },
+    [
+      dialog,
+      busy,
+      tab,
+      compact,
+      filesDrawer,
+      contextDrawer,
+      repositoryLayout.ready,
+      repositoryLayout.value.sidebarOpen,
+      repositoryLayout.scopeKey,
+      changes?.workspace.id,
+    ],
+  );
 
   const knownDiffs = Object.values(loaded).filter(
     (d) =>
@@ -1157,6 +1434,7 @@ export default function App({
     );
   }
   function showFileSearch() {
+    ai.setView("files");
     setFocused(false);
     setTab("changes");
     if (compact) {
@@ -1184,7 +1462,13 @@ export default function App({
   }
   function openSettings(
     section:
-      "appearance" | "review" | "observer" | "data" | "editor" = "appearance",
+      | "appearance"
+      | "review"
+      | "observer"
+      | "data"
+      | "editor"
+      | "diagnostics"
+      | "agents" = "appearance",
   ) {
     setSettingsSection(section);
     setDialog("settings");
@@ -1228,7 +1512,10 @@ export default function App({
       else
         setError({
           ...failure,
-          message: `无法打开 ${target.path}。${failure.message}`,
+          message: t("无法打开 {v0}。{v1}", {
+            v0: target.path,
+            v1: failure.message,
+          }),
         });
     } finally {
       setOpeningEditor(false);
@@ -1238,27 +1525,52 @@ export default function App({
     setRepositorySection(section);
     setTab("repository");
   }
+  const workspaceView: WorkspaceView =
+    tab === "repository"
+      ? repositorySection === "branches"
+        ? "branches"
+        : "history"
+      : tab;
+  function selectWorkspaceView(view: WorkspaceView) {
+    if (view === "history" || view === "branches") showRepository(view);
+    else if (view === "commit") showCommit();
+    else setTab(view);
+  }
   return (
-    <div className={`app layout-enabled ${focused ? "is-focused" : ""}`}>
-      <header className="app-header">
+    <Tabs.Root
+      value={workspaceView}
+      onValueChange={(value) => {
+        if (typeof value === "string")
+          selectWorkspaceView(value as WorkspaceView);
+      }}
+      className={`app layout-enabled ${diffWindow ? "diff-window-app" : ""} ${focused ? "is-focused" : ""}`}
+      data-native-macos={isMacDesktop ? "true" : undefined}
+    >
+      <header className="app-header desktop-toolbar" data-tauri-drag-region>
+        {diffWindow && (
+          <div className="diff-window-label" data-tauri-drag-region>
+            {changes?.workspace.name ?? "Proof"}
+            <span>{initialComparison ? "Diff" : t("Local changes")}</span>
+          </div>
+        )}
         <a
           className="brand"
           href="#"
-          aria-label="Proof 首页"
+          aria-label={t("Proof 首页")}
           onClick={(e) => {
             e.preventDefault();
             if (changes) setTab("changes");
           }}
         >
           <ProofMark />
-          <span>Proof</span>
+          <span>{t("Proof")}</span>
         </a>
         <span className="header-divider" />
-        <button className="workspace-picker" onClick={() => setDialog("open")}>
+        <Button className="workspace-picker" onClick={() => setDialog("open")}>
           <FolderOpen size={17} />
-          <strong>{changes?.workspace.name ?? "打开仓库"}</strong>
+          <strong>{changes?.workspace.name ?? t("打开仓库")}</strong>
           <CaretDown size={12} />
-        </button>
+        </Button>
         {changes && (
           <BranchPicker
             key={changes.workspace.id}
@@ -1268,202 +1580,140 @@ export default function App({
             onSwitch={switchBranch}
           />
         )}
+        <div
+          className="toolbar-spacer window-drag-space"
+          data-tauri-drag-region
+        />
+        {demo && <span className="demo-badge">{t("演示数据")}</span>}
         {changes && (
-          <nav
-            className="top-navigation"
-            aria-label="Worktree"
-            style={
-              {
-                "--nav-index":
-                  tab === "changes"
-                    ? 0
-                    : tab === "commit"
-                      ? 1
-                      : repositorySection === "history"
-                        ? 2
-                        : 3,
-              } as React.CSSProperties
-            }
-          >
-            <button
-              className={tab === "changes" ? "active" : ""}
-              aria-current={tab === "changes" ? "page" : undefined}
-              onClick={() => setTab("changes")}
-            >
-              Changes<span className="tab-count">{changes.files.length}</span>
-            </button>
-            <button
-              className={tab === "commit" ? "active" : ""}
-              aria-current={tab === "commit" ? "page" : undefined}
-              onClick={showCommit}
-            >
-              Commit<span className="tab-count">{stagedCount}</span>
-            </button>
-            <button
-              className={
-                tab === "repository" && repositorySection === "history"
-                  ? "active"
-                  : ""
-              }
-              aria-current={
-                tab === "repository" && repositorySection === "history"
-                  ? "page"
-                  : undefined
-              }
-              onClick={() => showRepository("history")}
-            >
-              History
-            </button>
-            <button
-              className={
-                tab === "repository" && repositorySection !== "history"
-                  ? "active"
-                  : ""
-              }
-              aria-current={
-                tab === "repository" && repositorySection !== "history"
-                  ? "page"
-                  : undefined
-              }
-              onClick={() => showRepository("branches")}
-            >
-              Branches
-            </button>
-            <span className="diff-tab-strip">
-              {diffTabs
-                .filter((t) => t.workspaceId === changes.workspace.id)
-                .map((item) => (
-                  <span
-                    key={item.id}
-                    className={`diff-tab-item ${tab === item.id ? "active" : ""}`}
-                  >
-                    <button
-                      className="diff-tab-button"
-                      aria-current={tab === item.id ? "page" : undefined}
-                      title={
-                        item.selection.base
-                          ? `${item.selection.base} ↔ ${item.selection.target}`
-                          : (item.selection.targetLabel ??
-                            item.selection.target)
-                      }
-                      onClick={() => setTab(item.id)}
-                    >
-                      Diff{" "}
-                      <code>
-                        {item.selection.base
-                          ? `${item.selection.base.slice(0, 5)} ↔ ${item.selection.target.slice(0, 5)}`
-                          : item.selection.target.slice(0, 8)}
-                      </code>
-                    </button>
-                    <button
-                      className="diff-tab-close"
-                      aria-label={`关闭 Diff ${item.selection.target.slice(0, 8)}`}
-                      onClick={() => closeDiffTab(item.id)}
-                    >
-                      <X size={12} />
-                    </button>
-                  </span>
-                ))}
-            </span>
-          </nav>
-        )}
-        <div className="toolbar-spacer" />
-        {demo && <span className="demo-badge">演示数据</span>}
-        {changes && (
-          <button
+          <Button
             className="icon-button"
             disabled={busy}
-            aria-label="刷新 Worktree"
-            title="刷新本地 Worktree"
+            aria-label={t("刷新 Worktree")}
+            title={t("刷新本地 Worktree")}
             onClick={() => {
               void refresh();
             }}
           >
             <ArrowClockwise size={17} className={busy ? "spinning" : ""} />
-          </button>
+          </Button>
         )}
-        <button
+        <Button
           className="observer-status"
           onClick={() => openSettings("observer")}
         >
           <span className="status-dot neutral" />
-          Agent Hook
-        </button>
-        <button
+          {t("Agent Hook")}
+        </Button>
+        <Button
           className="command-trigger"
-          title="命令面板"
-          aria-label="打开命令面板"
+          title={t("命令面板")}
+          aria-label={t("打开命令面板")}
           onClick={openCommands}
         >
           <MagnifyingGlass size={15} />
-          <span>Command</span>
-          <kbd>⌘ K</kbd>
-        </button>
-        <button
+          <span>{t("Command")}</span>
+          <kbd>{t("⌘ K")}</kbd>
+        </Button>
+        <Button
           className="icon-button"
-          aria-label="设置"
-          title="设置"
+          aria-label={t("设置")}
+          title={t("设置")}
           onClick={() => openSettings()}
         >
           <GearSix size={19} />
-        </button>
+        </Button>
       </header>
+      {changes && !diffWindow && (
+        <WorkspaceTabs
+          onReorder={(source, target) =>
+            setDiffTabs((tabs) => reorderComparisonTabs(tabs, source, target))
+          }
+          active={
+            tab === "repository"
+              ? repositorySection === "history"
+                ? "history"
+                : "branches"
+              : tab
+          }
+          changesCount={changes.files.length}
+          stagedCount={stagedCount}
+          comparisons={diffTabs.filter(
+            (item) => item.workspaceId === changes.workspace.id,
+          )}
+          historyRef={historyTab}
+          onSelect={selectWorkspaceView}
+          onClose={closeDiffTab}
+        />
+      )}
       {changes ? (
         <>
           {demo && (
             <div className="demo-notice">
               <Info size={15} />
-              当前为虚构的 demo-service 界面演示。审查标记仅用于体验，Git
-              写操作不可用。
-              <button
+              {t(
+                "当前为虚构的 demo-service 界面演示。审查标记仅用于体验，Git 写操作不可用。",
+              )}
+              <Button
                 onClick={() => {
                   void chooseFolder();
                 }}
               >
-                打开真实仓库
-              </button>
+                {t("打开真实仓库")}
+              </Button>
             </div>
           )}
           {!changes.workspace.trusted && !demo && (
             <div className="trust-banner">
               <ShieldCheck size={17} />
               <span>
-                受限查看。信任此仓库后，可暂存和提交；Git
-                Hook、签名及过滤器可能执行。
+                {t(
+                  "受限查看。信任此仓库后，可暂存和提交；Git Hook、签名及过滤器可能执行。",
+                )}
               </span>
-              <button
+              <Button
                 className="button compact"
                 onClick={() => setDialog("trust")}
               >
-                审阅信任设置
-              </button>
+                {t("审阅信任设置")}
+              </Button>
             </div>
           )}
           {changes.operation && (
             <div className="trust-banner">
               <Warning size={16} />
-              {changes.operation} 进行中。请在外部完成当前流程后刷新。
+              {changes.operation} {t(" 进行中。请在外部完成当前流程后刷新。")}
             </div>
           )}
         </>
       ) : null}
       {error && (
         <div className="error-banner" role="alert">
+          {!changes && (
+            <Button
+              className="button compact"
+              onClick={() => openSettings("diagnostics")}
+            >
+              {t("打开诊断")}
+            </Button>
+          )}
           <Warning size={18} />
           <div>
-            <strong>{error.message}</strong>
+            <strong>{uiMessage(error.message)}</strong>
             <details>
-              <summary>{error.code} · 查看详情</summary>
+              <summary>
+                {error.code} {t(" · 查看详情")}
+              </summary>
               <pre>{error.detail}</pre>
             </details>
           </div>
-          <button
+          <Button
             className="icon-button"
-            aria-label="关闭错误提示"
+            aria-label={t("关闭错误提示")}
             onClick={() => setError(null)}
           >
             <X size={16} />
-          </button>
+          </Button>
         </div>
       )}
       {changes && repositoryLayout.error && dialog !== "settings" && (
@@ -1472,34 +1722,34 @@ export default function App({
           <span>
             {repositoryLayout.ready
               ? repositoryLayout.saving
-                ? "有布局调整未保存，其余调整仍在保存。"
-                : "有布局调整未保存，当前显示已保存的值。"
-              : "无法读取此仓库布局。"}{" "}
-            {repositoryLayout.error.message}
+                ? t("有布局调整未保存，其余调整仍在保存。")
+                : t("有布局调整未保存，当前显示已保存的值。")
+              : t("无法读取此仓库布局。")}{" "}
+            {uiMessage(repositoryLayout.error.message)}
           </span>
-          <button
+          <Button
             onClick={() =>
               repositoryLayout.ready
                 ? openSettings()
                 : void repositoryLayout.retry()
             }
           >
-            {repositoryLayout.ready ? "布局设置" : "重试读取"}
-          </button>
+            {repositoryLayout.ready ? t("布局设置") : t("重试读取")}
+          </Button>
         </div>
       )}
       {!changes ? (
         <main className="welcome">
           <div className="welcome-main">
             <ProofMark large />
-            <p className="welcome-kicker">Git, with context.</p>
-            <h1>打开仓库，开始工作</h1>
+            <p className="welcome-kicker">{t("Git, with context.")}</p>
+            <h1>{t("打开仓库，开始工作")}</h1>
             <p className="welcome-description">
-              查看 Diff、管理 Branch、提交代码。
+              {t("查看 Diff、管理 Branch、提交代码。")}
               <br />
-              按需关联 Agent 的修改记录。
+              {t("按需关联 Agent 的修改记录。")}
             </p>
-            <button
+            <Button
               className="button primary welcome-open"
               onClick={() => {
                 void chooseFolder();
@@ -1507,31 +1757,32 @@ export default function App({
               disabled={busy}
             >
               <FolderOpen size={19} />
-              打开本地仓库
-            </button>
-            <button className="demo-link" onClick={startDemo}>
-              体验演示 Worktree <ArrowRight size={15} />
-            </button>
+              {t("打开本地仓库")}
+            </Button>
+            <Button className="demo-link" onClick={startDemo}>
+              {t("体验演示 Worktree ")}
+              <ArrowRight size={15} />
+            </Button>
             <div className="welcome-principles">
               <span>
                 <Check size={14} />
-                无需账号
+                {t("无需账号")}
               </span>
               <span>
                 <Check size={14} />
-                本地优先
+                {t("本地优先")}
               </span>
               <span>
                 <Check size={14} />
-                人工决定
+                {t("人工决定")}
               </span>
             </div>
           </div>
           {recent.length > 0 && (
             <div className="recent-projects">
-              <h2>最近打开</h2>
+              <h2>{t("最近打开")}</h2>
               {recent.map((w) => (
-                <button
+                <Button
                   key={w.id}
                   onClick={() => {
                     void openWorkspace(w.path);
@@ -1543,13 +1794,14 @@ export default function App({
                     <small>{w.path}</small>
                   </span>
                   <ArrowRight size={15} />
-                </button>
+                </Button>
               ))}
             </div>
           )}
           <footer className="welcome-footer">
-            Proof <span>本地代码审查工作台</span>
-            <span className="version">0.1.0 Alpha</span>
+            {t("Proof ")}
+            <span>{t("本地代码审查工作台")}</span>
+            <span className="version">{APP_VERSION}</span>
           </footer>
         </main>
       ) : (
@@ -1557,79 +1809,97 @@ export default function App({
           {diffTabs
             .filter((t) => t.workspaceId === changes.workspace.id)
             .map((item) => (
-              <div
+              <Tabs.Panel
+                keepMounted
+                hidden={tab !== item.id}
+                value={item.id}
                 key={item.id}
                 className="workspace-page diff-tab-page"
-                hidden={tab !== item.id}
               >
-                <header className="diff-tab-heading">
-                  <div>
-                    <strong>
-                      {item.selection.base
-                        ? "Compare commits"
-                        : (item.selection.targetLabel ?? "Commit diff")}
-                    </strong>
-                    <span>
-                      {item.selection.base
-                        ? `${item.selection.base.slice(0, 12)} ↔ ${item.selection.target.slice(0, 12)}`
-                        : item.selection.target}
-                    </span>
-                  </div>
-                  {!item.selection.base &&
-                    (item.selection.parents?.length ?? 0) > 1 && (
-                      <select
-                        aria-label="Diff 比较父提交"
-                        value={item.selection.parent ?? 0}
-                        onChange={(e) =>
-                          setDiffTabs((tabs) =>
-                            tabs.map((t) =>
-                              t.id === item.id
-                                ? {
-                                    ...t,
-                                    selection: {
-                                      ...t.selection,
-                                      parent: Number(e.target.value),
-                                    },
-                                  }
-                                : t,
-                            ),
-                          )
-                        }
-                      >
-                        {item.selection.parents!.map((oid, index) => (
-                          <option key={oid} value={index}>
-                            Parent {index + 1} · {oid.slice(0, 8)}
-                          </option>
-                        ))}
-                      </select>
-                    )}
-                  <button
-                    className="button compact"
-                    onClick={() => {
-                      setTab("repository");
-                      setRepositorySection("history");
-                    }}
-                  >
-                    返回 History
-                  </button>
-                </header>
                 <HistoryDiff
+                  panelLayout={repositoryLayout}
+                  onOpenWindow={
+                    demo || diffWindow
+                      ? undefined
+                      : (selection) => {
+                          void request("open_diff_window", {
+                            selection: {
+                              kind: "comparison",
+                              workspaceId: changes.workspace.id,
+                              ...selection,
+                            },
+                          }).catch((e) => setError(asError(e)));
+                        }
+                  }
+                  onAgentSettings={() => openSettings("agents")}
+                  active={tab === item.id}
                   changes={changes}
                   demo={demo}
                   preferences={preferences}
                   onPreferences={(value) => void updatePreferences(value)}
                   selection={item.selection}
+                  toolbar={
+                    <>
+                      {!item.selection.base &&
+                        (item.selection.parents?.length ?? 0) > 1 && (
+                          <Select
+                            aria-label={t("Diff 比较父提交")}
+                            value={item.selection.parent ?? 0}
+                            onChange={(e) =>
+                              setDiffTabs((tabs) =>
+                                tabs.map((t) =>
+                                  t.id === item.id
+                                    ? {
+                                        ...t,
+                                        selection: {
+                                          ...t.selection,
+                                          parent: Number(e.target.value),
+                                        },
+                                      }
+                                    : t,
+                                ),
+                              )
+                            }
+                          >
+                            {item.selection.parents!.map((oid, index) => (
+                              <option key={oid} value={index}>
+                                {t("Parent ")}
+                                {index + 1} · {oid.slice(0, 8)}
+                              </option>
+                            ))}
+                          </Select>
+                        )}
+                      <Button
+                        className="button compact"
+                        onClick={() => {
+                          setTab("repository");
+                          setRepositorySection("history");
+                        }}
+                      >
+                        {t("返回 History")}
+                      </Button>
+                    </>
+                  }
                 />
-              </div>
+              </Tabs.Panel>
             ))}
-          <div className="workspace-page" hidden={tab !== "repository"}>
+          <Tabs.Panel
+            keepMounted
+            hidden={tab !== "repository"}
+            value={repositorySection === "branches" ? "branches" : "history"}
+            className="workspace-page"
+          >
             {(repositoryVisited || tab === "repository") && (
               <RepositoryView
                 key={changes.workspace.id}
+                onOpenLocalFile={(path) => {
+                  const file = changes.files.find((file) => file.path === path);
+                  setTab("changes");
+                  if (file) void loadFile(file);
+                }}
                 onOpenDiff={openHistoryDiff}
                 section={repositorySection}
                 onSection={setRepositorySection}
-                error={error}
                 changes={changes}
                 demo={demo}
                 onOpen={openWorkspace}
@@ -1640,8 +1910,13 @@ export default function App({
                 onChanged={refresh}
               />
             )}
-          </div>
-          <div className="workspace-page" hidden={tab !== "commit"}>
+          </Tabs.Panel>
+          <Tabs.Panel
+            keepMounted
+            hidden={tab !== "commit"}
+            value={"commit"}
+            className="workspace-page"
+          >
             {(commitVisited || tab === "commit") && (
               <CommitWorkspace
                 key={changes.workspace.id}
@@ -1682,8 +1957,13 @@ export default function App({
                 />
               </CommitWorkspace>
             )}
-          </div>
-          <div className="workspace-page" hidden={tab !== "changes"}>
+          </Tabs.Panel>
+          <Tabs.Panel
+            keepMounted
+            hidden={tab !== "changes"}
+            value={"changes"}
+            className="workspace-page"
+          >
             <ResizableWorkbench
               layout={repositoryLayout.value}
               scopeKey={repositoryLayout.scopeKey}
@@ -1698,59 +1978,87 @@ export default function App({
                 side === "sidebarWidth" ? closeFiles() : closeContext()
               }
               sidebar={
-                <aside
-                  id="files-panel"
-                  aria-label="变化文件"
-                  hidden={!sidebarVisible}
-                  className={`files-panel ${compact ? "files-drawer" : ""}`}
-                  onBlurCapture={(event) => {
-                    if (compact && shouldDismissDrawer(event))
-                      setFilesDrawer(false);
-                  }}
-                >
-                  <button
-                    className="icon-button files-close"
-                    aria-label="收起文件栏"
-                    onClick={closeFiles}
-                    disabled={!compact && !repositoryLayout.ready}
-                  >
-                    <X size={15} />
-                  </button>
-                  <FileTree
-                    key={changes.workspace.id}
-                    disabled={
-                      busy ||
-                      demo ||
-                      !changes.workspace.trusted ||
-                      !!changes.operation
-                    }
-                    onStage={(files, side) => void stageFiles(files, side)}
-                    files={changes.files}
-                    selected={selected}
-                    onSelect={(f) => {
-                      void loadFile(f);
-                      if (compact) {
+                <DiffFilePane
+                  ai={ai}
+                  token={changes.token}
+                  scopeKey={changes.workspace.id}
+                  containerProps={{
+                    id: "files-panel",
+                    "aria-label": t("变化文件"),
+                    hidden: !sidebarVisible,
+                    className: compact ? "files-drawer" : "",
+                    onBlurCapture: (event) => {
+                      if (compact && shouldDismissDrawer(event))
                         setFilesDrawer(false);
-                        requestAnimationFrame(() =>
-                          document
-                            .querySelector<HTMLElement>(
-                              ".workspace-page:not([hidden]) .diff-scroll",
-                            )
-                            ?.focus(),
-                        );
-                      }
-                    }}
-                    search={search}
-                    onSearch={setSearch}
-                    loaded={loaded}
-                    scope={scope}
-                    onScope={setScope}
-                  />
-                </aside>
+                    },
+                  }}
+                  onClose={closeFiles}
+                  closeDisabled={!compact && !repositoryLayout.ready}
+                  disabled={
+                    busy ||
+                    demo ||
+                    !changes.workspace.trusted ||
+                    !!changes.operation
+                  }
+                  onStage={(files, side) => void stageFiles(files, side)}
+                  files={changes.files}
+                  selected={selected}
+                  onSelect={(file) => {
+                    void loadFile(file);
+                    if (compact) {
+                      setFilesDrawer(false);
+                      requestAnimationFrame(() =>
+                        document
+                          .querySelector<HTMLElement>(
+                            ".workspace-page:not([hidden]) .diff-scroll",
+                          )
+                          ?.focus(),
+                      );
+                    }
+                  }}
+                  search={search}
+                  onSearch={setSearch}
+                  loaded={loaded}
+                  scope={scope}
+                  onScope={setScope}
+                />
               }
               context={
                 contextOpen && (
                   <ContextInspector
+                    activeTab={inspectorTab}
+                    onTab={setInspectorTab}
+                    aiPanel={
+                      <AiReviewPanel
+                        onSettings={() => openSettings("agents")}
+                        ai={ai}
+                        hasDiff={!!diff}
+                        demo={demo}
+                        onFinding={(finding) => {
+                          const captured = ai.report?.files.find(
+                            (f) =>
+                              f.path === finding.file &&
+                              f.side === finding.side,
+                          );
+                          const file = changes.files.find(
+                            (f) =>
+                              f.path === finding.file &&
+                              f.side === finding.side,
+                          );
+                          if (!captured || !file || ai.stale) return;
+                          setAiJump({
+                            id: crypto.randomUUID(),
+                            snapshotToken: captured.snapshotToken,
+                            path: captured.path,
+                            fileSide: captured.side,
+                            line: finding.line,
+                            endLine: finding.endLine,
+                            side: finding.lineSide,
+                          });
+                          void loadFile(file);
+                        }}
+                      />
+                    }
                     diff={diff}
                     demo={demo}
                     drawer={narrow}
@@ -1758,14 +2066,62 @@ export default function App({
                     onClose={closeContext}
                     onLeave={() => setContextDrawer(false)}
                     onSettings={() => openSettings("observer")}
+                    onError={(error) => setError(asError(error))}
                   />
                 )
               }
             >
               <div className="center-panel">
-                {diff ? (
+                {summary ? (
+                  <DeferredDiff
+                    summary={summary}
+                    pending={busy || loadingDiff}
+                    onLoad={() => {
+                      const file = changes.files.find(
+                        (file) => fileKey(file) === fileKey(summary),
+                      );
+                      if (file)
+                        void loadFile(file, changes.workspace, true, true);
+                    }}
+                    onStage={
+                      !demo &&
+                      changes.workspace.trusted &&
+                      !changes.operation &&
+                      summary.reason !== "file_limit" &&
+                      changes.files.some(
+                        (file) =>
+                          fileKey(file) === fileKey(summary) &&
+                          !file.conflicted,
+                      )
+                        ? () => {
+                            const file = changes.files.find(
+                              (file) => fileKey(file) === fileKey(summary),
+                            );
+                            if (file && !file.conflicted)
+                              void stageFiles([file], file.side);
+                          }
+                        : undefined
+                    }
+                  />
+                ) : diff ? (
                   <DiffView
                     key={`${diff.workspaceId}:${diff.path}:${diff.side}`}
+                    onOpenWindow={
+                      demo || diffWindow
+                        ? undefined
+                        : () => {
+                            void request("open_diff_window", {
+                              selection: {
+                                kind: "local",
+                                workspaceId: diff.workspaceId,
+                                path: diff.path,
+                                side: diff.side,
+                              },
+                            }).catch((error) => setError(asError(error)));
+                          }
+                    }
+                    jumpTo={aiJump}
+                    ai={ai}
                     diff={diff}
                     preferences={preferences}
                     onEditor={() => void openEditor()}
@@ -1791,54 +2147,77 @@ export default function App({
                       try {
                         return demo
                           ? demoDiffContext(diff, contextLines)
-                          : await request<DiffContext>("diff_context", {
-                              snapshotId: diff.id,
-                              contextLines,
-                            });
+                          : await contextReader.read<DiffContext>(
+                              "diff_context",
+                              {
+                                snapshotId: diff.id,
+                                ...(contextLines === "file"
+                                  ? { fullFile: true }
+                                  : { contextLines }),
+                              },
+                            );
                       } catch (error) {
-                        await snapshotError(error, diff, epoch);
+                        if (
+                          ["STALE_CONTENT", "SNAPSHOT_EXPIRED"].includes(
+                            asError(error).code,
+                          )
+                        )
+                          await snapshotError(error, diff, epoch);
                         throw error;
                       }
                     }}
+                    onCancelContext={contextReader.cancel}
                     onFocus={() => setFocused((f) => !f)}
                   />
-                ) : (
+                ) : loadingDiff ? null : (
                   <div className="empty-diff">
                     <div className="empty-symbol">
                       <Check size={30} />
                     </div>
                     <h2>
                       {changes.files.length
-                        ? "选择文件查看 Diff"
-                        : "当前没有代码变化"}
+                        ? t("选择文件查看 Diff")
+                        : t("当前没有代码变化")}
                     </h2>
                     <p>
                       {changes.files.length
-                        ? "选择左侧文件查看 Diff。"
-                        : "Worktree clean"}
+                        ? t("选择左侧文件查看 Diff。")
+                        : t("Worktree clean")}
                     </p>
                     {!changes.files.length && (
-                      <button
+                      <Button
                         className="button"
                         onClick={() => showRepository("history")}
                       >
-                        查看提交历史
-                      </button>
+                        {t("查看提交历史")}
+                      </Button>
                     )}
                   </div>
                 )}
                 {loadingDiff && (
-                  <div
-                    className={`diff-loading ${diff ? "background" : ""}`}
-                    role="status"
-                  >
-                    <ArrowClockwise size={14} className="spinning" />{" "}
-                    {diff ? "更新中…" : "载入 Diff…"}
-                  </div>
+                  <DiffLoading
+                    updating={!!diff || !!summary}
+                    path={
+                      changes.files.find((file) => fileKey(file) === selected)
+                        ?.path
+                    }
+                    onCancel={() => {
+                      const file = changes.files.find(
+                        (file) => fileKey(file) === selectedRef.current,
+                      );
+                      if (file)
+                        cancelledRead.current = `${fileKey(file)}:${cache.current.version(changes, file)}`;
+                      ++sequence.current;
+                      fileReader.cancel();
+                      cache.current.cancelPending();
+                      setLoadingDiff(false);
+                      setNotification(t("读取已取消，选择文件可重新读取。"));
+                    }}
+                  />
                 )}
               </div>
             </ResizableWorkbench>
-          </div>
+          </Tabs.Panel>
         </>
       )}
       {changes && tab === "changes" && (
@@ -1853,29 +2232,29 @@ export default function App({
               }
             />
             <span>
-              Review{" "}
+              {t("Review")}{" "}
               <strong>
                 {reviewedUnits}/{knownUnits.length}
               </strong>{" "}
-              hunks reviewed
+              {t("hunks reviewed")}
             </span>
           </div>
           <div className="toolbar-spacer" />
           {focused && (
-            <button
+            <Button
               className="button subtle compact"
               onClick={() => setFocused(false)}
             >
-              退出专注
-            </button>
+              {t("退出专注")}
+            </Button>
           )}
-          <button
+          <Button
             id="files-toggle"
             className="icon-button"
-            aria-label={sidebarVisible ? "收起文件栏" : "显示文件栏"}
+            aria-label={sidebarVisible ? t("收起文件栏") : t("显示文件栏")}
             aria-expanded={sidebarVisible}
             aria-controls="files-panel"
-            title="文件栏 · ⌘/Ctrl P 搜索"
+            title={t("文件栏 · ⌘/Ctrl P 搜索")}
             disabled={!compact && !repositoryLayout.ready}
             onClick={() => {
               if (sidebarVisible) closeFiles();
@@ -1883,12 +2262,12 @@ export default function App({
             }}
           >
             <List size={18} />
-          </button>
-          <button
+          </Button>
+          <Button
             id="context-toggle"
             className="icon-button"
-            aria-label={contextOpen ? "收起上下文" : "显示上下文"}
-            title="Context 面板"
+            aria-label={contextOpen ? t("收起上下文") : t("显示上下文")}
+            title={t("Context 面板")}
             aria-expanded={contextOpen}
             aria-controls="context-panel"
             disabled={!narrow && !repositoryLayout.ready}
@@ -1915,15 +2294,15 @@ export default function App({
             }}
           >
             <SidebarSimple size={18} />
-          </button>
+          </Button>
           {diff && (
-            <button
+            <Button
               className="button compact"
               disabled={!diff.canStage || busy || loadingDiff}
               title={
                 !diff.canStage
-                  ? "此文件当前不支持 Git 写操作"
-                  : "操作当前整个文件"
+                  ? t("此文件当前不支持 Git 写操作")
+                  : t("操作当前整个文件")
               }
               onClick={() => {
                 void stage(null);
@@ -1934,13 +2313,13 @@ export default function App({
               ) : (
                 <Plus size={15} />
               )}
-              {diff.side === "staged" ? "Unstage file" : "Stage file"}
-            </button>
+              {diff.side === "staged" ? t("Unstage file") : t("Stage file")}
+            </Button>
           )}
-          <button
+          <Button
             className="icon-button"
-            aria-label="打开丢弃恢复点"
-            title="丢弃恢复点"
+            aria-label={t("打开丢弃恢复点")}
+            title={t("丢弃恢复点")}
             disabled={busy || demo}
             onClick={() => {
               setError(null);
@@ -1948,29 +2327,23 @@ export default function App({
             }}
           >
             <ClockCounterClockwise size={18} />
-          </button>
+          </Button>
           {diff?.side === "unstaged" && (
-            <button
+            <Button
               className="icon-button"
-              aria-label="预览丢弃文件"
+              aria-label={t("预览丢弃文件")}
               title={
                 diff.canDiscard
-                  ? "预览丢弃整个文件的未暂存变化"
-                  : (diff.discardReason ?? "当前不能丢弃")
+                  ? t("预览丢弃整个文件的未暂存变化")
+                  : (diff.discardReason ?? t("当前不能丢弃"))
               }
               disabled={busy || !diff.canDiscard}
               onClick={() => void prepareDiscard(null)}
             >
               <Trash size={18} />
-            </button>
+            </Button>
           )}
         </footer>
-      )}
-      {notification && (
-        <div className="toast" role="status">
-          <Check size={16} />
-          {notification}
-        </div>
       )}
       {dialog === "file-history" && diff && (
         <FileHistory
@@ -1992,7 +2365,7 @@ export default function App({
       )}
       {dialog === "discard" && discardPoint && (
         <Modal
-          title="确认丢弃未暂存变化"
+          title={t("确认丢弃未暂存变化")}
           error={error}
           onClose={() => void cancelDiscard()}
         >
@@ -2001,35 +2374,43 @@ export default function App({
             <p>{discardPoint.scope}</p>
           </div>
           <p>
-            恢复点已经保存。确认后，所选 Worktree 内容会还原到索引中的版本。
+            {t(
+              "恢复点已经保存。确认后，所选 Worktree 内容会还原到索引中的版本。",
+            )}
           </p>
           <p className="inline-help">
-            恢复内容保留至 {new Date(discardPoint.expiresAt).toLocaleString()}
-            ，总计上限 256 MiB。撤销时若文件已有新改动，Proof
-            会停止恢复并保留副本。
+            {t("恢复内容保留至 ")}
+            {new Date(discardPoint.expiresAt).toLocaleString(getLanguage())}
+            {t(
+              "，总计上限 256 MiB。撤销时若文件已有新改动，Proof 会停止恢复并保留副本。",
+            )}
           </p>
           <div className="modal-actions">
-            <button
+            <Button
               className="button"
               disabled={busy}
               onClick={() => void cancelDiscard()}
             >
-              取消
-            </button>
-            <button
+              {t("取消")}
+            </Button>
+            <Button
               className="button danger"
               disabled={busy}
               onClick={() => void confirmDiscard()}
             >
-              {busy ? "正在核对…" : "确认丢弃所选变化"}
-            </button>
+              {busy ? t("正在核对…") : t("确认丢弃所选变化")}
+            </Button>
           </div>
         </Modal>
       )}
       {dialog === "open" && (
-        <Modal title="打开仓库" error={error} onClose={() => setDialog(null)}>
+        <Modal
+          title={t("打开仓库")}
+          error={error}
+          onClose={() => setDialog(null)}
+        >
           <p className="modal-intro">
-            选择已有 Git 仓库，或输入仓库内的目录路径。
+            {t("选择已有 Git 仓库，或输入仓库内的目录路径。")}
           </p>
           <form
             onSubmit={(e) => {
@@ -2038,17 +2419,17 @@ export default function App({
             }}
           >
             <label className="field-label" htmlFor="repository-path">
-              本地目录
+              {t("本地目录")}
             </label>
             <div className="path-input">
-              <input
+              <Input
                 id="repository-path"
                 autoFocus
                 value={path}
                 onChange={(e) => setPath(e.target.value)}
-                placeholder="/Users/you/code/project"
+                placeholder={t("/Users/you/code/project")}
               />
-              <button
+              <Button
                 type="button"
                 className="button"
                 onClick={() => {
@@ -2057,12 +2438,12 @@ export default function App({
                 disabled={!isDesktop}
               >
                 <FolderOpen size={16} />
-                选择
-              </button>
+                {t("选择")}
+              </Button>
             </div>
             <div className="dialog-recent">
               {recent.map((w) => (
-                <button
+                <Button
                   type="button"
                   key={w.id}
                   onClick={() => {
@@ -2074,101 +2455,111 @@ export default function App({
                     <strong>{w.name}</strong>
                     <small>{w.path}</small>
                   </span>
-                </button>
+                </Button>
               ))}
             </div>
             {!isDesktop && (
               <p className="inline-help">
-                浏览器无法读取本地 Git。请运行桌面应用，或体验虚构演示。
+                {t("浏览器无法读取本地 Git。请运行桌面应用，或体验虚构演示。")}
               </p>
             )}
             <div className="modal-actions">
-              <button
+              <Button
                 className="button subtle"
                 type="button"
                 onClick={startDemo}
               >
-                体验演示
-              </button>
-              <button
+                {t("体验演示")}
+              </Button>
+              <Button
+                type="submit"
                 className="button primary"
                 disabled={!isDesktop || !path.trim() || busy}
               >
-                打开仓库
-              </button>
+                {t("打开仓库")}
+              </Button>
             </div>
           </form>
         </Modal>
       )}
       {dialog === "trust" && changes && (
-        <Modal title="信任此仓库" error={error} onClose={() => setDialog(null)}>
+        <Modal
+          title={t("信任此仓库")}
+          error={error}
+          onClose={() => setDialog(null)}
+        >
           <div className="trust-summary">
             <ShieldCheck size={28} />
             <strong>{changes.workspace.name}</strong>
             <code>{changes.workspace.path}</code>
           </div>
           <p>
-            执行暂存、提交和分支操作时，Git 可能运行此仓库及你的 Git
-            配置中的过滤器、Hook 和签名程序。
+            {t(
+              "执行暂存、提交和分支操作时，Git 可能运行此仓库及你的 Git 配置中的过滤器、Hook 和签名程序。",
+            )}
           </p>
           <p className="inline-help">
-            此选择保存在 Proof 本地。不会修改 safe.directory、现有 Hook 或全局
-            Git 配置。
+            {t(
+              "此选择保存在 Proof 本地。不会修改 safe.directory、现有 Hook 或全局 Git 配置。",
+            )}
           </p>
           <div className="modal-actions">
-            <button className="button" onClick={() => setDialog(null)}>
-              继续受限查看
-            </button>
-            <button
+            <Button className="button" onClick={() => setDialog(null)}>
+              {t("继续受限查看")}
+            </Button>
+            <Button
               className="button primary"
               disabled={busy}
               onClick={() => {
                 void trustWorkspace();
               }}
             >
-              信任并启用 Git 操作
-            </button>
+              {t("信任并启用 Git 操作")}
+            </Button>
           </div>
         </Modal>
       )}
       {dialog === "mark-file" && reviewTarget && (
         <Modal
-          title="标记整个文件已审查"
+          title={t("标记整个文件已审查")}
           error={error}
           onClose={() => setDialog(null)}
         >
           <p>
-            此标记覆盖 <strong>{reviewTarget.path}</strong> 当前完整 Diff 的{" "}
-            <strong>{reviewTarget.hunks.length} 个变化块</strong>
-            ，包含尚未滚动到的内容。
+            {t("此标记覆盖 ")}
+            <strong>{reviewTarget.path}</strong> {t(" 当前完整 Diff 的")}{" "}
+            <strong>
+              {reviewTarget.hunks.length} {t(" 个变化块")}
+            </strong>
+            {t("，包含尚未滚动到的内容。")}
           </p>
           <p className="inline-help">
-            只记录你对这个版本的人工审查，不会 Stage 文件或改变测试状态。
+            {t("只记录你对这个版本的人工审查，不会 Stage 文件或改变测试状态。")}
           </p>
           {diff?.id !== reviewTarget.id && (
             <p role="status" className="inline-help">
-              文件已更新，请关闭此窗口并重新选择 Review 范围。
+              {t("文件已更新，请关闭此窗口并重新选择 Review 范围。")}
             </p>
           )}
           <div className="modal-actions">
-            <button className="button" onClick={() => setDialog(null)}>
-              继续逐段阅读
-            </button>
-            <button
+            <Button className="button" onClick={() => setDialog(null)}>
+              {t("继续逐段阅读")}
+            </Button>
+            <Button
               className="button primary"
               disabled={busy || diff?.id !== reviewTarget.id || loadingDiff}
               onClick={() => {
                 void mark(null, true, true);
               }}
             >
-              确认已审查全部内容
-            </button>
+              {t("确认已审查全部内容")}
+            </Button>
           </div>
         </Modal>
       )}
       {dialog === "commit" && preview && (
         <Modal
-          title="提交预览"
+          title={t("提交预览")}
           error={error}
           onClose={() => {
             if (!busy) setDialog(null);
@@ -2178,8 +2569,10 @@ export default function App({
           <div className="commit-target">
             <GitBranch size={17} />
             <strong>{preview.branch ?? "Detached HEAD"}</strong>
-            <span>{preview.files.length} staged files</span>
-            <code>{preview.head?.slice(0, 8) ?? "首次提交"}</code>
+            <span>
+              {preview.files.length} {t(" staged files")}
+            </span>
+            <code>{preview.head?.slice(0, 8) ?? t("首次提交")}</code>
           </div>
           <div className="commit-files">
             {preview.files.map((f) => (
@@ -2188,27 +2581,40 @@ export default function App({
                   {f.status}
                 </span>
                 <span>{f.path}</span>
+                {preview.unreadFiles?.includes(f.path) && (
+                  <small className="commit-unread">
+                    {t("Diff 超过读取上限")}
+                  </small>
+                )}
               </div>
             ))}
           </div>
           <div
-            className={`commit-coverage ${preview.reviewed === preview.total ? "complete" : ""}`}
+            className={`commit-coverage ${preview.coverageComputed && !preview.unreadFiles?.length && preview.reviewed === preview.total ? "complete" : ""}`}
           >
             <Info size={16} />
-            {preview.reviewed}/{preview.total} hunks reviewed.
-            {preview.reviewed !== preview.total
-              ? "未审查内容也会包含在本次提交中。"
-              : "此状态只代表人工审查记录。"}
+            <span>
+              {!preview.coverageComputed
+                ? t("未统计 Review。")
+                : preview.unreadFiles?.length
+                  ? t("{v0} 个文件的 Diff 未加载，Review 未完成。", {
+                      v0: preview.unreadFiles.length,
+                    })
+                  : `${preview.reviewed}/${preview.total} hunks reviewed。`}
+              {preferences.strictReview
+                ? t("Strict Review 已启用。")
+                : t("将提交列出的全部 Staged 文件。")}
+            </span>
           </div>
           <label className="field-label" htmlFor="commit-message">
-            提交说明
+            {t("提交说明")}
           </label>
-          <textarea
+          <Textarea
             id="commit-message"
             autoFocus
             rows={4}
             value={draft}
-            placeholder="描述这次修改的目的…"
+            placeholder={t("描述这次修改的目的…")}
             onChange={(e) => {
               setDraft(e.target.value);
               try {
@@ -2216,7 +2622,7 @@ export default function App({
               } catch (error) {
                 setError({
                   code: "DRAFT_STORAGE",
-                  message: "提交草稿未能持久保存，请保留当前窗口。",
+                  message: t("提交草稿未能持久保存，请保留当前窗口。"),
                   detail: String(error),
                 });
               }
@@ -2224,30 +2630,33 @@ export default function App({
           />
           <p className="inline-help">
             <ShieldCheck size={14} />
-            Git Hook 与签名将按现有配置执行。只提交已暂存内容。
+            {t("Git Hook 与签名将按现有配置执行。只提交已暂存内容。")}
           </p>
           <div className="modal-actions">
-            <button
+            <Button
               className="button"
               disabled={busy}
               onClick={() => setDialog(null)}
             >
-              返回审查
-            </button>
-            <button
+              {t("返回审查")}
+            </Button>
+            <Button
               className="button primary"
               disabled={
                 busy ||
                 !draft.trim() ||
-                (preferences.strictReview && preview.reviewed !== preview.total)
+                (preferences.strictReview &&
+                  (!preview.coverageComputed ||
+                    !!preview.unreadFiles?.length ||
+                    preview.reviewed !== preview.total))
               }
               onClick={() => {
                 void commit();
               }}
             >
               <GitCommit size={16} />
-              {busy ? "正在提交…" : "确认提交"}
-            </button>
+              {busy ? t("正在提交…") : t("确认提交")}
+            </Button>
           </div>
         </Modal>
       )}
@@ -2262,7 +2671,11 @@ export default function App({
           </span>
           <span className="live-status">
             <span className={`status-dot ${syncing ? "neutral" : ""}`} />
-            {syncing ? "更新中" : "Live"}
+            {diffWindow && initialComparison
+              ? t("Snapshot")
+              : syncing
+                ? t("更新中")
+                : t("Live")}
           </span>
         </div>
       )}
@@ -2301,11 +2714,11 @@ export default function App({
         />
       )}
       {dialog === "commands" && (
-        <Modal title="命令面板" onClose={() => setDialog(null)}>
-          <div className="command-list">
-            {[
+        <Modal title={t("命令面板")} onClose={() => setDialog(null)}>
+          <CommandList
+            actions={[
               {
-                label: "打开本地仓库",
+                label: t("打开本地仓库"),
                 icon: <FolderOpen size={19} />,
                 run: () => {
                   setDialog(null);
@@ -2313,7 +2726,7 @@ export default function App({
                 },
               },
               {
-                label: "搜索变化文件",
+                label: t("搜索变化文件"),
                 icon: <MagnifyingGlass size={19} />,
                 run: () => {
                   setDialog(null);
@@ -2322,7 +2735,7 @@ export default function App({
                 disabled: !changes,
               },
               {
-                label: "刷新 Worktree",
+                label: t("刷新 Worktree"),
                 icon: <ArrowClockwise size={19} />,
                 run: () => {
                   setDialog(null);
@@ -2331,7 +2744,7 @@ export default function App({
                 disabled: !changes,
               },
               {
-                label: "打开 Commit",
+                label: t("打开 Commit"),
                 icon: <GitCommit size={19} />,
                 run: () => {
                   setDialog(null);
@@ -2340,7 +2753,7 @@ export default function App({
                 disabled: !changes,
               },
               {
-                label: "提交预览",
+                label: t("提交预览"),
                 icon: <GitCommit size={19} />,
                 run: () => {
                   setDialog(null);
@@ -2349,7 +2762,7 @@ export default function App({
                 disabled: tab !== "commit" || !stagedCount || demo,
               },
               {
-                label: focused ? "退出专注审查" : "进入专注审查",
+                label: focused ? t("退出专注审查") : t("进入专注审查"),
                 icon: <Check size={19} />,
                 run: () => {
                   setDialog(null);
@@ -2358,7 +2771,7 @@ export default function App({
                 disabled: !changes,
               },
               {
-                label: "在外部编辑器打开",
+                label: t("在外部编辑器打开"),
                 detail: commandTarget?.path,
                 icon: <ArrowSquareOut size={19} />,
                 run: () => {
@@ -2368,56 +2781,28 @@ export default function App({
                 disabled: tab !== "changes" || !commandTarget || openingEditor,
               },
               {
-                label: "观察与偏好设置",
+                label: t("观察与偏好设置"),
                 icon: <GearSix size={19} />,
                 run: () => openSettings(),
               },
-            ].map((action) => (
-              <button
-                key={action.label}
-                onClick={action.run}
-                disabled={action.disabled}
-              >
-                {action.icon}
-                <span>{action.label}</span>
-                {"detail" in action && action.detail && (
-                  <small>{action.detail}</small>
-                )}
-                {action.disabled && <small>当前不可用</small>}
-              </button>
-            ))}
-          </div>
+            ]}
+          />
         </Modal>
       )}
-    </div>
+    </Tabs.Root>
   );
 }
 
 export function ProofMark({ large = false }: { large?: boolean }) {
   return (
-    <svg
+    <img
       className={`proof-mark ${large ? "large" : ""}`}
       width={large ? 58 : 27}
       height={large ? 58 : 27}
-      viewBox="0 0 32 32"
-      fill="none"
+      src={proofIcon}
+      alt=""
       aria-hidden="true"
-    >
-      <rect width="32" height="32" rx="9" fill="currentColor" />
-      <path
-        d="M10 9H7v14h3M22 9h3v14h-3"
-        stroke="var(--brand-ink,white)"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="m11.5 16 3 3 6-7"
-        stroke="var(--brand-ink,white)"
-        strokeWidth="2.1"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
+      draggable={false}
+    />
   );
 }

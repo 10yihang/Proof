@@ -1,3 +1,5 @@
+import { Input, Button, Select } from "./ui/controls";
+import { uiMessage, t, getLanguage } from "../i18n";
 import { useEffect, useRef, useState } from "react";
 import { ArrowClockwise, Plug } from "@phosphor-icons/react";
 import { asError, isDesktop, useRequest } from "../api";
@@ -59,20 +61,22 @@ export function HookConfigPreview({ preview }: { preview: HookPreview }) {
   return (
     <section className="hook-config-preview">
       <strong>
-        {preview.action === "install" ? "安装" : "移除"} Proof Hook
+        {preview.action === "install" ? t("安装") : t("移除")}{" "}
+        {t(" Proof Hook")}
       </strong>
       <code>{preview.configPath}</code>
       <details>
-        <summary>当前配置</summary>
-        <pre>{preview.before ?? "文件尚不存在"}</pre>
+        <summary>{t("当前配置")}</summary>
+        <pre>{preview.before ?? t("文件尚不存在")}</pre>
       </details>
       <details open>
-        <summary>修改后</summary>
-        <pre>{preview.after ?? "移除此文件（仅由 Proof 创建的空配置）"}</pre>
+        <summary>{t("修改后")}</summary>
+        <pre>{preview.after ?? t("移除此文件（仅由 Proof 创建的空配置）")}</pre>
       </details>
       {preview.requiresHookTrust && (
         <p>
-          安装后，在 Codex 中运行 <code>/hooks</code> 并确认 Proof Hook。
+          {t("安装后，在 Codex 中运行 ")}
+          <code>{t("/hooks")}</code> {t(" 并确认 Proof Hook。")}
         </p>
       )}
     </section>
@@ -132,22 +136,22 @@ export function ObserverSettings({
   }, [available, refresh]);
   return (
     <>
-      <h3>Agent Hook</h3>
+      <h3>{t("Agent Hook")}</h3>
       <p className="muted">
-        将 Agent 的任务与活动保存在本机，在 Diff 旁查看相关记录。
+        {t("将 Agent 的任务与活动保存在本机，在 Diff 旁查看相关记录。")}
       </p>
       {!available && (
         <p className="inline-help">
-          请在 Proof 桌面版安装 Hook。演示模式不会修改 Agent 配置。
+          {t("请在 Proof 桌面版安装 Hook。演示模式不会修改 Agent 配置。")}
         </p>
       )}
       {error && (
         <p role="alert">
-          {error.message} · {error.code}
+          {uiMessage(error.message)} · {error.code}
         </p>
       )}
       {status?.serviceError && (
-        <p role="alert">{status.serviceError.message}</p>
+        <p role="alert">{uiMessage(status.serviceError.message)}</p>
       )}
       {(["codex", "claude"] as const).map((agent) => (
         <AgentCard
@@ -166,8 +170,9 @@ export function ObserverSettings({
         />
       ))}
       <p className="inline-help">
-        默认关闭观察和内容采集。已安装的 Hook 只记录明确授权的 Worktree。Codex
-        0.153.4 / macOS 已完成实际会话测试；其他版本可检测，暂不安装。
+        {t(
+          "Hook 只记录已授权的 Worktree。Codex Hook 不限定 CLI 版本；安装前检查配置， 安装后检查连接。Claude Code Hook 暂未开放安装。",
+        )}
       </p>
     </>
   );
@@ -274,41 +279,41 @@ function AgentCard({
   const fault = installation
     ? (
         {
-          program_changed: "Agent 程序已变化，请卸载后重新检测。",
-          helper_changed: "Proof 观察程序已变化，请重新安装 Hook。",
-          incomplete: "Hook 安装未完成，请先卸载并重新安装。",
-          config_changed: "Hook 配置已变化，请先检查配置。",
+          program_changed: t("Agent 程序或来源不可用，请重新检查接入。"),
+          helper_changed: t("Proof 观察程序已变化，请重新安装 Hook。"),
+          incomplete: t("Hook 安装未完成，请先卸载并重新安装。"),
+          config_changed: t("Hook 配置已变化，请先检查配置。"),
         } as Record<string, string>
       )[installation.state]
     : undefined;
   const state = fault
-    ? "需要处理"
+    ? t("需要处理")
     : installation
       ? installation.issue
-        ? "配置需检查"
+        ? t("配置需检查")
         : consent?.enabled
           ? installation.lastEventAt
-            ? "已收到事件"
-            : "等待 Agent 事件"
-          : "已暂停"
-      : "未接入";
+            ? t("已收到事件")
+            : t("等待 Agent 事件")
+          : t("已暂停")
+      : t("未接入");
   return (
     <section
       className="observer-version-card"
-      aria-label={`${agent === "codex" ? "Codex" : "Claude Code"} Hook`}
+      aria-label={`${agent === "codex" ? "Codex" : t("Claude Code")} Hook`}
     >
       <div className="agent-setting">
         <div className="agent-icon">
           <Plug size={20} />
         </div>
         <div>
-          <strong>{agent === "codex" ? "Codex" : "Claude Code"}</strong>
+          <strong>{agent === "codex" ? "Codex" : t("Claude Code")}</strong>
           <small>
             {installation
-              ? `配置版本 ${installation.agentVersion}`
+              ? t("配置版本 {v0}", { v0: installation.agentVersion })
               : probe
-                ? `检测到 ${probe.version}`
-                : "尚未检测"}
+                ? t("检测到 {v0}", { v0: probe.version })
+                : t("尚未检测")}
           </small>
         </div>
         <span className="tag">{state}</span>
@@ -316,20 +321,20 @@ function AgentCard({
       {!installation && (
         <>
           <label className="field-label" htmlFor={`agent-program-${agent}`}>
-            程序路径
+            {t("程序路径")}
           </label>
-          <input
+          <Input
             id={`agent-program-${agent}`}
             value={path}
             disabled={!available || busy}
-            placeholder="Agent 程序的绝对路径"
+            placeholder={t("Agent 程序的绝对路径")}
             onChange={(e) => {
               setEdited(true);
               setPath(e.target.value);
               setProbe(null);
             }}
           />
-          <button
+          <Button
             className="button compact"
             disabled={!available || busy || !path.trim()}
             onClick={() =>
@@ -343,8 +348,8 @@ function AgentCard({
             }
           >
             <ArrowClockwise size={14} />
-            检测版本
-          </button>
+            {t("检测版本")}
+          </Button>
         </>
       )}
       {fault && (
@@ -356,9 +361,9 @@ function AgentCard({
         <p className="data-warning">{installation.issue}</p>
       )}
       <label className="field-label" htmlFor={`hook-worktree-${agent}`}>
-        Worktree
+        {t("Worktree")}
       </label>
-      <select
+      <Select
         id={`hook-worktree-${agent}`}
         value={selected}
         disabled={busy || !!preview}
@@ -367,31 +372,31 @@ function AgentCard({
           setSelected(e.target.value);
         }}
       >
-        <option value="">选择 Worktree</option>
+        <option value="">{t("选择 Worktree")}</option>
         {workspaces.map((w) => (
           <option key={w.id} value={w.id}>
             {w.name} · {w.path}
           </option>
         ))}
-      </select>
+      </Select>
       {selected && !trusted && (
-        <p className="inline-help">请先信任此 Worktree，再开启观察。</p>
+        <p className="inline-help">{t("请先信任此 Worktree，再开启观察。")}</p>
       )}
       <p className="inline-help">
-        开启后记录 Session、工具名称与文件路径。以下内容单独授权：
+        {t("开启后记录 Session、工具名称与文件路径。以下内容单独授权：")}
       </p>
       <div className="hook-field-grid">
         {(
           [
             ["prompt", "Prompt"],
-            ["command", "Command"],
-            ["reply", "Agent reply"],
-            ["output", "Tool output"],
-            ["background", "关闭 Proof 后继续观察"],
+            ["command", t("Command")],
+            ["reply", t("Agent reply")],
+            ["output", t("Tool output")],
+            ["background", t("关闭 Proof 后继续观察")],
           ] as const
         ).map(([key, label]) => (
           <label key={key}>
-            <input
+            <Input
               type="checkbox"
               checked={fields[key]}
               disabled={!available || busy || !!preview}
@@ -408,25 +413,26 @@ function AgentCard({
         <>
           <HookConfigPreview preview={preview} />
           <div className="hook-actions">
-            <button className="button" disabled={busy} onClick={cancel}>
-              取消
-            </button>
-            <button
+            <Button className="button" disabled={busy} onClick={cancel}>
+              {t("取消")}
+            </Button>
+            <Button
               className="button primary"
               disabled={busy}
               onClick={() => void run(apply)}
             >
               {busy
-                ? "应用中…"
+                ? t("应用中…")
                 : preview.action === "install"
-                  ? "安装并开启观察"
-                  : "移除 Hook"}
-            </button>
+                  ? t("安装并开启观察")
+                  : t("移除 Hook")}
+            </Button>
           </div>
           {preview.action === "uninstall" && (
             <p className="inline-help">
-              移除该 Agent 的 Proof Hook，会暂停所有已授权
-              Worktree；已有记录保留。
+              {t(
+                "移除该 Agent 的 Proof Hook，会暂停所有已授权 Worktree；已有记录保留。",
+              )}
             </p>
           )}
         </>
@@ -434,7 +440,7 @@ function AgentCard({
         <div className="hook-actions">
           {installation ? (
             <>
-              <button
+              <Button
                 className="button primary"
                 disabled={
                   !available ||
@@ -455,16 +461,16 @@ function AgentCard({
                     });
                     if (mounted.current) {
                       setDirty(false);
-                      setNotice("此 Worktree 的观察已开启。");
+                      setNotice(t("此 Worktree 的观察已开启。"));
                       onChanged();
                     }
                   })
                 }
               >
-                {consent?.enabled ? "保存采集设置" : "开启观察"}
-              </button>
+                {consent?.enabled ? t("保存采集设置") : t("开启观察")}
+              </Button>
               {consent?.enabled && (
-                <button
+                <Button
                   className="button"
                   disabled={busy}
                   onClick={() =>
@@ -483,10 +489,10 @@ function AgentCard({
                     })
                   }
                 >
-                  暂停
-                </button>
+                  {t("暂停")}
+                </Button>
               )}
-              <button
+              <Button
                 className="button"
                 disabled={busy}
                 onClick={() =>
@@ -499,18 +505,18 @@ function AgentCard({
                   })
                 }
               >
-                卸载…
-              </button>
+                {t("卸载…")}
+              </Button>
             </>
           ) : (
-            <button
+            <Button
               className="button primary"
               disabled={
                 !available ||
                 busy ||
                 !trusted ||
                 agent !== "codex" ||
-                probe?.version !== "0.153.4"
+                !probe?.profile
               }
               onClick={() =>
                 void run(async () => {
@@ -527,25 +533,27 @@ function AgentCard({
                 })
               }
             >
-              预览安装…
-            </button>
+              {t("预览安装…")}
+            </Button>
           )}
         </div>
       )}
       {installation?.lastEventAt && (
         <p className="inline-help">
-          最近事件 {new Date(installation.lastEventAt).toLocaleString()} ·{" "}
-          {status?.serviceAvailable ? "采集器在线" : "采集器未连接"}
+          {t("最近事件 ")}
+          {new Date(installation.lastEventAt).toLocaleString(
+            getLanguage(),
+          )} · {status?.serviceAvailable ? t("采集器在线") : t("采集器未连接")}
         </p>
       )}
       {notice && (
         <p role="status" className="inline-help">
-          {notice}
+          {uiMessage(notice)}
         </p>
       )}
       {error && (
         <p role="alert" className="data-warning">
-          {error.message}
+          {uiMessage(error.message)}
           <small>{error.code}</small>
         </p>
       )}

@@ -1,3 +1,5 @@
+import { Button, Input } from "./ui/controls";
+import { t, getLanguage } from "../i18n";
 import { useEffect, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
@@ -27,7 +29,10 @@ export function FileHistory({
   const [blame, setBlame] = useState<FileBlame | null>(null);
   const [offset, setOffset] = useState(0);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<ProofError | null>(null);
+  const [historyError, setHistoryError] = useState<ProofError | null>(null);
+  const [blameError, setBlameError] = useState<ProofError | null>(null);
+  const [historyRevision, setHistoryRevision] = useState(0);
+  const [blameRevision, setBlameRevision] = useState(0);
   const [search, setSearch] = useState("");
   const [historicalPath, setHistoricalPath] = useState(path);
   const [activePath, setActivePath] = useState(path);
@@ -42,6 +47,7 @@ export function FileHistory({
   useEffect(() => {
     let active = true;
     setHistoryBusy(true);
+    setHistoryError(null);
     request<CommitEntry[]>("history", { workspaceId, path, offset: 0 })
       .then((rows) => {
         if (active) {
@@ -50,7 +56,7 @@ export function FileHistory({
         }
       })
       .catch((e) => {
-        if (active) setError(asError(e));
+        if (active) setHistoryError(asError(e));
       })
       .finally(() => {
         if (active) setHistoryBusy(false);
@@ -58,11 +64,11 @@ export function FileHistory({
     return () => {
       active = false;
     };
-  }, [workspaceId, path]);
+  }, [workspaceId, path, historyRevision]);
   useEffect(() => {
     let active = true;
     setBusy(true);
-    setError(null);
+    setBlameError(null);
     setBlame(null);
     request<FileBlame>("file_blame", {
       workspaceId,
@@ -77,7 +83,7 @@ export function FileHistory({
         }
       })
       .catch((e) => {
-        if (active) setError(asError(e));
+        if (active) setBlameError(asError(e));
       })
       .finally(() => {
         if (active) setBusy(false);
@@ -85,7 +91,7 @@ export function FileHistory({
     return () => {
       active = false;
     };
-  }, [workspaceId, activePath, revision, offset]);
+  }, [workspaceId, activePath, revision, offset, blameRevision]);
   const virtualizer = useVirtualizer({
     count: blame?.lines.length ?? 0,
     getScrollElement: () => scroller.current,
@@ -93,32 +99,42 @@ export function FileHistory({
     overscan: 15,
   });
   function select(oid: string | null) {
+    if (busy && oid === revision && activePath === path && offset === 0) return;
     setRevision(oid);
     setOffset(0);
     setActivePath(path);
     setHistoricalPath(path);
+    setBlameRevision((value) => value + 1);
   }
   return (
-    <Modal title="文件历史与 Blame" wide error={error} onClose={onClose}>
+    <Modal
+      title={t("文件历史与 Blame")}
+      wide
+      error={blameError ?? historyError}
+      onClose={onClose}
+    >
       <p className="file-history-path">{path}</p>
       <p className="inline-help">
-        作者来自 Git
-        历史。重命名追溯可能无法确定；若当前路径在旧提交中不存在，可填写当时路径。关闭后回到原来的
-        Diff 阅读位置。
+        {t(
+          "作者来自 Git 历史。重命名追溯可能无法确定；若当前路径在旧提交中不存在，可填写当时路径。关闭后回到原来的 Diff 阅读位置。",
+        )}
       </p>
       <div className="file-history-layout">
-        <aside className="file-history-commits" aria-label="文件提交历史">
-          <button
+        <aside className="file-history-commits" aria-label={t("文件提交历史")}>
+          <Button
             className={`file-history-current ${revision === null ? "active" : ""}`}
             onClick={() => select(null)}
           >
-            当前 Worktree · 含未提交变化
-          </button>
+            {t("当前 Worktree · 含未提交变化")}
+          </Button>
           <label className="file-history-search">
             <MagnifyingGlass size={15} />
-            <input
-              aria-label="搜索已加载的文件历史"
-              placeholder="搜索已加载历史…"
+            <Input
+              aria-label={t("搜索已加载的文件历史")}
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+              placeholder={t("搜索已加载历史…")}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -130,7 +146,7 @@ export function FileHistory({
                 .includes(search.toLowerCase()),
             )
             .map((c) => (
-              <button
+              <Button
                 key={c.oid}
                 className={`file-history-commit ${revision === c.oid ? "active" : ""}`}
                 onClick={() => select(c.oid)}
@@ -141,21 +157,36 @@ export function FileHistory({
                 </span>
                 <strong>{c.subject}</strong>
                 <small>
-                  {c.author} · {new Date(c.date).toLocaleDateString()}
+                  {c.author} ·{" "}
+                  {new Date(c.date).toLocaleDateString(getLanguage())}
                 </small>
-              </button>
+              </Button>
             ))}
           {!commits.length && (
             <p className="muted">
-              {historyBusy ? "正在读取文件历史…" : "此路径暂无提交历史。"}
+              {historyBusy
+                ? t("正在读取文件历史…")
+                : historyError
+                  ? t("文件历史读取失败。")
+                  : t("此路径暂无提交历史。")}
             </p>
           )}
+          {historyError && !commits.length && (
+            <Button
+              className="button compact"
+              disabled={historyBusy}
+              onClick={() => setHistoryRevision((value) => value + 1)}
+            >
+              {t("重新读取历史")}
+            </Button>
+          )}
           {more && (
-            <button
+            <Button
               className="button compact"
               disabled={historyBusy}
               onClick={() => {
                 setHistoryBusy(true);
+                setHistoryError(null);
                 request<CommitEntry[]>("history", {
                   workspaceId,
                   path,
@@ -168,51 +199,59 @@ export function FileHistory({
                     }
                   })
                   .catch((e) => {
-                    if (alive.current) setError(asError(e));
+                    if (alive.current) setHistoryError(asError(e));
                   })
                   .finally(() => {
                     if (alive.current) setHistoryBusy(false);
                   });
               }}
             >
-              加载更多历史
-            </button>
+              {t("加载更多历史")}
+            </Button>
           )}
         </aside>
-        <section className="file-blame" aria-label="所选版本的逐行归属">
+        <section className="file-blame" aria-label={t("所选版本的逐行归属")}>
           <header className="blame-header">
             <strong>
-              {revision ? `提交 ${revision.slice(0, 12)}` : "当前 Worktree"}
+              {revision
+                ? t("提交 {v0}", { v0: revision.slice(0, 12) })
+                : t("当前 Worktree")}
             </strong>
-            <span>{blame ? `${blame.totalLines} 行` : ""}</span>
+            <span>{blame ? t("{v0} 行", { v0: blame.totalLines }) : ""}</span>
           </header>
           {revision && (
             <form
               className="historical-path"
               onSubmit={(e) => {
                 e.preventDefault();
+                if (busy) return;
                 setOffset(0);
                 setActivePath(historicalPath);
+                setBlameRevision((value) => value + 1);
               }}
             >
-              <label htmlFor="historical-path">版本内路径</label>
-              <input
+              <label htmlFor="historical-path">{t("版本内路径")}</label>
+              <Input
                 id="historical-path"
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
                 value={historicalPath}
                 onChange={(e) => setHistoricalPath(e.target.value)}
               />
-              <button
+              <Button
+                type="submit"
                 className="button compact"
                 disabled={busy || !historicalPath}
               >
-                读取
-              </button>
+                {t("读取")}
+              </Button>
             </form>
           )}
           <div className="blame-scroll" ref={scroller}>
             {busy ? (
               <p className="empty-list" role="status">
-                正在读取所选版本…
+                {t("正在读取所选版本…")}
               </p>
             ) : blame ? (
               <div
@@ -232,13 +271,13 @@ export function FileHistory({
                     >
                       <span
                         className="blame-author"
-                        title={`${line.summary}\n${line.originPath}:${line.originalLine}${line.authorTime ? `\n${new Date(line.authorTime * 1000).toLocaleString()}` : ""}`}
+                        title={`${line.summary}\n${line.originPath}:${line.originalLine}${line.authorTime ? `\n${new Date(line.authorTime * 1000).toLocaleString(getLanguage())}` : ""}`}
                       >
-                        <code>{line.oid?.slice(0, 8) ?? "未提交"}</code>
+                        <code>{line.oid?.slice(0, 8) ?? t("未提交")}</code>
                         <span>
                           {line.uncommitted
-                            ? "未提交变化"
-                            : (line.author ?? "作者未知")}
+                            ? t("未提交变化")
+                            : (line.author ?? t("作者未知"))}
                         </span>
                       </span>
                       <span className="blame-number">{line.line}</span>
@@ -248,38 +287,48 @@ export function FileHistory({
                 })}
               </div>
             ) : (
-              <p className="empty-list">
-                当前版本无法显示 Blame，请查看上方错误或选择其他提交。
-              </p>
+              <div className="empty-list">
+                <p>
+                  {t("当前版本无法显示 Blame，请查看上方错误或选择其他提交。")}
+                </p>
+                {blameError && (
+                  <Button
+                    className="button compact"
+                    onClick={() => setBlameRevision((value) => value + 1)}
+                  >
+                    {t("重新读取 Blame")}
+                  </Button>
+                )}
+              </div>
             )}
             {blame?.totalLines === 0 && (
-              <p className="empty-list">此版本为空文件。</p>
+              <p className="empty-list">{t("此版本为空文件。")}</p>
             )}
           </div>
           {blame && (
             <footer className="blame-footer">
-              <button
+              <Button
                 className="button compact"
                 disabled={busy || offset === 0}
                 onClick={() => setOffset(Math.max(0, offset - 400))}
               >
                 <ArrowLeft size={14} />
-                上一页
-              </button>
+                {t("上一页")}
+              </Button>
               <span>
                 {blame.totalLines
                   ? `${offset + 1}–${offset + blame.lines.length}`
                   : "0"}{" "}
                 / {blame.totalLines}
               </span>
-              <button
+              <Button
                 className="button compact"
                 disabled={busy || !blame.hasMore}
                 onClick={() => setOffset(offset + blame.lines.length)}
               >
-                下一页
+                {t("下一页")}
                 <ArrowRight size={14} />
-              </button>
+              </Button>
             </footer>
           )}
         </section>

@@ -218,7 +218,7 @@ impl Proof {
             Ok(self.store.connection.query_row(&format!("SELECT count(*) FROM {table} WHERE (? IS NULL OR workspace_id IN(SELECT id FROM workspaces WHERE repository_id=?))"),params![repository,repository],|r|r.get(0))?)
         };
         Ok(DataRecordCounts {
-            observer_events:count("observer_events")?,review_records:count("review_marks")?+count("review_events")?,operations:count("operations")?,recovery_points:count("recovery_points")?,
+            observer_events:count("observer_events")?,review_records:count("review_marks")?+count("review_events")?+count("ai_review_reports")?,operations:count("operations")?,recovery_points:count("recovery_points")?,
             recovery_bytes:self.store.connection.query_row("SELECT COALESCE(sum(reserved_bytes),0) FROM recovery_points WHERE (? IS NULL OR workspace_id IN(SELECT id FROM workspaces WHERE repository_id=?))",params![repository,repository],|r|r.get(0))?,
         })
     }
@@ -490,7 +490,7 @@ impl Proof {
             tx.execute("DELETE FROM observer_installations", [])?;
             tx.execute("DELETE FROM repository_layouts", [])?;
             tx.execute("DELETE FROM hidden_recent_workspaces", [])?;
-            tx.execute("DELETE FROM settings WHERE key NOT IN('data_epoch','data_client_wipe_epoch','observer_revision','editor:revision','data_cleanup_pending','data_cleanup_completed')",[])?;
+            tx.execute("DELETE FROM settings WHERE key NOT IN('data_epoch','data_client_wipe_epoch','observer_revision','context_history_epoch','editor:revision','data_cleanup_pending','data_cleanup_completed')",[])?;
             tx.execute("DELETE FROM data_client_deletions", [])?;
             tx.execute(
                 "UPDATE settings SET value=? WHERE key='data_client_wipe_epoch'",

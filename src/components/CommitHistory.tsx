@@ -1,3 +1,6 @@
+import { DropdownMenuItem as MenuItem } from "./ui/dropdown-menu";
+import { Input, Button, Select } from "./ui/controls";
+import { uiMessage, t, getLanguage } from "../i18n";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
 import {
@@ -21,7 +24,14 @@ import type {
 import { type HistoryComparison } from "./HistoryDiff";
 import { demoGraphPage } from "../graph-demo";
 import {
+  GitContextMenu,
+  HistoryTargetActions,
+  HistoryMoreButton,
+} from "./HistoryActions";
+import type { HistoryActions } from "./HistoryActions";
+import {
   GRAPH_ROW_HEIGHT,
+  GRAPH_ROW_CENTER,
   graphPath,
   graphX,
   layoutCommitGraph,
@@ -36,7 +46,13 @@ export function CommitHistory({
   onBranches,
   onOpenDiff,
   requestedComparison,
+  actions,
+  branches,
+  onBranchMenu,
 }: {
+  actions: HistoryActions;
+  branches: BranchEntry[];
+  onBranchMenu: (event: React.MouseEvent, branch: BranchEntry) => void;
   changes: Changes;
   demo: boolean;
   scope: string;
@@ -62,19 +78,7 @@ export function CommitHistory({
   useEffect(() => {
     setBranchComparison(requestedComparison ?? null);
   }, [requestedComparison]);
-  useEffect(() => {
-    if (!menu) return;
-    const close = () => setMenu(null);
-    const key = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
-    };
-    document.addEventListener("pointerdown", close);
-    document.addEventListener("keydown", key);
-    return () => {
-      document.removeEventListener("pointerdown", close);
-      document.removeEventListener("keydown", key);
-    };
-  }, [menu]);
+
   const [error, setError] = useState<ProofError | null>(null);
   const [busy, setBusy] = useState(false);
   const [revision, setRevision] = useState(0);
@@ -122,6 +126,7 @@ export function CommitHistory({
     demo,
     scope,
     revision,
+    actions.revision,
   ]);
 
   const graph = useMemo(() => layoutCommitGraph(commits), [commits]);
@@ -214,12 +219,12 @@ export function CommitHistory({
   }
   const scopeName =
     scope === "all"
-      ? "所有分支"
+      ? t("所有分支")
       : scope === "current"
-        ? "当前分支"
+        ? t("当前分支")
         : (scopeLabel ??
           page?.branches.find((branch) => branch.oid === scope)?.name ??
-          "选中引用");
+          t("选中引用"));
   const ordered =
     selected && compared
       ? [selected, compared].sort(
@@ -245,102 +250,111 @@ export function CommitHistory({
             parent,
             unavailable:
               selected.boundary === "shallow"
-                ? "父版本尚未获取，无法显示此次提交的变化。"
+                ? t("父版本尚未获取，无法显示此次提交的变化。")
                 : undefined,
           }
         : null);
   const range = !!branchComparison || !!compared;
   return (
-    <section className="commit-history" aria-label="Git 提交图">
+    <section className="commit-history" aria-label={t("Git 提交图")}>
       <header className="graph-toolbar">
         <div className="graph-heading">
           <GitBranch size={21} />
-          <h2>提交图</h2>
-          <span className="graph-loaded">{commits.length} 条</span>
+          <h2>{t("提交图")}</h2>
+          <span className="graph-loaded">
+            {commits.length} {t(" 条")}
+          </span>
         </div>
         <div className="graph-search">
           <MagnifyingGlass size={16} />
-          <input
-            aria-label="搜索已加载的提交"
-            placeholder="搜索提交、作者、分支或 ID…"
+          <Input
+            aria-label={t("搜索已加载的提交")}
+            placeholder={t("搜索提交、作者、分支或 ID…")}
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
           {query ? (
             <>
-              <span>{matches.length} 个匹配</span>
-              <button
+              <span>
+                {matches.length} {t(" 个匹配")}
+              </span>
+              <Button
                 className="icon-button"
-                aria-label="上一个匹配提交"
+                aria-label={t("上一个匹配提交")}
                 disabled={!matches.length}
                 onClick={() => findMatch(-1)}
               >
                 <ArrowUp size={14} />
-              </button>
-              <button
+              </Button>
+              <Button
                 className="icon-button"
-                aria-label="下一个匹配提交"
+                aria-label={t("下一个匹配提交")}
                 disabled={!matches.length}
                 onClick={() => findMatch(1)}
               >
                 <ArrowDown size={14} />
-              </button>
-              <button
+              </Button>
+              <Button
                 className="icon-button"
-                aria-label="清空提交搜索"
+                aria-label={t("清空提交搜索")}
                 onClick={() => setSearch("")}
               >
                 <X size={14} />
-              </button>
+              </Button>
             </>
           ) : (
-            <span className="graph-search-hint">↑ ↓ 浏览提交</span>
+            <span className="graph-search-hint">{t("↑ ↓ 浏览提交")}</span>
           )}
         </div>
-        <select
+        <Select
           value={scope}
-          aria-label="提交图范围"
+          aria-label={t("提交图范围")}
           onChange={(event) => onScope(event.target.value)}
         >
-          <option value="all">所有分支</option>
-          <option value="current">当前分支</option>
+          <option value="all">{t("所有分支")}</option>
+          <option value="current">{t("当前分支")}</option>
           {scope !== "all" && scope !== "current" && (
             <option value={scope}>{scopeName}</option>
           )}
-        </select>
-        <button
+        </Select>
+        <Button
           className="icon-button"
-          aria-label="刷新提交图"
-          title="重新读取本地引用"
-          onClick={() => setRevision((value) => value + 1)}
+          aria-label={t("刷新提交图")}
+          title={t("重新读取本地引用")}
+          onClick={actions.refresh}
           disabled={busy}
         >
           <ArrowClockwise size={17} className={busy ? "spinning" : ""} />
-        </button>
+        </Button>
       </header>
       {error && (
         <div className="graph-error" role="alert">
           <span>
-            {error.message} <code>{error.code}</code>
+            {uiMessage(error.message)} <code>{error.code}</code>
           </span>
-          <button
+          <Button
             className="button compact"
             onClick={() => setRevision((value) => value + 1)}
           >
-            重新加载
-          </button>
+            {t("重新加载")}
+          </Button>
         </div>
       )}
       <div
         className="graph-table-wrap"
-        style={{ "--graph-width": `${graphWidth}px` } as React.CSSProperties}
+        style={
+          {
+            "--graph-width": `${graphWidth}px`,
+            "--graph-row-height": `${GRAPH_ROW_HEIGHT}px`,
+          } as React.CSSProperties
+        }
       >
         <div className="graph-columns" ref={columnHeader}>
-          <span>分支图</span>
-          <span>提交说明</span>
-          <span>作者</span>
-          <span>作者时间</span>
-          <span>提交</span>
+          <span>{t("分支图")}</span>
+          <span>{t("提交说明")}</span>
+          <span>{t("作者")}</span>
+          <span>{t("作者时间")}</span>
+          <span>{t("提交")}</span>
         </div>
         <div
           className="graph-scroll"
@@ -351,7 +365,7 @@ export function CommitHistory({
           }}
           role="listbox"
           aria-multiselectable="true"
-          aria-label="提交列表与分支关系"
+          aria-label={t("提交列表与分支关系")}
           tabIndex={0}
           aria-busy={busy}
           aria-activedescendant={
@@ -367,6 +381,25 @@ export function CommitHistory({
               event.ctrlKey
             )
               return;
+            if (
+              event.key === "ContextMenu" ||
+              (event.key === "F10" && event.shiftKey)
+            ) {
+              event.preventDefault();
+              if (selected) {
+                const rect = document
+                  .getElementById(
+                    `graph-commit-${page?.snapshotId}-${selected.oid}`,
+                  )
+                  ?.getBoundingClientRect();
+                setMenu({
+                  commit: selected,
+                  x: rect?.left ?? 300,
+                  y: rect?.bottom ?? 150,
+                });
+              }
+              return;
+            }
             const index = commits.findIndex(
               (commit) => commit.oid === (compared ?? selected)?.oid,
             );
@@ -399,7 +432,7 @@ export function CommitHistory({
                   )
                 : selected?.oid === commit.oid || compared?.oid === commit.oid;
               return (
-                <button
+                <div
                   key={commit.oid}
                   id={`graph-commit-${page?.snapshotId}-${commit.oid}`}
                   className={`graph-row ${selectedRow ? "is-active" : ""} ${query && !matching.has(item.index) ? "is-dimmed" : ""}`}
@@ -423,7 +456,7 @@ export function CommitHistory({
                       parents: commit.parents,
                       unavailable:
                         commit.boundary === "shallow"
-                          ? "父版本尚未获取。"
+                          ? t("父版本尚未获取。")
                           : undefined,
                     })
                   }
@@ -435,12 +468,13 @@ export function CommitHistory({
                       y: Math.min(event.clientY, window.innerHeight - 120),
                     });
                   }}
-                  aria-label={`${commit.subject}，${commit.author}，${commit.oid.slice(0, 8)}${commit.parents.length > 1 ? `，合并 ${commit.parents.length} 个父提交` : ""}`}
+                  aria-label={`${commit.subject}，${commit.author}，${commit.oid.slice(0, 8)}${commit.parents.length > 1 ? t("，合并 {v0} 个父提交", { v0: commit.parents.length }) : ""}`}
                 >
                   <svg
                     className="graph-lanes"
                     width={graphWidth}
                     height={GRAPH_ROW_HEIGHT}
+                    viewBox={`0 0 ${graphWidth} ${GRAPH_ROW_HEIGHT}`}
                     aria-hidden="true"
                   >
                     {row.through.map((line, index) => (
@@ -452,42 +486,80 @@ export function CommitHistory({
                     ))}
                     {row.incoming && (
                       <path
-                        d={graphPath(row.column, row.column, 0, 20)}
+                        d={graphPath(
+                          row.column,
+                          row.column,
+                          0,
+                          GRAPH_ROW_CENTER,
+                        )}
                         className={`lane-color-${row.color % 7}`}
                       />
                     )}
                     {row.parents.map((line) => (
                       <path
                         key={line.parent}
-                        d={graphPath(line.from, line.to, 20, 40)}
+                        d={graphPath(line.from, line.to, GRAPH_ROW_CENTER)}
                         className={`lane-color-${line.color % 7}`}
                       />
                     ))}
                     {selectedRow && (
                       <circle
                         cx={graphX(row.column)}
-                        cy={20}
+                        cy={GRAPH_ROW_CENTER}
                         r={9}
                         className={`graph-node-halo lane-color-${row.color % 7}`}
                       />
                     )}
                     <circle
                       cx={graphX(row.column)}
-                      cy={20}
+                      cy={GRAPH_ROW_CENTER}
                       r={commit.parents.length > 1 ? 5 : 4}
                       className={`graph-node lane-color-${row.color % 7} ${commit.parents.length > 1 ? "is-merge" : ""}`}
                     />
                   </svg>
                   <span className="graph-subject">
                     {commit.boundary === "shallow" && (
-                      <span className="graph-boundary">历史边界</span>
+                      <span className="graph-boundary">{t("历史边界")}</span>
                     )}
-                    {commit.refs && (
-                      <span className="graph-ref" title={commit.refs}>
-                        <GitBranch size={12} />
-                        {commit.refs}
-                      </span>
-                    )}
+                    {branches
+                      .filter((branch) => branch.oid === commit.oid)
+                      .map((branch) => (
+                        <Button
+                          key={`${branch.remote}:${branch.name}`}
+                          className="graph-ref"
+                          title={branch.name}
+                          aria-label={t("{v0} 的 Branch 操作", {
+                            v0: branch.name,
+                          })}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onBranchMenu(event, branch);
+                          }}
+                          onDoubleClick={(event) => event.stopPropagation()}
+                          onContextMenu={(event) => {
+                            event.stopPropagation();
+                            onBranchMenu(event, branch);
+                          }}
+                        >
+                          <GitBranch size={12} />
+                          {branch.name}
+                        </Button>
+                      ))}
+                    {commit.refs
+                      .split(", ")
+                      .filter((ref) => ref.startsWith("tag: "))
+                      .map((ref) => (
+                        <span className="graph-ref" key={ref} title={ref}>
+                          {ref}
+                        </span>
+                      ))}
+                    {commit.refs &&
+                      !branches.some((branch) => branch.oid === commit.oid) &&
+                      !commit.refs.includes("tag: ") && (
+                        <span className="graph-ref" title={commit.refs}>
+                          {commit.refs}
+                        </span>
+                      )}
                     <span title={commit.subject}>{commit.subject}</span>
                     {commit.parents.length > 1 && (
                       <GitMerge size={14} className="graph-merge-icon" />
@@ -500,13 +572,13 @@ export function CommitHistory({
                     <span title={commit.author}>{commit.author}</span>
                   </span>
                   <time dateTime={commit.date} title={commit.date}>
-                    {new Date(commit.date).toLocaleDateString("zh-CN", {
+                    {new Date(commit.date).toLocaleDateString(getLanguage(), {
                       month: "2-digit",
                       day: "2-digit",
                     })}
                   </time>
                   <code>{commit.oid.slice(0, 8)}</code>
-                </button>
+                </div>
               );
             })}
           </div>
@@ -515,15 +587,15 @@ export function CommitHistory({
               <GitCommit size={28} />
               <strong>
                 {busy
-                  ? "正在读取提交关系…"
+                  ? t("正在读取提交关系…")
                   : error
-                    ? "提交图暂不可用"
-                    : "还没有提交"}
+                    ? t("提交图暂不可用")
+                    : t("还没有提交")}
               </strong>
               <span>
                 {busy
-                  ? "根据本地 Git 对象构建分支图"
-                  : "提交记录会在这里形成可追踪的历史。"}
+                  ? t("根据本地 Git 对象构建分支图")
+                  : t("提交记录会在这里形成可追踪的历史。")}
               </span>
             </div>
           )}
@@ -531,98 +603,123 @@ export function CommitHistory({
         <footer className="graph-table-footer">
           <span>
             {demo
-              ? "演示历史"
-              : `本地历史快照 ${page ? new Date(page.capturedAt).toLocaleTimeString("zh-CN", { hour12: false }) : ""}`}
-            {page?.shallow ? " · 浅克隆，历史可能不完整" : ""}
-            {query ? " · 保留完整连线，突出搜索匹配" : ""}
+              ? t("演示历史")
+              : t("本地历史快照 {v0}", {
+                  v0: page
+                    ? new Date(page.capturedAt).toLocaleTimeString(
+                        getLanguage(),
+                        { hour12: false },
+                      )
+                    : "",
+                })}
+            {page?.shallow ? t(" · 浅克隆，历史可能不完整") : ""}
+            {query ? t(" · 保留完整连线，突出搜索匹配") : ""}
           </span>
           <div className="toolbar-spacer" />
           {page?.hasMore ? (
-            <button
+            <Button
               disabled={busy}
               onClick={() => {
                 void more();
               }}
             >
-              {busy ? "正在加载…" : "加载更早的 100 条提交"}
+              {busy ? t("正在加载…") : t("加载更早的 100 条提交")}
               <ArrowDown size={13} />
-            </button>
+            </Button>
           ) : (
             <span>
               {commits.length
                 ? graph.remaining.length ||
                   commits.some((commit) => commit.boundary === "shallow")
-                  ? "已到本地历史边界"
-                  : `全部 ${commits.length} 条已加载`
+                  ? t("已到本地历史边界")
+                  : t("全部 {v0} 条已加载", { v0: commits.length })
                 : ""}
             </span>
           )}
         </footer>
       </div>
-      <section className="history-inspector" aria-label="所选提交详情">
+      <section className="history-inspector" aria-label={t("所选提交详情")}>
         <header className="history-selection-header">
           <GitCommit size={16} />
           <div>
             <strong>
               {range
                 ? branchComparison
-                  ? "Branch comparison"
-                  : "2 commits selected"
-                : (selected?.subject ?? "选择 Commit")}
+                  ? t("Branch comparison")
+                  : t("2 commits selected")
+                : (selected?.subject ?? t("选择 Commit"))}
             </strong>
             <small>
               {range
-                ? "比较所选两个版本的文件内容"
+                ? t("比较所选两个版本的文件内容")
                 : selected
-                  ? `${selected.oid.slice(0, 8)} · ${selected.author} · ${new Date(selected.date).toLocaleString()}`
-                  : "双击 Commit 查看 Diff；Shift / ⌘ / Ctrl + 点击另一个 Commit 比较"}
+                  ? `${selected.oid.slice(0, 8)} · ${selected.author} · ${new Date(selected.date).toLocaleString(getLanguage())}`
+                  : t(
+                      "双击 Commit 查看 Diff；Shift / ⌘ / Ctrl + 点击另一个 Commit 比较",
+                    )}
             </small>
           </div>
           {range ? (
-            <button
+            <Button
               className="button compact"
               onClick={() => {
                 setCompared(null);
                 setBranchComparison(null);
               }}
             >
-              结束比较
-            </button>
+              {t("结束比较")}
+            </Button>
           ) : selected && selected.parents.length > 1 ? (
-            <select
-              aria-label="比较父提交"
+            <Select
+              aria-label={t("比较父提交")}
               value={parent}
               onChange={(e) => setParent(Number(e.target.value))}
             >
               {selected.parents.map((oid, index) => (
                 <option key={oid} value={index}>
-                  Parent {index + 1} · {oid.slice(0, 8)}
+                  {t("Parent ")}
+                  {index + 1} · {oid.slice(0, 8)}
                 </option>
               ))}
-            </select>
+            </Select>
           ) : (
             <span className="history-select-hint">
-              Double-click to open Diff
+              {t("Double-click to open Diff")}
             </span>
           )}
         </header>
+        {selected && (
+          <HistoryMoreButton
+            label={t("所选 Commit 的操作")}
+            onClick={(event) => {
+              const rect = event.currentTarget.getBoundingClientRect();
+              setMenu({ commit: selected, x: rect.left, y: rect.bottom + 4 });
+            }}
+          />
+        )}
         {comparison && (
-          <button
+          <Button
             className="button compact history-open-diff"
             onClick={() => onOpenDiff(comparison)}
           >
-            在新 tab 中查看 Diff
-          </button>
+            {t("在新 tab 中查看 Diff")}
+          </Button>
         )}
       </section>
       {menu && (
-        <div
-          className="history-context-menu"
-          role="menu"
-          style={{ left: menu.x, top: menu.y }}
-          onPointerDown={(e) => e.stopPropagation()}
+        <GitContextMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          label={t("Commit 操作")}
         >
-          <button
+          <HistoryTargetActions
+            target={{ type: "commit", commit: menu.commit }}
+            actions={actions}
+            changes={changes}
+            onClose={() => setMenu(null)}
+          />
+          <MenuItem
             role="menuitem"
             disabled={!selected || selected.oid === menu.commit.oid}
             onClick={() => {
@@ -633,9 +730,9 @@ export function CommitHistory({
               setMenu(null);
             }}
           >
-            与所选 Commit 比较
-          </button>
-          <button
+            {t("与所选 Commit 比较")}
+          </MenuItem>
+          <MenuItem
             role="menuitem"
             onClick={() => {
               select(commits.findIndex((c) => c.oid === menu.commit.oid));
@@ -645,15 +742,15 @@ export function CommitHistory({
                 parents: menu.commit.parents,
                 unavailable:
                   menu.commit.boundary === "shallow"
-                    ? "父版本尚未获取。"
+                    ? t("父版本尚未获取。")
                     : undefined,
               });
               setMenu(null);
             }}
           >
-            查看此 Commit 的变化
-          </button>
-        </div>
+            {t("查看此 Commit 的变化")}
+          </MenuItem>
+        </GitContextMenu>
       )}
     </section>
   );

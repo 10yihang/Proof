@@ -30,6 +30,53 @@ const hunk = (lines: DiffLine[]): Hunk => ({
 });
 
 describe("immutable Diff reading", () => {
+  it("reduces context one line at a time without hiding changes or changing review units", () => {
+    const diff = demoDiff(demoChanges.files[0]);
+    diff.hunks = [
+      hunk([
+        line("context", "before 1", 1),
+        line("context", "before 2", 2),
+        line("context", "before 3", 3),
+        line("delete", "old", 4),
+        line("add", "new", 4),
+        line("context", "after 1", 5),
+        line("context", "after 2", 6),
+        line("context", "after 3", 7),
+      ]),
+    ];
+    const original = JSON.stringify(diff);
+    for (const count of [0, 1, 2, 3])
+      for (const split of [false, true]) {
+        const rows = readingRows(diff, split, false, {
+          snapshotId: diff.id,
+          contextLines: count,
+          fullFile: false,
+          gaps: [],
+        });
+        const visible = new Set(
+          rows.flatMap((row) =>
+            row.kind === "line"
+              ? [row.left, row.right]
+                  .filter(Boolean)
+                  .map((line) => line!.content)
+              : [],
+          ),
+        );
+        expect(visible.has("old")).toBe(true);
+        expect(visible.has("new")).toBe(true);
+        expect(
+          [...visible].filter(
+            (text) => text.startsWith("before") || text.startsWith("after"),
+          ),
+        ).toHaveLength(count * 2);
+        expect(
+          rows
+            .filter((row) => row.kind === "header")
+            .map((row) => row.kind === "header" && row.hunk.id),
+        ).toEqual(["unit"]);
+      }
+    expect(JSON.stringify(diff)).toBe(original);
+  });
   it("only folds paired whitespace replacements, preserving semantic changes and actual counts", () => {
     const diff = demoDiff(demoChanges.files[1]);
     const captured = JSON.stringify(diff);
@@ -121,7 +168,7 @@ describe("immutable Diff reading", () => {
       }),
     );
     expect(html).not.toContain("<script>");
-    expect(html).toContain("&lt;script&gt;");
+    expect(html.replace(/<[^>]*>/g, "")).toContain("&lt;script&gt;");
     expect(html).toContain("visible-tab");
     expect(html).not.toContain("→"); // whitespace glyphs are CSS only, never copied text
   });

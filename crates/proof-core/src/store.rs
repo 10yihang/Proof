@@ -20,7 +20,7 @@ impl Store {
         let connection = Connection::open(path.join("proof.sqlite3"))?;
         connection.busy_timeout(std::time::Duration::from_secs(3))?;
         let version: u32 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        if version > 6 {
+        if version > 7 {
             return Err(Error::new(
                 "DATABASE_VERSION",
                 "本地数据由更新版本的 Proof 创建，请使用对应版本打开。",
@@ -38,6 +38,10 @@ impl Store {
             CREATE TABLE IF NOT EXISTS review_events (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
                 unit_id TEXT NOT NULL, reviewed INTEGER NOT NULL, source TEXT NOT NULL, origin_unit_id TEXT, created_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS change_groups (workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE, revision INTEGER NOT NULL, value TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS comparison_change_groups (workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE, base_oid TEXT NOT NULL, target_oid TEXT NOT NULL, revision INTEGER NOT NULL, value TEXT NOT NULL, PRIMARY KEY(workspace_id,base_oid,target_oid));
+            CREATE TABLE IF NOT EXISTS ai_review_reports (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE, scope_key TEXT NOT NULL, captured_at INTEGER NOT NULL, revision INTEGER NOT NULL, value TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS ai_review_scope ON ai_review_reports(workspace_id,scope_key,captured_at DESC);
             CREATE TABLE IF NOT EXISTS repository_layouts (repository_id TEXT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS hidden_recent_workspaces (workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE);
             CREATE TABLE IF NOT EXISTS data_client_deletions (workspace_id TEXT PRIMARY KEY);
@@ -45,6 +49,7 @@ impl Store {
             INSERT OR IGNORE INTO settings VALUES('data_epoch','0');
             INSERT OR IGNORE INTO settings VALUES('data_client_wipe_epoch','0');
             INSERT OR IGNORE INTO settings VALUES('observer_revision','0');
+            INSERT OR IGNORE INTO settings VALUES('context_history_epoch','0');
             CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, kind TEXT NOT NULL, result TEXT NOT NULL, created_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS recovery_points (id TEXT PRIMARY KEY,
                 workspace_id TEXT NOT NULL REFERENCES workspaces(id), point TEXT NOT NULL,
@@ -75,7 +80,11 @@ impl Store {
                 payload TEXT NOT NULL, created_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS observer_gaps (id TEXT PRIMARY KEY, installation_id TEXT, workspace_id TEXT, code TEXT NOT NULL,
                 count INTEGER, started_at INTEGER NOT NULL, ended_at INTEGER);
-            PRAGMA user_version=6;")?;
+            CREATE INDEX IF NOT EXISTS observer_association_order ON observer_association_history(workspace_id,path,CAST(COALESCE(json_extract(CASE WHEN json_valid(payload) THEN payload ELSE '{}' END,'$.sequence'),0) AS INTEGER) DESC);
+            CREATE TRIGGER IF NOT EXISTS observer_association_history_deleted AFTER DELETE ON observer_association_history BEGIN
+                UPDATE settings SET value=CAST(value AS INTEGER)+1 WHERE key='context_history_epoch';
+            END;
+            PRAGMA user_version=7;")?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -161,9 +170,14 @@ impl Store {
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
-    pub fn workspace(&self, id: &str) -> Result<Workspace> {
+    /// Local record lookup for stored metadata only. Git operations must use `workspace`.
+    pub fn recorded_workspace(&self, id: &str) -> Result<Workspace> {
         let workspace = self.connection.query_row("SELECT id,repository_id,name,path,git_dir,common_dir,trusted FROM workspaces WHERE id=?", [id], Self::read_workspace)
             .optional()?.ok_or_else(|| Error::new("WORKSPACE_MISSING", "请重新打开仓库。", "Unknown workspace id"))?;
+        Ok(workspace)
+    }
+    pub fn workspace(&self, id: &str) -> Result<Workspace> {
+        let workspace = self.recorded_workspace(id)?;
         let git = crate::git::Git {
             executable: self.preferences()?.git_path,
         };
@@ -207,16 +221,8 @@ impl Store {
         side: &str,
         unit: &str,
     ) -> Result<String> {
-        let exact: Option<bool> = self
-            .connection
-            .query_row(
-                "SELECT reviewed FROM review_marks WHERE workspace_id=? AND unit_id=?",
-                params![workspace, unit],
-                |row| row.get(0),
-            )
-            .optional()?;
-        if let Some(reviewed) = exact {
-            return Ok(if reviewed { "reviewed" } else { "unreviewed" }.into());
+        if let Some(state) = self.exact_review_state(workspace, unit)? {
+            return Ok(state);
         }
         let had_review: bool = self.connection.query_row("SELECT EXISTS(SELECT 1 FROM review_marks WHERE workspace_id=? AND path=? AND side=? AND reviewed=1)", params![workspace,path,side], |row| row.get(0))?;
         Ok(if had_review {
@@ -225,6 +231,33 @@ impl Store {
             "unreviewed"
         }
         .into())
+    }
+    /// Immutable comparisons do not infer a mark from another unit in the file.
+    pub fn exact_review_state(&self, workspace: &str, unit: &str) -> Result<Option<String>> {
+        let exact: Option<bool> = self
+            .connection
+            .query_row(
+                "SELECT reviewed FROM review_marks WHERE workspace_id=? AND unit_id=?",
+                params![workspace, unit],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(exact.map(|reviewed| if reviewed { "reviewed" } else { "unreviewed" }.into()))
+    }
+    /// All units share one SQLite read snapshot, including writes from other processes.
+    pub fn review_states(
+        &self,
+        workspace: &str,
+        units: &[&str],
+    ) -> Result<std::collections::HashMap<String, bool>> {
+        let mut statement = self.connection.prepare(
+            "SELECT unit_id, reviewed FROM review_marks WHERE workspace_id=? AND unit_id IN (SELECT value FROM json_each(?))",
+        )?;
+        let rows = statement
+            .query_map(params![workspace, serde_json::to_string(units)?], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?))
+            })?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
     pub fn mark(
         &mut self,
@@ -281,6 +314,12 @@ impl Store {
         }
         tx.commit()?;
         Ok(())
+    }
+    pub fn has_reviewed_units(&self, workspace: &str, units: &[&str]) -> Result<bool> {
+        Ok(self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM review_marks WHERE workspace_id=? AND reviewed=1 AND unit_id IN (SELECT value FROM json_each(?)))",
+            params![workspace,serde_json::to_string(units)?], |row| row.get(0),
+        )?)
     }
     pub fn preferences(&self) -> Result<Preferences> {
         let value: Option<String> = self

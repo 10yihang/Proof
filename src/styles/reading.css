@@ -25,6 +25,35 @@
   padding: 4px 7px;
   font-size: 11px;
 }
+.diff-search {
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+.diff-search input {
+  min-width: 130px;
+}
+.diff-search .segmented {
+  flex-shrink: 0;
+}
+.context-stepper {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  padding-inline: 5px;
+  border-inline: 1px solid var(--border);
+}
+.context-stepper output {
+  min-width: 22px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.context-stepper .button[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
 .diff-reading-options > span {
   color: var(--muted);
   margin-left: auto;
@@ -188,4 +217,91 @@
 .hidden-diff-lines,
 .split-width-hint {
   user-select: none;
+}
+.deferred-diff {
+  height: 100%;
+}
+.deferred-diff > .diff-topbar {
+  min-height: 78px;
+  align-items: center;
+}
+.deferred-diff .comparison {
+  padding: 0 16px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.deferred-diff-body {
+  margin: auto;
+  width: min(460px, calc(100% - 48px));
+  padding: 44px 24px;
+  text-align: center;
+  color: var(--muted);
+}
+.deferred-diff-body > svg {
+  color: var(--faint);
+}
+.deferred-diff-body h2 {
+  margin: 16px 0 6px;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text);
+}
+.deferred-diff-body p {
+  margin: 16px 0 20px;
+  line-height: 1.7;
+}
+.deferred-size {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.deferred-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 18px;
+}
+.deferred-diff-body small {
+  color: var(--faint);
+  font-size: 11px;
+}
+
+:root {
+  --syntax-function: #285fad;
+  --syntax-type: #116c61;
+  --syntax-number: #8c409c;
+  --syntax-property: #235c99;
+  --syntax-operator: #695196;
+  --syntax-punctuation: #657385;
+}
+:root[data-theme="dark"] {
+  --syntax-function: #e3c285;
+  --syntax-type: #72d7ba;
+  --syntax-number: #e2adf1;
+  --syntax-property: #91c7fb;
+  --syntax-operator: #c5b5f5;
+  --syntax-punctuation: #a9b5c5;
+}
+.syntax-function {
+  color: var(--syntax-function);
+}
+.syntax-type {
+  color: var(--syntax-type);
+}
+.syntax-number,
+.syntax-constant {
+  color: var(--syntax-number);
+}
+.syntax-property,
+.syntax-tag {
+  color: var(--syntax-property);
+}
+.syntax-operator {
+  color: var(--syntax-operator);
+}
+.syntax-punctuation {
+  color: var(--syntax-punctuation);
+}
+.syntax-variable {
+  color: var(--text);
 }

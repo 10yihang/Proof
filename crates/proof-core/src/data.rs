@@ -83,6 +83,10 @@ impl Proof {
             "DELETE FROM review_events WHERE created_at<=?",
             [review_cutoff],
         )?;
+        report.deleted_review_records += tx.execute(
+            "DELETE FROM ai_review_reports WHERE captured_at<=?",
+            [review_cutoff],
+        )?;
         report.deleted_operations = tx.execute(
             "DELETE FROM operations WHERE created_at<=?",
             [review_cutoff],
@@ -101,6 +105,8 @@ impl Proof {
             > 0
         {
             mark_cleanup_pending(&tx)?;
+            crate::diagnostics::invalidate_diagnostics(&tx)?;
+            self.diagnostic_previews.borrow_mut().clear();
         }
         tx.commit()?;
         let compacted = self.reclaim_database_space()?;
@@ -165,6 +171,8 @@ impl Proof {
         )?;
         trim_observer_gaps(&tx)?;
         mark_cleanup_pending(&tx)?;
+        crate::diagnostics::invalidate_diagnostics(&tx)?;
+        self.diagnostic_previews.borrow_mut().clear();
         tx.commit()?;
         let compacted = self.reclaim_database_space()?;
         report.wal_checkpoint_complete = self.finish_data_cleanup()?;

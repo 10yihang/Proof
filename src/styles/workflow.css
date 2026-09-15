@@ -405,6 +405,47 @@
   color: var(--muted);
   white-space: nowrap;
 }
+.diff-loading-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+  overflow: hidden;
+}
+.diff-loading-placeholder {
+  position: absolute;
+  inset: 0;
+  background: var(--bg);
+}
+.diff-loading-header {
+  height: 68px;
+  padding: 20px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.diff-loading-code {
+  padding: 42px 36px;
+  opacity: 0.4;
+}
+.diff-loading-code span {
+  display: block;
+  height: 9px;
+  max-width: 600px;
+  margin-bottom: 18px;
+  border-radius: 3px;
+  background: var(--border);
+}
+.diff-loading-footer {
+  position: absolute;
+  bottom: 0;
+  height: 48px;
+  width: 100%;
+  border-top: 1px solid var(--border);
+}
 .diff-loading {
   position: absolute;
   display: flex;
@@ -415,18 +456,20 @@
   transform: translate(-50%, -50%);
   color: var(--muted);
   font-size: 12px;
-  pointer-events: none;
+  white-space: nowrap;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  padding: 8px 12px;
+  border-radius: 6px;
 }
-.diff-loading.background {
-  top: 104px;
+.updating .diff-loading {
+  top: 112px;
   right: 12px;
   left: auto;
   transform: none;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  padding: 5px 9px;
-  border-radius: 5px;
-  font-size: 10px;
+}
+.diff-loading button {
+  pointer-events: auto;
 }
 .live-status {
   display: inline-flex;
@@ -920,120 +963,33 @@
   align-self: flex-start;
   margin-left: 16px;
 }
-.app .top-navigation {
-  flex: 1;
-  min-width: 180px;
-  overflow: hidden;
-  flex-shrink: 1;
-}
-.top-navigation:has(.diff-tab-item.active)::after {
-  display: none;
-}
-.diff-tab-item {
-  display: flex;
-  align-items: center;
-  flex: 0 0 auto;
-  position: relative;
-  min-width: 150px;
-}
-.diff-tab-item.active {
-  box-shadow: inset 0 -3px var(--accent);
-  background: var(--accent-soft);
-}
-.top-navigation .diff-tab-button {
-  width: auto;
-  padding: 0 10px;
-  min-width: 118px;
-  gap: 6px;
-  height: 100%;
-}
-.diff-tab-button code {
-  font: 10px var(--font-mono);
-  color: var(--muted);
-}
-.top-navigation .diff-tab-close {
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  margin-right: 6px;
-  border-radius: 4px;
-}
-.diff-tab-close:hover {
-  background: var(--hover);
-}
 .diff-tab-page {
   display: flex;
   flex-direction: column;
   min-height: 0;
 }
-.diff-tab-heading {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 12px 20px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
-  flex-shrink: 0;
-}
-.diff-tab-heading > div {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  flex: 1;
-  min-width: 0;
-}
-.diff-tab-heading strong {
-  font-size: 13px;
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.diff-tab-heading span {
-  font-size: 11px;
-  color: var(--muted);
-}
-.diff-tab-heading select {
-  font-size: 12px;
-}
 .diff-tab-page .history-diff .compare-content {
   grid-template-columns: 260px minmax(0, 1fr);
 }
 
-.app-header:has(.top-navigation) > .toolbar-spacer {
-  display: none;
-}
-.app .top-navigation {
-  min-width: 350px;
-}
-.top-navigation > button {
-  flex: 0 0 var(--nav-item-width);
-}
-.diff-tab-strip {
+/* Both reading surfaces use ResizableWorkbench; keep its grid in control. */
+.history-diff .compare-content,
+.diff-tab-page .history-diff .compare-content {
   display: flex;
+  min-height: 0;
   min-width: 0;
+}
+.history-diff .compare-content > .workbench {
   flex: 1;
-  overflow-x: auto;
-  scrollbar-width: none;
-  align-self: stretch;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
 }
-.diff-tab-item {
-  min-width: 130px;
+.history-diff .compare-files {
+  position: relative;
+  min-height: 0;
+  min-width: 0;
 }
-.top-navigation .diff-tab-button {
-  min-width: 104px;
-  padding-inline: 6px;
-}
-@media (max-width: 1100px) {
-  .app .top-navigation {
-    min-width: 280px;
-  }
-  .diff-tab-item {
-    min-width: 120px;
-  }
-}
-@media (max-width: 780px) {
-  .app .top-navigation {
-    min-width: 240px;
-  }
+.history-diff .compare-files .grouping-toolbar {
+  padding-right: 32px;
 }

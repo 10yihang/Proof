@@ -1,3 +1,5 @@
+import { Button } from "./ui/controls";
+import { uiMessage, t, getLanguage } from "../i18n";
 import { useEffect, useState } from "react";
 import { ArrowCounterClockwise, Copy } from "@phosphor-icons/react";
 import { asError, useRequest } from "../api";
@@ -13,12 +15,24 @@ interface Content {
   directory: string;
 }
 const statusName: Record<string, string> = {
-  prepared: "仅预览，尚未丢弃",
-  applying: "操作中断，需检查",
-  applied: "可撤销丢弃",
-  undoing: "恢复中断，需检查",
-  undone: "已恢复",
-  conflict: "存在变化，需检查",
+  get prepared() {
+    return t("仅预览，尚未丢弃");
+  },
+  get applying() {
+    return t("操作中断，需检查");
+  },
+  get applied() {
+    return t("可撤销丢弃");
+  },
+  get undoing() {
+    return t("恢复中断，需检查");
+  },
+  get undone() {
+    return t("已恢复");
+  },
+  get conflict() {
+    return t("存在变化，需检查");
+  },
 };
 
 export function RecoveryDialog({
@@ -99,7 +113,7 @@ export function RecoveryDialog({
   }
   return (
     <Modal
-      title="丢弃恢复点"
+      title={t("丢弃恢复点")}
       wide
       error={error}
       onClose={() => {
@@ -107,45 +121,53 @@ export function RecoveryDialog({
       }}
     >
       <p className="modal-description">
-        恢复点保留 7 天，总计上限 256 MiB。撤销前会再次核对当前文件及 Git
-        基准；有新变化时停止恢复。
+        {t(
+          "恢复点保留 7 天，总计上限 256 MiB。撤销前会再次核对当前文件及 Git 基准；有新变化时停止恢复。",
+        )}
       </p>
       {message && <p role="status">{message}</p>}
       {confirm ? (
         <div className="recovery-confirm">
           <h3>
-            {restoreMissing ? "在空路径创建保存的文件" : "恢复丢弃前的内容"}：
-            {confirm.path}
+            {restoreMissing
+              ? t("在空路径创建保存的文件")
+              : t("恢复丢弃前的内容")}
+            ：{confirm.path}
           </h3>
           <p>
-            {confirm.scope} · {new Date(confirm.createdAt).toLocaleString()}
+            {uiMessage(confirm.scope)} ·{" "}
+            {new Date(confirm.createdAt).toLocaleString(getLanguage())}
           </p>
           <p>
             {restoreMissing
-              ? "这会在当前缺失的路径创建丢弃前保存的文件。如果该路径出现新文件，Proof 会停止，保留新文件。"
-              : "当前文件必须仍匹配丢弃后的版本；路径已被删除时不会自动重建。"}
-            恢复操作会保留现有 Git 索引。
+              ? t(
+                  "这会在当前缺失的路径创建丢弃前保存的文件。如果该路径出现新文件，Proof 会停止，保留新文件。",
+                )
+              : t(
+                  "当前文件必须仍匹配丢弃后的版本；路径已被删除时不会自动重建。",
+                )}
+            {t("恢复操作会保留现有 Git 索引。")}
           </p>
           {error?.code === "RECOVERY_MISSING_PATH" && !restoreMissing && (
-            <button
+            <Button
               className="button"
               onClick={() => {
                 setRestoreMissing(true);
                 setError(null);
               }}
             >
-              查看空路径恢复确认
-            </button>
+              {t("查看空路径恢复确认")}
+            </Button>
           )}
           <footer className="modal-footer">
-            <button
+            <Button
               className="button"
               disabled={pending}
               onClick={() => setConfirm(null)}
             >
-              返回
-            </button>
-            <button
+              {t("返回")}
+            </Button>
+            <Button
               className="button primary"
               disabled={pending}
               onClick={() =>
@@ -156,52 +178,54 @@ export function RecoveryDialog({
               }
             >
               {pending
-                ? "正在核对…"
+                ? t("正在核对…")
                 : restoreMissing
-                  ? "确认在空路径恢复文件"
-                  : "确认恢复"}
-            </button>
+                  ? t("确认在空路径恢复文件")
+                  : t("确认恢复")}
+            </Button>
           </footer>
         </div>
       ) : (
         <div className="recovery-list">
           {!points.length && (
-            <p className="muted">当前 Worktree 没有保留中的恢复点。</p>
+            <p className="muted">{t("当前 Worktree 没有保留中的恢复点。")}</p>
           )}
           {points.map((p) => (
             <article className="recovery-item" key={p.id}>
               <div>
                 <strong>{p.path}</strong>
                 <span className="muted">
-                  {statusName[p.status] ?? p.status} · {p.scope}
+                  {statusName[p.status] ?? p.status} · {uiMessage(p.scope)}
                 </span>
                 <small>
-                  创建 {new Date(p.createdAt).toLocaleString()} · 到期{" "}
-                  {new Date(p.expiresAt).toLocaleString()}
+                  {t("创建 ")}
+                  {new Date(p.createdAt).toLocaleString(getLanguage())}{" "}
+                  {t(" · 到期")}{" "}
+                  {new Date(p.expiresAt).toLocaleString(getLanguage())}
                 </small>
-                {p.message && <p>{p.message}</p>}
+                {p.message && <p>{uiMessage(p.message)}</p>}
               </div>
               <div className="recovery-actions">
-                <button
+                <Button
                   className="button compact"
                   disabled={pending}
                   onClick={() => void inspect(p)}
                 >
-                  查看副本
-                </button>
+                  {t("查看副本")}
+                </Button>
                 {p.status === "prepared" ? (
-                  <button
+                  <Button
                     className="button compact"
                     disabled={pending}
                     onClick={() => void run("cancel_discard_preview", p)}
                   >
-                    取消预览
-                  </button>
+                    {t("取消预览")}
+                  </Button>
                 ) : (
                   ["applied", "applying", "undoing", "conflict"].includes(
                     p.status,
                   ) && (
-                    <button
+                    <Button
                       className="button compact"
                       disabled={pending}
                       onClick={() => {
@@ -211,8 +235,10 @@ export function RecoveryDialog({
                       }}
                     >
                       <ArrowCounterClockwise size={15} />
-                      {p.status === "applied" ? "撤销丢弃" : "恢复保存版本"}
-                    </button>
+                      {p.status === "applied"
+                        ? t("撤销丢弃")
+                        : t("恢复保存版本")}
+                    </Button>
                   )
                 )}
               </div>
@@ -222,42 +248,46 @@ export function RecoveryDialog({
       )}
       {content && (
         <div className="recovery-content">
-          <h3>{content.point.path} · 保存的副本</h3>
+          <h3>
+            {content.point.path} {t(" · 保存的副本")}
+          </h3>
           <p className="muted">{content.directory}</p>
           {content.capturedWarning && (
             <p role="status">{content.capturedWarning}</p>
           )}
           {(
             [
-              ["丢弃前", content.before],
-              ["丢弃后", content.after],
+              [t("丢弃前"), content.before],
+              [t("丢弃后"), content.after],
               ...(content.capturedOriginal !== null &&
               content.capturedOriginal !== content.before
-                ? [["捕获的原文件（含后续编辑）", content.capturedOriginal]]
+                ? [[t("捕获的原文件（含后续编辑）"), content.capturedOriginal]]
                 : []),
             ] as [string, string | null][]
           ).map(([label, value]) => (
             <details key={label}>
               <summary>
                 {label}
-                {value === null ? " · 文件不存在" : ""}
+                {value === null ? t(" · 文件不存在") : ""}
               </summary>
               {value !== null && (
                 <>
-                  <button
+                  <Button
                     className="button compact"
                     onClick={() =>
                       void navigator.clipboard
                         .writeText(value)
-                        .then(() => setMessage("已复制完整保存内容。"))
+                        .then(() => setMessage(t("已复制完整保存内容。")))
                         .catch((e) => setError(asError(e)))
                     }
                   >
                     <Copy size={14} />
-                    复制完整内容
-                  </button>
+                    {t("复制完整内容")}
+                  </Button>
                   {value.length > 200000 && (
-                    <p>仅预览前 200,000 个字符；复制包含完整保存内容。</p>
+                    <p>
+                      {t("仅预览前 200,000 个字符；复制包含完整保存内容。")}
+                    </p>
                   )}
                   <pre>{value.slice(0, 200000)}</pre>
                 </>

@@ -21,7 +21,8 @@ export interface GraphRow {
   before: GraphLane[];
   after: GraphLane[];
 }
-export const GRAPH_ROW_HEIGHT = 40;
+export const GRAPH_ROW_HEIGHT = 32;
+export const GRAPH_ROW_CENTER = GRAPH_ROW_HEIGHT / 2;
 export const GRAPH_LANE_WIDTH = 18;
 
 /** Layout only: every outgoing edge retains the real parent object ID. */

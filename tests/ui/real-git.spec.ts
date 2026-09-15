@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+test.beforeEach(({page})=>{page.on("pageerror",error=>console.error("Browser error:",error.message));});
 import { spawn, execFileSync } from "node:child_process";
 import {
   mkdtempSync,
@@ -89,18 +90,23 @@ test("actual Git workflow: live save, branch, selected hunk Commit, Amend and Co
     await page.exposeFunction("fixtureCoreInvoke", invoke);
     await page.addInitScript(() =>
       Object.assign(window, {
+        __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener: () => {} },
         __TAURI_INTERNALS__: {
           transformCallback: () => 1,
           unregisterCallback: () => {},
           invoke: (name: string, payload: any) =>
-            name.startsWith("plugin:event|")
-              ? Promise.resolve(1)
-              : name === "watch_workspace"
+            name === "prepare_read_request"
+              ? Promise.resolve(crypto.randomUUID())
+              : name === "cancel_read_request"
                 ? Promise.resolve(true)
-                : (window as any).fixtureCoreInvoke(
-                    payload.command,
-                    payload.args,
-                  ),
+                : name.startsWith("plugin:event|")
+                  ? Promise.resolve(1)
+                  : name === "watch_workspace"
+                    ? Promise.resolve(false)
+                    : (window as any).fixtureCoreInvoke(
+                        payload.command,
+                        payload.args,
+                      ),
         },
       }),
     );
@@ -108,6 +114,98 @@ test("actual Git workflow: live save, branch, selected hunk Commit, Amend and Co
     await page.locator(".recent-projects button").first().click();
     await page.locator(".tree-file").filter({ hasText: "client.ts" }).click();
     await expect(page.locator(".diff-scroll")).toContainText("first-change");
+    const searchSource = readFileSync(join(repo, "src/api/client.ts")),
+      searchIndex = readFileSync(join(repo, ".git/index"));
+    await page.locator(".diff-scroll").focus();
+    await page.keyboard.press("Meta+f");
+    await page.getByLabel("搜索当前 Diff", { exact: true }).fill("old-50");
+    await expect(page.getByLabel("匹配行数")).toContainText("0/0");
+    await page.getByRole("button", { name: "全文", exact: true }).click();
+    await expect(page.getByLabel("匹配行数")).toContainText("1/1");
+    await expect(page.locator(".view-line:has(.proof-search-match)").first()).toContainText("old-50");
+    expect(readFileSync(join(repo, "src/api/client.ts"))).toEqual(searchSource);
+    expect(readFileSync(join(repo, ".git/index"))).toEqual(searchIndex);
+    await page.getByRole("button", { name: "全文", exact: true }).click();
+    await page
+      .getByRole("button", { name: "关闭文件内容搜索", exact: true })
+      .click();
+    // Real SQLite + adapter records, exercised through the same Context UI.
+    for (const [session, path] of [
+      ["observed", "src/api/client.ts"],
+      ["manual", "extra.txt"],
+    ]) {
+      await invoke("fixture_context_session", {
+        workspaceId: workspace.id,
+        session,
+        path,
+      });
+    }
+    const contextIndex = readFileSync(join(repo, ".git/index")),
+      contextSource = readFileSync(join(repo, "src/api/client.ts")),
+      contextConfig = readFileSync(join(repo, ".git/config"));
+    const showContext = page.getByRole("button", {
+      name: "显示上下文",
+      exact: true,
+    });
+    if (await showContext.isVisible()) await showContext.click();
+    await page.getByRole("button", { name: "关联会话", exact: true }).click();
+    const contextManager = page.getByRole("dialog", { name: "管理会话关联" });
+    await contextManager.getByLabel("搜索当前 Worktree 的会话").fill("manual");
+    await contextManager.locator(".association-candidate").click();
+    await contextManager
+      .getByLabel("本地备注", { exact: true })
+      .fill("Real UI note saved to SQLite");
+    await contextManager
+      .getByRole("button", { name: "关联此会话", exact: true })
+      .click();
+    await expect(
+      contextManager.getByRole("status", { name: "关联保存状态" }),
+    ).toContainText("关联已保存");
+    await contextManager
+      .getByRole("button", { name: "完成", exact: true })
+      .click();
+    await expect(page.locator(".context-linked-session")).toHaveCount(2);
+    const linked = (
+      await invoke("context_overview", {
+        workspaceId: workspace.id,
+        path: "src/api/client.ts",
+      })
+    ).links.find((l: any) => l.session.nativeSessionId === "manual");
+    expect(linked.userOverride).toEqual({
+      enabled: true,
+      note: "Real UI note saved to SQLite",
+    });
+    expect(linked.originalEvidence.pathEventCount).toBe(0);
+    await page.getByRole("button", { name: /^修改记录/ }).click();
+    await contextManager
+      .getByRole("button", { name: "撤销此修改", exact: true })
+      .click();
+    await expect(
+      contextManager.getByRole("status", { name: "关联保存状态" }),
+    ).toContainText("已撤销");
+    await contextManager
+      .getByRole("button", { name: "完成", exact: true })
+      .click();
+    await expect(page.locator(".context-linked-session")).toHaveCount(1);
+    const contextHistory = await invoke("context_history", {
+      workspaceId: workspace.id,
+      path: "src/api/client.ts",
+    });
+    expect(contextHistory.entries).toHaveLength(2);
+    expect(contextHistory.entries[0].action).toBe("undo");
+    expect(contextHistory.entries[1].after.note).toBe(
+      "Real UI note saved to SQLite",
+    );
+    expect(readFileSync(join(repo, ".git/index"))).toEqual(contextIndex);
+    expect(readFileSync(join(repo, ".git/config"))).toEqual(contextConfig);
+    expect(readFileSync(join(repo, "src/api/client.ts"))).toEqual(
+      contextSource,
+    );
+    expect(git("rev-parse", "HEAD")).toBe(beforeHead);
+    await page
+      .getByRole("button", { name: "收起上下文", exact: true })
+      .first()
+      .click();
     writeFileSync(
       join(repo, "src/api/client.ts"),
       readFileSync(join(repo, "src/api/client.ts"), "utf8").replace(
@@ -118,7 +216,7 @@ test("actual Git workflow: live save, branch, selected hunk Commit, Amend and Co
     await expect(page.locator(".diff-scroll")).toContainText("live-save", {
       timeout: 7000,
     });
-    await page.getByRole("button", { name: /切换 Branch/ }).click();
+    await page.getByRole("combobox", { name: /切换 Branch/ }).click();
     await page.getByLabel("搜索 Branch").fill("feature/ui");
     await page
       .locator(".branch-option")
@@ -127,12 +225,12 @@ test("actual Git workflow: live save, branch, selected hunk Commit, Amend and Co
     await expect(page.locator(".branch-picker")).toContainText("feature/ui");
     expect(git("branch", "--show-current")).toBe("feature/ui");
     await page
-      .getByRole("button", { name: "Stage hunk", exact: true })
+      .getByRole("button", { name: "Stage Hunk", exact: true })
       .first()
       .click();
     await page
       .getByRole("navigation", { name: "Worktree" })
-      .getByRole("button", { name: /^Commit/ })
+      .getByRole("tab", { name: /^Commit/ })
       .click();
     await expect(page.locator(".composer-hint")).toContainText("1 staged");
     expect(git("show", ":src/api/client.ts")).toContain("live-save");
@@ -161,7 +259,7 @@ test("actual Git workflow: live save, branch, selected hunk Commit, Amend and Co
     await page.getByLabel("Commit message").fill("Commit remaining files");
     await expect(
       page.locator(".composer-submit > button").first(),
-    ).toContainText("Stage all & Commit");
+    ).toContainText("Stage 全部并 Commit");
     await page.locator(".composer-submit > button").first().click();
     await expect(page.getByLabel("Commit message")).toHaveValue("");
     expect(git("status", "--porcelain")).toBe("");
@@ -169,7 +267,7 @@ test("actual Git workflow: live save, branch, selected hunk Commit, Amend and Co
     expect(git("show", "HEAD:src/api/client.ts")).toContain("keep-unstaged");
     await page
       .getByRole("navigation", { name: "Worktree" })
-      .getByRole("button", { name: "History", exact: true })
+      .getByRole("tab", { name: "History", exact: true })
       .click();
     const graph = page.getByRole("listbox", { name: "提交列表与分支关系" });
     await graph
@@ -182,9 +280,39 @@ test("actual Git workflow: live save, branch, selected hunk Commit, Amend and Co
     await panel.locator(".tree-file").filter({ hasText: "client.ts" }).click();
     await expect(panel.locator(".diff-scroll")).toContainText("keep-unstaged");
     await expect(panel.locator(".diff-scroll")).toContainText("live-save");
+    const reviewIndex = readFileSync(join(repo, ".git/index")),
+      reviewSource = readFileSync(join(repo, "src/api/client.ts"));
+    const historicalMark = panel.locator(".hunk-review").first();
+    await expect(historicalMark).toHaveAttribute("aria-pressed", "false");
+    await historicalMark.click();
+    await expect(historicalMark).toHaveAttribute("aria-pressed", "true");
+    const verifiedReview = await invoke("compare_file", {
+      workspaceId: workspace.id,
+      base: beforeHead,
+      target: git("rev-parse", "HEAD"),
+      path: "src/api/client.ts",
+    });
+    expect(verifiedReview.hunks[0].reviewState).toBe("reviewed");
+    expect(
+      verifiedReview.hunks
+        .slice(1)
+        .every((h: any) => h.reviewState === "unreviewed"),
+    ).toBe(true);
+    expect(readFileSync(join(repo, ".git/index"))).toEqual(reviewIndex);
+    expect(readFileSync(join(repo, "src/api/client.ts"))).toEqual(reviewSource);
+    await panel
+      .getByRole("button", { name: "搜索文件内容", exact: true })
+      .click();
+    await panel.getByRole("button", { name: "全文", exact: true }).click();
+    await panel.getByLabel("搜索当前 Diff", { exact: true }).fill("old-50");
+    await expect(panel.getByLabel("匹配行数")).toContainText("1/1");
+    await expect(panel.locator(".view-line:has(.proof-search-match)").first()).toContainText("old-50");
+    await panel
+      .getByRole("button", { name: "关闭文件内容搜索", exact: true })
+      .click();
     await page
       .getByRole("navigation", { name: "Worktree" })
-      .getByRole("button", { name: /^Commit/ })
+      .getByRole("tab", { name: /^Commit/ })
       .click();
     const preservedHead = git("rev-parse", "HEAD"),
       preservedIndex = readFileSync(join(repo, ".git/index")),
@@ -200,7 +328,7 @@ test("actual Git workflow: live save, branch, selected hunk Commit, Amend and Co
     await page.getByRole("button", { name: "设置", exact: true }).click();
     await page
       .locator(".settings-nav")
-      .getByRole("button", { name: "本地数据", exact: true })
+      .getByRole("tab", { name: "本地数据", exact: true })
       .click();
     await expect(page.locator(".data-usage-card")).toBeVisible();
     await page

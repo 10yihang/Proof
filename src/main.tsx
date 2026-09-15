@@ -1,19 +1,29 @@
+import { useLanguage } from "./i18n";
+import { useApplicationLanguage } from "./i18n-controller";
 import React from "react";
+import { useDiffEvents } from "./diff-events";
+import { clearSyntaxCache } from "./syntax";
 import ReactDOM from "react-dom/client";
 import App from "./App";
-import "./styles.css";
-import "./styles/workflow.css";
+import { UIProvider } from "./components/ui/provider";
+import { DiffWindow } from "./components/DiffWindow";
+import "./styles/theme.css";
+import "./styles/application.css";
 import type { DataSessionChange } from "./api";
 
 function AppShell() {
+  useDiffEvents();
+  useLanguage();
   const active = React.useRef<string | undefined>(undefined);
   const [session, setSession] = React.useState<{
     key: number;
     restore?: string;
     notice?: string;
   }>({ key: 0 });
+  useApplicationLanguage(session.key);
   React.useEffect(() => {
     const changed = (event: Event) => {
+      clearSyntaxCache();
       const {
         session: next,
         previousEpoch,
@@ -37,6 +47,8 @@ function AppShell() {
   const onWorkspaceChange = React.useCallback((id?: string) => {
     active.current = id;
   }, []);
+  if (new URLSearchParams(location.search).has("diffWindow"))
+    return <DiffWindow key={session.key} />;
   return (
     <App
       key={session.key}
@@ -49,6 +61,8 @@ function AppShell() {
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <AppShell />
+    <UIProvider>
+      <AppShell />
+    </UIProvider>
   </React.StrictMode>,
 );

@@ -1,3 +1,4 @@
+import { syntaxRanges, type SyntaxSpan } from "./syntax";
 import { rowsForHunk, type DiffRow } from "./diff-model";
 import type { DiffContext, DiffLine, FileDiff, Hunk } from "./types";
 
@@ -70,7 +71,12 @@ export function readingRows(
       ? hiddenWhitespace(hunk)
       : new Set<DiffLine>();
     const visible: DiffRow[] = [];
-    for (const row of rowsForHunk(hunk, split)) {
+    for (const row of rowsForHunk(
+      context && !context.fullFile && context.contextLines < 3
+        ? { ...hunk, lines: trimContext(hunk.lines, context.contextLines) }
+        : hunk,
+      split,
+    )) {
       if (row.kind !== "line") continue;
       const sides = [row.left, row.right].filter(
         (line): line is DiffLine => !!line,
@@ -100,6 +106,20 @@ export function readingRows(
       "context:tail",
     );
   return rows;
+}
+
+// A presentation crop only. Keep every changed line and the original Hunk ID;
+// count unchanged lines to the nearest change in either direction.
+function trimContext(lines: DiffLine[], count: number): DiffLine[] {
+  const near = new Set<DiffLine>();
+  for (const sequence of [lines, [...lines].reverse()]) {
+    let distance = Infinity;
+    for (const line of sequence) {
+      if (line.kind === "add" || line.kind === "delete") distance = 0;
+      else if (line.kind === "context" && ++distance <= count) near.add(line);
+    }
+  }
+  return lines.filter((line) => line.kind !== "context" || near.has(line));
 }
 
 type Token = { text: string; start: number; end: number };
@@ -266,6 +286,8 @@ export function highlightedParts(
   text: string,
   changes: TextRange[] = [],
   search = "",
+  path?: string,
+  preparedSyntax?: SyntaxSpan[],
 ): HighlightPart[] {
   const plain = (): HighlightPart[] => [
     { text, changed: false, matched: false, syntax: "", simplified: true },
@@ -281,22 +303,9 @@ export function highlightedParts(
       if (matches.length === 64) return plain();
       matches.push({ start: at, end: at + search.length });
     }
-  const syntax: (TextRange & { style: string })[] = [];
-  if (text.trimStart().startsWith("//") || text.trimStart().startsWith("#")) {
-    syntax.push({ start: 0, end: text.length, style: "syntax-comment" });
-  } else {
-    const pattern =
-      /('(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|\b(?:import|from|export|async|await|const|let|function|return|if|else|new|throw|class|interface|type|try|catch|true|false|null|undefined)\b)/g;
-    for (const match of text.matchAll(pattern)) {
-      if (syntax.length + matches.length + changes.length >= 128)
-        return plain();
-      syntax.push({
-        start: match.index,
-        end: match.index + match[0].length,
-        style: /^['"]/.test(match[0]) ? "syntax-string" : "syntax-keyword",
-      });
-    }
-  }
+  let syntax = preparedSyntax ?? syntaxRanges(text, path);
+  const simplified = syntax.length + matches.length + changes.length >= 128;
+  if (simplified) syntax = [];
   const boundaries = [
     ...new Set([
       0,
@@ -321,6 +330,7 @@ export function highlightedParts(
       changed: !!changes[changeAt] && changes[changeAt].start <= start,
       matched: !!matches[matchAt] && matches[matchAt].start <= start,
       syntax: syntax[syntaxAt]?.start <= start ? syntax[syntaxAt].style : "",
+      ...(simplified ? { simplified: true } : {}),
     };
   });
 }

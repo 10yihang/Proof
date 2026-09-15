@@ -192,14 +192,6 @@
   .app.layout-enabled .workspace-picker {
     max-width: 145px;
   }
-  .app.layout-enabled .top-navigation {
-    order: 10;
-    flex-basis: 100%;
-    height: 34px;
-    align-self: auto;
-    margin-left: 0;
-    --nav-item-width: 88px;
-  }
   .app.layout-enabled .demo-badge {
     display: none;
   }

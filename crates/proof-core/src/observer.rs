@@ -371,16 +371,19 @@ impl Proof {
         workspace_id: &str,
         path: &str,
     ) -> Result<Vec<ObserverEvent>> {
-        self.store.workspace(workspace_id)?;
-        self.maintain_local_data()?;
-        let mut statement = self.store.connection.prepare("SELECT payload FROM observer_events WHERE workspace_id=?1 AND expires_at>?2 AND session_id IN (SELECT session_id FROM observer_events WHERE workspace_id=?1 AND expires_at>?2 AND EXISTS(SELECT 1 FROM json_each(observer_events.payload,'$.paths') WHERE value=?3) ORDER BY received_at DESC LIMIT 20) ORDER BY received_at DESC LIMIT 100")?;
+        let overview = self.context_overview(workspace_id, path)?;
+        let sessions: Vec<_> = overview.links.iter().map(|link| &link.session.id).collect();
+        let mut statement = self.store.connection.prepare("SELECT payload,content_expires_at FROM observer_events
+            WHERE workspace_id=?1 AND expires_at>?2 AND session_id IN (SELECT value FROM json_each(?3))
+            ORDER BY received_at DESC,id DESC LIMIT 100")?;
         let rows = statement
-            .query_map(params![workspace_id, now(), path], |r| {
-                r.get::<_, String>(0)
-            })?
+            .query_map(
+                params![workspace_id, now(), serde_json::to_string(&sessions)?],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, u64>(1)?)),
+            )?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         rows.into_iter()
-            .map(|s| serde_json::from_str(&s).map_err(Error::from))
+            .map(|(payload, expires)| crate::context::retained_event(&payload, expires))
             .collect()
     }
 
@@ -842,7 +845,7 @@ fn observed_paths(
     Ok((paths, hashes, limited))
 }
 
-fn crosses_git_boundary(mut directory: &Path, root: &Path) -> bool {
+pub(crate) fn crosses_git_boundary(mut directory: &Path, root: &Path) -> bool {
     while directory != root {
         match fs::symlink_metadata(directory.join(".git")) {
             Ok(_) => return true,

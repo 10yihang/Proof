@@ -1,3 +1,6 @@
+import { DropdownMenuItem as MenuItem } from "./ui/dropdown-menu";
+import { Button } from "./ui/controls";
+import { t } from "../i18n";
 import { useEffect, useState } from "react";
 import {
   ArrowRight,
@@ -5,14 +8,19 @@ import {
   FolderOpen,
   GitBranch,
   HardDrives,
-  Plus,
 } from "@phosphor-icons/react";
 import { useRequest } from "../api";
-import type { BranchEntry, Changes, WorktreeEntry, ProofError } from "../types";
-import { Modal } from "./Modal";
+import type { BranchEntry, Changes, WorktreeEntry } from "../types";
 import type { HistoryComparison } from "./HistoryDiff";
 import { CommitHistory } from "./CommitHistory";
+import { branchRef } from "../history-actions";
 import { demoGraphPage } from "../graph-demo";
+import {
+  useHistoryActions,
+  HistoryTargetActions,
+  GitContextMenu,
+  HistoryMoreButton,
+} from "./HistoryActions";
 
 export type RepositorySection = "history" | "branches" | "worktrees";
 
@@ -20,24 +28,25 @@ export function RepositoryView({
   section,
   onSection,
   changes,
-  error,
   demo,
   onOpen,
   onError,
   onChanged,
   onOpenDiff,
+  onOpenLocalFile,
 }: {
   section: RepositorySection;
   onSection: (section: RepositorySection) => void;
   changes: Changes;
-  error: ProofError | null;
   demo: boolean;
   onOpen: (path: string) => Promise<void>;
   onError: (e: unknown) => void;
   onChanged: () => Promise<void>;
   onOpenDiff: (value: HistoryComparison) => void;
+  onOpenLocalFile: (path: string) => void;
 }) {
   const request = useRequest();
+  const actions = useHistoryActions(changes, demo, onChanged, onOpenLocalFile);
   const [comparison, setComparison] = useState<HistoryComparison | null>(null);
   const [branchAnchor, setBranchAnchor] = useState<BranchEntry | null>(null);
   const [branchMenu, setBranchMenu] = useState<{
@@ -45,19 +54,7 @@ export function RepositoryView({
     x: number;
     y: number;
   } | null>(null);
-  useEffect(() => {
-    if (!branchMenu) return;
-    const close = () => setBranchMenu(null);
-    const key = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
-    };
-    document.addEventListener("pointerdown", close);
-    document.addEventListener("keydown", key);
-    return () => {
-      document.removeEventListener("pointerdown", close);
-      document.removeEventListener("keydown", key);
-    };
-  }, [branchMenu]);
+
   function compareBranches(base: BranchEntry, target: BranchEntry) {
     setComparison({
       base: base.oid,
@@ -89,10 +86,11 @@ export function RepositoryView({
   }
   function branchContext(event: React.MouseEvent, branch: BranchEntry) {
     event.preventDefault();
+    const rect = event.currentTarget.getBoundingClientRect();
     setBranchMenu({
       branch,
-      x: Math.min(event.clientX, window.innerWidth - 240),
-      y: Math.min(event.clientY, window.innerHeight - 160),
+      x: event.type === "contextmenu" ? event.clientX : rect.left,
+      y: event.type === "contextmenu" ? event.clientY : rect.bottom + 4,
     });
   }
   const [historyVisited, setHistoryVisited] = useState(section === "history");
@@ -102,8 +100,6 @@ export function RepositoryView({
   const [branches, setBranches] = useState<BranchEntry[]>([]);
   const [worktrees, setWorktrees] = useState<WorktreeEntry[]>([]);
   const [busy, setBusy] = useState(false);
-  const [create, setCreate] = useState(false);
-  const [branchName, setBranchName] = useState("");
   const [historyScope, setHistoryScope] = useState("all");
   const [historyRef, setHistoryRef] = useState<string | null>(null);
   useEffect(() => {
@@ -143,46 +139,47 @@ export function RepositoryView({
     return () => {
       cancelled = true;
     };
-  }, [changes.workspace.id, changes.head, changes.branch, demo]);
-  async function switchBranch(name: string, creating: boolean) {
-    setBusy(true);
-    try {
-      await request("switch_branch", {
-        workspaceId: changes.workspace.id,
-        name,
-        create: creating,
-        expectedToken: changes.token,
-      });
-      setCreate(false);
-      await onChanged();
-    } catch (e) {
-      onError(e);
-    } finally {
-      setBusy(false);
+  }, [
+    changes.workspace.id,
+    changes.head,
+    changes.branch,
+    demo,
+    actions.revision,
+  ]);
+  useEffect(() => {
+    if (
+      historyScope.startsWith("refs/") &&
+      branches.length &&
+      !branches.some((branch) => branchRef(branch) === historyScope)
+    ) {
+      setHistoryScope("all");
+      setHistoryRef(null);
+      setBranchAnchor(null);
     }
-  }
+  }, [branches, historyScope]);
   return (
     <main className="repository-view">
       <aside className="repository-nav">
         <span className="sidebar-heading">
-          <strong>仓库与引用</strong>
+          <strong>{t("仓库与引用")}</strong>
         </span>
-        <button
+        <Button
           className={section === "worktrees" ? "active" : ""}
           onClick={() =>
             onSection(section === "worktrees" ? "history" : "worktrees")
           }
         >
           <HardDrives size={17} />
-          Worktree<span className="count-badge">{worktrees.length}</span>
-        </button>
+          {t("Worktree")}
+          <span className="count-badge">{worktrees.length}</span>
+        </Button>
         {section === "history" && (
           <div className="repository-refs">
             <div className="refs-heading">
-              <span>本地分支</span>
+              <span>{t("本地分支")}</span>
               <span>{branches.filter((branch) => !branch.remote).length}</span>
             </div>
-            <button
+            <Button
               className={`repo-ref ${historyScope === "all" ? "active" : ""}`}
               onClick={() => {
                 setHistoryScope("all");
@@ -190,65 +187,82 @@ export function RepositoryView({
               }}
             >
               <GitBranch size={15} />
-              <span>所有分支</span>
-            </button>
+              <span>{t("所有分支")}</span>
+            </Button>
             {branches
               .filter((branch) => !branch.remote)
               .map((branch) => (
-                <button
-                  key={branch.name}
-                  className={`repo-ref ${historyRef === `${branch.remote ? "remote" : "local"}:${branch.name}` ? "active" : ""}`}
-                  title={`查看 ${branch.name} 的历史`}
-                  onClick={(event) =>
-                    chooseBranch(
-                      branch,
-                      event.metaKey || event.ctrlKey || event.shiftKey,
-                    )
-                  }
-                  onContextMenu={(event) => branchContext(event, branch)}
-                >
-                  <GitBranch size={14} />
-                  <span>{branch.name}</span>
-                  {branch.current && (
-                    <span className="current-ref-dot" aria-label="当前分支" />
-                  )}
-                </button>
+                <div className="repo-ref-wrap" key={branch.name}>
+                  <Button
+                    className={`repo-ref ${historyRef === `${branch.remote ? "remote" : "local"}:${branch.name}` ? "active" : ""}`}
+                    title={t("查看 {v0} 的历史", { v0: branch.name })}
+                    onClick={(event) =>
+                      chooseBranch(
+                        branch,
+                        event.metaKey || event.ctrlKey || event.shiftKey,
+                      )
+                    }
+                    onContextMenu={(event) => branchContext(event, branch)}
+                    onDoubleClick={() => {
+                      if (!actions.disabled && !branch.current)
+                        actions.open("switch", { type: "branch", branch });
+                    }}
+                  >
+                    <GitBranch size={14} />
+                    <span>{branch.name}</span>
+                    {branch.current && (
+                      <span
+                        className="current-ref-dot"
+                        aria-label={t("当前分支")}
+                      />
+                    )}
+                  </Button>
+                  <HistoryMoreButton
+                    label={t("{v0} 的 Branch 操作", { v0: branch.name })}
+                    onClick={(event) => branchContext(event, branch)}
+                  />
+                </div>
               ))}
             {branches.some((branch) => branch.remote) && (
               <>
                 <div className="refs-heading">
-                  <span>远程引用</span>
-                  <span>本地已知</span>
+                  <span>{t("远程引用")}</span>
+                  <span>{t("本地已知")}</span>
                 </div>
                 {branches
                   .filter((branch) => branch.remote)
                   .map((branch) => (
-                    <button
-                      key={branch.name}
-                      className={`repo-ref ${historyRef === `${branch.remote ? "remote" : "local"}:${branch.name}` ? "active" : ""}`}
-                      title={`查看 ${branch.name} 的本地历史`}
-                      onClick={(event) =>
-                        chooseBranch(
-                          branch,
-                          event.metaKey || event.ctrlKey || event.shiftKey,
-                        )
-                      }
-                      onContextMenu={(event) => branchContext(event, branch)}
-                    >
-                      <GitBranch size={14} />
-                      <span>{branch.name}</span>
-                    </button>
+                    <div className="repo-ref-wrap" key={branch.name}>
+                      <Button
+                        className={`repo-ref ${historyRef === `${branch.remote ? "remote" : "local"}:${branch.name}` ? "active" : ""}`}
+                        title={t("查看 {v0} 的本地历史", { v0: branch.name })}
+                        onClick={(event) =>
+                          chooseBranch(
+                            branch,
+                            event.metaKey || event.ctrlKey || event.shiftKey,
+                          )
+                        }
+                        onContextMenu={(event) => branchContext(event, branch)}
+                        onDoubleClick={() => {
+                          if (!actions.disabled)
+                            actions.open("switch", { type: "branch", branch });
+                        }}
+                      >
+                        <GitBranch size={14} />
+                        <span>{branch.name}</span>
+                      </Button>
+                      <HistoryMoreButton
+                        label={t("{v0} 的 Branch 操作", { v0: branch.name })}
+                        onClick={(event) => branchContext(event, branch)}
+                      />
+                    </div>
                   ))}
               </>
             )}
           </div>
         )}
-        <div className="repository-meta">
-          <span>当前 Git</span>
-          <code>{changes.gitVersion}</code>
-          <span>数据来源</span>
-          <span>本地仓库与引用</span>
-          <p>远程引用代表本地已知状态。Proof 不会自动 fetch。</p>
+        <div className="repository-meta" title={changes.gitVersion}>
+          <span>{t("Local repository")}</span>
         </div>
       </aside>
       <section
@@ -257,28 +271,33 @@ export function RepositoryView({
         {section !== "history" && (
           <header className="repository-header">
             <div>
-              <h2>{section === "branches" ? "分支" : "Worktree"}</h2>
+              <h2>{section === "branches" ? t("分支") : "Worktree"}</h2>
               <p>
                 {section === "branches"
-                  ? "本地分支与已知远程引用。"
-                  : "每个 worktree 的代码和审查进度独立保存。"}
+                  ? t("本地分支与已知远程引用。")
+                  : t("每个 worktree 的代码和审查进度独立保存。")}
               </p>
             </div>
             {section === "branches" && (
-              <button
+              <Button
                 className="button compact"
                 disabled={demo || !changes.workspace.trusted || busy}
-                onClick={() => setCreate(true)}
+                onClick={() => actions.open("createBranch")}
               >
-                <Plus size={15} />
-                创建分支
-              </button>
+                <GitBranch size={15} />
+                {t("创建分支")}
+              </Button>
             )}
           </header>
         )}
         <div className="repository-page" hidden={section !== "history"}>
+          {actions.toolbar}
+          {actions.feedback}
           {(historyVisited || section === "history") && (
             <CommitHistory
+              actions={actions}
+              branches={branches}
+              onBranchMenu={branchContext}
               changes={changes}
               demo={demo}
               onOpenDiff={onOpenDiff}
@@ -306,28 +325,33 @@ export function RepositoryView({
                 <div>
                   <strong>{branch.name}</strong>
                   <small>
-                    {branch.remote ? "远程引用 · 本地已知" : "本地分支"}
+                    {branch.remote ? t("远程引用 · 本地已知") : t("本地分支")}
                     <code>{branch.oid.slice(0, 8)}</code>
                   </small>
                 </div>
                 {branch.current ? (
                   <span className="tag active-tag">
                     <Check size={13} />
-                    当前分支
+                    {t("当前分支")}
                   </span>
                 ) : (
                   !branch.remote && (
-                    <button
+                    <Button
                       className="button compact"
                       disabled={demo || busy || !changes.workspace.trusted}
                       onClick={() => {
-                        void switchBranch(branch.name, false);
+                        actions.open("switch", { type: "branch", branch });
                       }}
                     >
-                      切换 <ArrowRight size={14} />
-                    </button>
+                      {t("切换 ")}
+                      <ArrowRight size={14} />
+                    </Button>
                   )
                 )}
+                <HistoryMoreButton
+                  label={t("{v0} 的 Branch 操作", { v0: branch.name })}
+                  onClick={(event) => branchContext(event, branch)}
+                />
               </div>
             ))}
           </div>
@@ -342,21 +366,21 @@ export function RepositoryView({
                   <code>{tree.path}</code>
                   <small>
                     {tree.head.slice(0, 8)}
-                    {tree.locked && " · 已锁定"}
+                    {tree.locked && t(" · 已锁定")}
                   </small>
                 </div>
                 {tree.path === changes.workspace.path ? (
-                  <span className="tag active-tag">当前 Worktree</span>
+                  <span className="tag active-tag">{t("当前 Worktree")}</span>
                 ) : (
-                  <button
+                  <Button
                     className="button compact"
                     disabled={demo}
                     onClick={() => {
                       void onOpen(tree.path);
                     }}
                   >
-                    打开
-                  </button>
+                    {t("打开")}
+                  </Button>
                 )}
               </div>
             ))}
@@ -364,13 +388,19 @@ export function RepositoryView({
         )}
       </section>
       {branchMenu && (
-        <div
-          className="history-context-menu"
-          role="menu"
-          style={{ left: branchMenu.x, top: branchMenu.y }}
-          onPointerDown={(e) => e.stopPropagation()}
+        <GitContextMenu
+          x={branchMenu.x}
+          y={branchMenu.y}
+          onClose={() => setBranchMenu(null)}
+          label={t("Branch 操作")}
         >
-          <button
+          <HistoryTargetActions
+            target={{ type: "branch", branch: branchMenu.branch }}
+            actions={actions}
+            changes={changes}
+            onClose={() => setBranchMenu(null)}
+          />
+          <MenuItem
             role="menuitem"
             disabled={!changes.head}
             onClick={() => {
@@ -383,9 +413,9 @@ export function RepositoryView({
               setBranchMenu(null);
             }}
           >
-            与当前 Branch 比较
-          </button>
-          <button
+            {t("与当前 Branch 比较")}
+          </MenuItem>
+          <MenuItem
             role="menuitem"
             disabled={
               !branchAnchor || branchAnchor.name === branchMenu.branch.name
@@ -396,9 +426,9 @@ export function RepositoryView({
               setBranchMenu(null);
             }}
           >
-            与所选 Branch 比较
-          </button>
-          <button
+            {t("与所选 Branch 比较")}
+          </MenuItem>
+          <MenuItem
             role="menuitem"
             onClick={() => {
               chooseBranch(branchMenu.branch, false);
@@ -406,53 +436,11 @@ export function RepositoryView({
               setBranchMenu(null);
             }}
           >
-            查看此 Branch 的历史
-          </button>
-        </div>
+            {t("查看此 Branch 的历史")}
+          </MenuItem>
+        </GitContextMenu>
       )}
-      {create && (
-        <Modal
-          title="创建并切换分支"
-          error={error}
-          onClose={() => setCreate(false)}
-        >
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              void switchBranch(branchName, true);
-            }}
-          >
-            <label className="field-label" htmlFor="branch-name">
-              分支名称
-            </label>
-            <input
-              id="branch-name"
-              autoFocus
-              placeholder="feature/your-change"
-              value={branchName}
-              onChange={(e) => setBranchName(e.target.value)}
-            />
-            <p className="inline-help">
-              从当前 HEAD 创建。已有修改交由 Git 检查，不自动 stash 或覆盖。
-            </p>
-            <div className="modal-actions">
-              <button
-                type="button"
-                className="button"
-                onClick={() => setCreate(false)}
-              >
-                取消
-              </button>
-              <button
-                className="button primary"
-                disabled={!branchName.trim() || busy}
-              >
-                创建并切换
-              </button>
-            </div>
-          </form>
-        </Modal>
-      )}
+      {actions.dialog}
     </main>
   );
 }

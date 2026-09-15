@@ -1,12 +1,22 @@
 # Proof
 
+<img src="src-tauri/icons/128x128@2x.png" width="80" height="80" alt="Proof icon" />
+
 面向 AI 编码场景、以人工 Diff / Code Review 为核心的本地 Git 客户端。
 
-**当前状态：正在实现的 v0.1 Alpha，尚未达到 PRD 的发布完成条件。** Git 与 Review 核心已有真实仓库测试及 macOS 原生流程证据。安全丢弃/恢复点、文件历史与 Blame 已接入，新增原生交互仍待复验；Codex 0.153.4 / macOS Hook 已完成隔离真实会话与原生安装验证。History 支持选择 Commit/Branch 后打开独立 Diff tab，Commit/Amend 独立成页；其他 Agent/平台、诊断与完整性能验收仍在推进。
+**当前版本：0.1.0。** [下载 macOS Apple Silicon 版本](https://github.com/10yihang/Proof/releases/tag/v0.1.0)。这是首个公开版本，其他平台和完整性能验收仍在推进。
+
+- Local changes、文件树、Stage、Commit / Amend、History graph 与独立 Diff tabs。
+- 使用只读 Monaco 查看统一或并排 Diff，支持上下文展开、全文、搜索和独立窗口。
+- 通过本机 Codex CLI / Claude Code 主动发起 AI 分组与 Review，使用 CLI 的现有登录和额度，不要求配置 API Key。
+- Review 评论支持行范围、采纳 / 不采纳、本地持久化，以及导出修改说明交给 Agent。
+- Passive Agent Observer 与主动 AI 调用分离；普通 Git 功能不依赖 Agent。
 
 ## 运行
 
-需要 macOS、Rust、系统 Git，以及 Node.js（本机使用 Node 22.19.0 安装依赖，Node 18.20.7 也已完成前端构建）。
+最新本地构建信息见 `.artifacts/latest-build.json`。界面已迁移到 Tailwind CSS 4、shadcn / Base UI 和只读 Monaco，支持统一控件、面板拖动、Diff tab 排序及逻辑分组拖动。实现与验证范围见 [UI 迁移](docs/UI-MIGRATION.md)。
+
+需要 macOS、Rust、系统 Git，以及 Node.js 20 或更高版本；本轮使用 Node 24 完成构建。
 
 ```sh
 npm ci
@@ -22,9 +32,9 @@ cargo test -p proof-core
 npm run tauri -- build --debug --bundles app
 ```
 
-完整构建：`npm run bundle`。在签名、兼容性、性能及隐私验收完成前，不作为公开发行版发布。
+完整构建：`npm run bundle`。版本与发布说明见 [0.1.0](docs/releases/v0.1.0.md)。
 
-当前 macOS Alpha 使用本地 ad-hoc 签名，尚未进行 Developer ID 签名与公证。签名方式依据 [Tauri 官方说明](https://v2.tauri.app/distribute/sign/macos/#ad-hoc-signing)。
+当前 macOS 包使用 ad-hoc 签名，尚未进行 Developer ID 签名与 Apple 公证。签名方式依据 [Tauri 官方说明](https://v2.tauri.app/distribute/sign/macos/#ad-hoc-signing)。
 
 ## 结构
 
@@ -34,4 +44,10 @@ npm run tauri -- build --debug --bundles app
 - `docs`：完整 PRD、实施记录、设计约定和验收证据。
 - `scripts/create-demo-repo.py`：创建一次性的真实验收仓库，不覆盖既有目录。
 
-源码仓库与 Proof 的本地数据库分离。测试运行可通过 `PROOF_DATA_DIR` 指定独立数据目录；普通运行使用系统应用数据目录。产品名由用户确认为 **Proof**；原始 PRD 中的“品牌待定”是保留的源文档表述。商业模式、许可证与公开仓库尚未决定。
+源码仓库与 Proof 的本地数据库分离。测试运行可通过 `PROOF_DATA_DIR` 指定独立数据目录；普通运行使用系统应用数据目录。原始 PRD 中的“品牌待定”是保留的源文档表述。
+
+诊断导出、默认排除项与存储故障入口见 [DIAGNOSTICS.md](docs/DIAGNOSTICS.md)。
+
+Context 支持手动关联会话、本地备注、解除与撤销，原始 Hook 证据保留。交互与数据边界见 [CONTEXT-ASSOCIATIONS.md](docs/CONTEXT-ASSOCIATIONS.md)。
+
+桌面界面采用独立仓库工具栏、页面与 Diff tabs，以及紧凑文件树和提交图。macOS 合并标题栏并保留原生红黄绿；菜单快捷键、弹窗和草稿的交互边界见 [DESKTOP-CHROME.md](docs/DESKTOP-CHROME.md)。新版需要重启原生 App；原生窗口操作仍待解锁后的实机验收。

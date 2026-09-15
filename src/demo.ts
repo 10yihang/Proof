@@ -219,7 +219,7 @@ export function demoDiff(file: ChangedFile): FileDiff {
 
 export function demoDiffContext(
   diff: FileDiff,
-  contextLines: number,
+  contextLines: number | "file",
 ): DiffContext {
   const gap = [
     "",
@@ -239,9 +239,11 @@ export function demoDiffContext(
   ];
   return {
     snapshotId: diff.id,
-    contextLines,
+    contextLines: contextLines === "file" ? 3 : contextLines,
+    fullFile: contextLines === "file",
     gaps:
-      diff.path === "src/api/requests.ts" && contextLines > 3
+      diff.path === "src/api/requests.ts" &&
+      (contextLines === "file" || contextLines > 3)
         ? [
             {
               beforeHunkId: "demo-hunk-2",

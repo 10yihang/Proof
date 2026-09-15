@@ -101,7 +101,7 @@ fn modified_owned_handler_is_a_conflict_for_install_and_uninstall() {
 }
 
 #[test]
-fn unknown_version_duplicate_keys_bad_json_and_size_limits_are_rejected() {
+fn invalid_versions_duplicate_keys_bad_json_and_size_limits_are_rejected() {
     let spec = spec(Agent::Codex);
     for input in [
         br#"{"hooks":{},"hooks":{}}"#.as_slice(),
@@ -113,10 +113,8 @@ fn unknown_version_duplicate_keys_bad_json_and_size_limits_are_rejected() {
         assert!(install_plan(Some(input), &spec, None).is_err());
     }
     let mut unknown = spec.clone();
-    unknown.agent_version = "99.0.0".into();
-    assert!(
-        matches!(install_plan(None,&unknown,None),Err(error) if error.code=="OBSERVER_VERSION_UNSUPPORTED")
-    );
+    unknown.agent_version = "invalid version\n".into();
+    assert!(install_plan(None, &unknown, None).is_err());
     let input = serde_json::to_vec(&json!({"other":"x".repeat(1024*1024-100)})).unwrap();
     assert!(input.len() < 1024 * 1024);
     assert!(
@@ -307,4 +305,16 @@ fn hook_command_quotes_paths_without_interpreting_shell_input() {
         format!("bridge\n--registration\n{}\n", spec.registration_path)
     );
     assert!(!temp.path().join("INJECTED").exists());
+}
+
+#[test]
+fn newer_cli_versions_reuse_the_hook_protocol_without_a_version_allowlist() {
+    for agent in [Agent::Codex, Agent::Claude] {
+        let mut spec = spec(agent);
+        spec.agent_version = "99.0.0-preview.2".into();
+        let plan = install_plan(Some(EXISTING.as_bytes()), &spec, None).unwrap();
+        let undo =
+            uninstall_plan(plan.after.as_ref().map(|v| v.as_bytes()), &plan.ownership).unwrap();
+        assert_eq!(undo.after.as_deref(), Some(EXISTING));
+    }
 }

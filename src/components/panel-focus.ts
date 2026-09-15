@@ -8,6 +8,6 @@ export function shouldDismissDrawer(event: FocusEvent<HTMLElement>) {
   return (
     next instanceof Element &&
     !event.currentTarget.contains(next) &&
-    !next.closest("dialog[open]")
+    !next.closest("[role='dialog'][data-open]")
   );
 }

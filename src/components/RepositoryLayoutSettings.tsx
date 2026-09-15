@@ -1,3 +1,5 @@
+import { Button, Input, Select } from "./ui/controls";
+import { t, uiMessage } from "../i18n";
 import { useEffect, useState } from "react";
 import { ArrowCounterClockwise, Minus, Plus } from "@phosphor-icons/react";
 import {
@@ -28,55 +30,55 @@ export function RepositoryLayoutSettings({
     Object.keys(defaultRepositoryLayout) as (keyof RepositoryLayout)[]
   ).some((key) => value[key] !== defaultRepositoryLayout[key]);
   return (
-    <section className="repository-layout-settings" aria-label="仓库布局">
+    <section className="repository-layout-settings" aria-label={t("仓库布局")}>
       <div className="layout-settings-heading">
-        <h3>仓库布局</h3>
+        <h3>{t("仓库布局")}</h3>
         <span>{name}</span>
       </div>
       <p className="muted">
-        应用于此仓库及关联 Worktree。
-        {demo && "演示布局仅在本次体验中保留。"}
+        {t("应用于此仓库及关联 Worktree。")}
+        {demo && t("演示布局仅在本次体验中保留。")}
       </p>
       <div className="layout-save-status" role="status">
         {!ready
-          ? "尚未读取布局"
+          ? t("尚未读取布局")
           : saving
-            ? "正在保存此仓库布局…"
+            ? t("正在保存此仓库布局…")
             : custom
-              ? "此仓库已覆盖默认布局"
-              : "此仓库使用默认布局"}
+              ? t("此仓库已覆盖默认布局")
+              : t("此仓库使用默认布局")}
       </div>
       {error && (
         <div className="layout-setting-error" role="alert">
           {ready
             ? saving
-              ? "有布局调整未保存，其余调整仍在保存。"
-              : "有布局调整未保存，当前显示已保存的值。"
-            : "无法读取此仓库布局。"}{" "}
-          {error.message}
-          {!ready && <button onClick={onRetry}>重试读取</button>}
+              ? t("有布局调整未保存，其余调整仍在保存。")
+              : t("有布局调整未保存，当前显示已保存的值。")
+            : t("无法读取此仓库布局。")}{" "}
+          {uiMessage(error.message)}
+          {!ready && <Button onClick={onRetry}>{t("重试读取")}</Button>}
         </div>
       )}
       <WidthSetting
         side="sidebarWidth"
-        label="文件栏宽度"
+        label={t("文件栏宽度")}
         value={value.sidebarWidth}
         disabled={!ready}
         onChange={onChange}
       />
       <WidthSetting
         side="contextWidth"
-        label="上下文宽度"
+        label={t("上下文宽度")}
         value={value.contextWidth}
         disabled={!ready}
         onChange={onChange}
       />
       <label className="settings-toggle">
         <span>
-          <strong>显示文件栏</strong>
-          <small>窄窗通过按钮展开</small>
+          <strong>{t("显示文件栏")}</strong>
+          <small>{t("窄窗通过按钮展开")}</small>
         </span>
-        <input
+        <Input
           type="checkbox"
           checked={value.sidebarOpen}
           disabled={!ready}
@@ -84,9 +86,9 @@ export function RepositoryLayoutSettings({
         />
       </label>
       <label className="field-label" htmlFor="repository-context">
-        此仓库的 Context 面板
+        {t("此仓库的 Context 面板")}
       </label>
-      <select
+      <Select
         id="repository-context"
         value={
           value.contextOpen === null ? "inherit" : String(value.contextOpen)
@@ -101,18 +103,18 @@ export function RepositoryLayoutSettings({
           })
         }
       >
-        <option value="inherit">跟随应用默认</option>
-        <option value="true">此仓库始终显示（窄窗收起）</option>
-        <option value="false">此仓库默认收起</option>
-      </select>
-      <button
+        <option value="inherit">{t("跟随应用默认")}</option>
+        <option value="true">{t("此仓库始终显示（窄窗收起）")}</option>
+        <option value="false">{t("此仓库默认收起")}</option>
+      </Select>
+      <Button
         className="button compact layout-reset"
         disabled={!ready || saving || !custom}
         onClick={onReset}
       >
         <ArrowCounterClockwise size={15} />
-        恢复此仓库默认布局
-      </button>
+        {t("恢复此仓库默认布局")}
+      </Button>
     </section>
   );
 }
@@ -152,19 +154,20 @@ function WidthSetting({
       <label htmlFor={`layout-${side}`}>
         {label}
         <small>
-          {bounds.min}–{bounds.max}px
+          {bounds.min}–{bounds.max}
+          {t("px")}
         </small>
       </label>
       <div className="layout-width-controls">
-        <button
+        <Button
           className="icon-button"
-          aria-label={`减小${label}`}
+          aria-label={t("减小{v0}", { v0: label })}
           disabled={disabled || value <= bounds.min}
           onClick={() => onChange({ [side]: Math.max(bounds.min, value - 20) })}
         >
           <Minus size={15} />
-        </button>
-        <input
+        </Button>
+        <Input
           id={`layout-${side}`}
           type="number"
           min={bounds.min}
@@ -191,14 +194,14 @@ function WidthSetting({
             }
           }}
         />
-        <button
+        <Button
           className="icon-button"
-          aria-label={`增大${label}`}
+          aria-label={t("增大{v0}", { v0: label })}
           disabled={disabled || value >= bounds.max}
           onClick={() => onChange({ [side]: Math.min(bounds.max, value + 20) })}
         >
           <Plus size={15} />
-        </button>
+        </Button>
       </div>
       {invalid && (
         <span
@@ -206,7 +209,8 @@ function WidthSetting({
           id={`layout-error-${side}`}
           role="alert"
         >
-          请输入 {bounds.min}–{bounds.max} 之间的整数。
+          {t("请输入 ")}
+          {bounds.min}–{bounds.max} {t(" 之间的整数。")}
         </span>
       )}
     </div>

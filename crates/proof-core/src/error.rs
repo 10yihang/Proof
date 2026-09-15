@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-#[derive(Debug, thiserror::Error, Serialize)]
+#[derive(Debug, Clone, thiserror::Error, Serialize)]
 #[serde(rename_all = "camelCase")]
 #[error("{message} ({code})")]
 pub struct Error {

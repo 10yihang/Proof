@@ -29,7 +29,7 @@
 | 事实与提案 | 上游能力注明资料编号；产品规则、指标、默认值均是本 PRD 的设计提案 |
 
 ## 1.3 不可妥协的原则
-**代码优先。** 真实 Git 状态与代码内容是核对依据，AI 分析不覆盖原始 Diff。**人工决定。** 已查看、已暂存、已提交和验证通过是不同状态。**旁路接入。** 观察模块不主动改变 Agent 的上下文、工具、权限或决策。**诚实降级。** 证据缺失显示未知，不用时间相关性伪装因果关系。**本地优先。** 核心功能无账号、无模型服务也可使用。
+**代码优先。** 真实 Git 状态与代码内容是核对依据，AI 分析不覆盖原始 Diff。**人工决定。** 已查看、已暂存、已提交和验证通过是不同状态。**旁路接入。** 观察模块不主动改变 Agent 的上下文、工具、权限或决策。**诚实降级。** 证据缺失显示未知，不用时间相关性伪装因果关系。**本地优先。** Git 与人工 Review 无账号、无模型服务也可使用；核心 AI 功能仅在点击后使用本机 Coding Agent 的现有登录。
 
 ## 1.4 需求与优先级约定
 需求编号采用 REPO、DIFF、GIT、REV、OBS、CTX、EVD、AI、SET、NFR 等前缀。P0 是 v0.1 上线条件；P1 是后续增强，不阻塞 MVP；P2 是远期方向。文档版本号不等于产品版本号。
@@ -74,7 +74,7 @@
 | 人工 Review | 内容版本绑定、Hunk 标记、审查后变化提醒、专注模式 | 本地评论、导出完整审查报告 |
 | Agent 观察 | Claude Code / Codex 的经验证本地版本；显式授权与能力检测 | 更多 Agent、经授权的历史会话导入 |
 | 上下文 | 任务、会话、工具与命令证据；可靠的会话—文件关联 | 有条件的 Hunk 精细归属、语义分组与解释 |
-| AI 辅助 | 不作为首版依赖，不默认调用模型 | 按需摘要、分组、风险提示；外发前授权 |
+| AI 辅助 | 核心功能；显式点击本机 Coding Agent 执行 Grouping / Review，普通 Git 可完全离线使用 | Hunk 级跨组与更丰富分析范围另行设计 |
 | 平台 | 暂定 macOS Apple Silicon 首发；Windows 从原型期参与验证 | Windows 正式支持；Linux 另设验收门槛 |
 
 ## 3.2 明确不在 v0.1 内
@@ -238,7 +238,7 @@ Monaco 等组件只负责展示和文本交互；Git patch 与 Hunk 身份由独
 **验收：** 打开仓库、读取 Diff 或首次启动均不会自动修改 Agent 配置。
 
 ## OBS-02｜上游能力检测 · P0
-记录 Agent 版本、适配器版本和能力集合；分别检测任务事件、工具事件、结束事件、异步支持和字段可用性。官方文档描述不等于本机已经可用；首版只启用通过兼容性测试的组合。[S1](https://learn.chatgpt.com/docs/hooks)[S2](https://code.claude.com/docs/en/hooks)
+记录 Agent 版本、适配器版本和能力集合；分别检测任务事件、工具事件、结束事件、异步支持和字段可用性。官方文档描述不等于本机已经可用。支持的 Agent / 平台不按精确 CLI 版本设白名单；检测版本用于诊断，兼容性由配置结构、桥接连通和实际事件分别验证。正常 CLI 升级不要求重复安装已有 Hook；程序来源失去信任、权限或配置异常仍停止采集。[S1](https://learn.chatgpt.com/docs/hooks)[S2](https://code.claude.com/docs/en/hooks)
 **验收：** 不支持或未知版本不能沿用“已验证”绿灯；缺少某类事件时只降级该能力。
 
 ## OBS-03｜不干预配置规范 · P0
@@ -319,24 +319,46 @@ Monaco 等组件只负责展示和文本交互；Git patch 与 Hunk 身份由独
 上下文完整性、修改归属、审查状态和验证状态四套维度独立展示。完整性包含采集中断、超限截断、字段未提供、字段未授权及原始证据已清理。
 **验收：** “来源直接关联”不能自动提升测试可信度；丢失采集数据不会让原始 Diff 消失。
 
-# 14｜智能分组与 AI 辅助边界
+# 14｜AI Change Grouping 与 AI-assisted Review · 核心功能
 
-## AI-01｜逻辑变更分组 · P1
-在文件树之外增加可选逻辑分组。分组可以引用多个文件的 Hunk；同文件的不同 Hunk 可属于不同组。每个 Hunk 只有一个主要审查归属，其他组作为关联，避免重复计算进度。
-用户可移动、拆分、合并、命名分组，也可恢复默认目录视图。自动建议在用户确认前不覆盖其已编辑分组。
-**验收：** 分组不改变 index、提交边界或文件内容；AI 服务不可用时仍可人工分组。
+## AI-01｜逻辑变更分组 · P0
+用户点击 **AI Group Changes** 后，以当前 Local changes 的固定 Git Diff 为输入，按逻辑变更自动生成文件分组。例如 Authentication 包含 auth.go / token.go，Connection Pool 包含 pool.go / pool_test.go。
+每组返回结构化 title、summary、files、risk、reviewPriority。每个 changed path 恰好属于一个组；同一路径的 Staged / Unstaged Diff 保留各自版本与状态。首版以文件为分组单位，Hunk 跨组留待后续独立需求。
+用户可改名、把文件移动到其他组 / 新组、取消单个分组或 Ungroup all。没有现有分组时自动应用本次结果；已有分组时提供 Apply groups。分组使用版本校验，运行期间的手动编辑不会被迟到结果覆盖。
+**验收：** 未知路径、重复文件、遗漏文件、无效风险 / 优先级均拒绝；分组仅写 Proof 元数据，不改变 index、提交边界、源文件或人工 Reviewed 状态。没有 Agent 仍可人工分组并使用 Files / Tree。
 
-## AI-02｜修改解释与风险提示 · P1
-按用户请求，根据当前 patch 与授权证据生成摘要；关联具体代码、事件和快照。界面标为“分析推断”，不能冒充原 Agent 的思考或确定原因。结果失配当前快照时立即标为过期。
-**验收：** 每条风险提示能回到相关代码；用户可忽略并记录原因，不自动修改代码或标记审查完成。
+历史 Diff 同样提供 AI Change Grouping，输入为当前 tab 固定的 base / target Commit，分组与 Local changes 分开保存。用户可在两个范围中使用相同的改名、移动文件和取消分组操作。Review Current Change 覆盖当前分组内的比较文件；仅在用户点击后调用 CLI。
 
-## AI-03｜模型与数据授权 · P1
-允许使用本地模型或用户自配服务，但不承诺任意模型兼容。外发前显示供应方、选中代码范围、所需上下文和费用归属；密钥存系统凭据设施，不进入普通数据库。默认不后台扫描全仓库、不自动上传完整会话。
-**验收：** 拒绝授权、断网、额度不足和模型超时都不影响本地 Git / Review。
+## AI-02｜AI-assisted Review · P0
+提供 **Review All Changes** 和 **Review Current Change**。Local changes 中 Current 指当前文件所在的 Change group，未分组时为当前文件；独立 Diff tab 中 Current 同样对应当前 Change group，未分组时为当前文件；All 指该 tab 固定的两个 Commit 之间全部 Diff。
+结构化结果包含 Summary、Overall Risk、Findings、Behavior Changes、Missing Tests、Review Priority。Finding 必须含 severity、title、description、file、line（起始行）、endLine（结束行，包含边界）、suggestion，另带 Staged / Unstaged 和 old / new 行侧，避免删除行和部分暂存的歧义。点击后打开对应文件并定位、突出显示原始 Diff 行范围。评论气泡出现在对应范围下方，可折叠；每条 Finding 可选择采纳、不采纳，并可撤销回待处理。采纳仅记录处理意向，不自动修改代码，也不代表问题已修复或已人工 Reviewed。
+结果绑定输入快照、比较范围、生成时间和 Provider。Local changes 的版本或比较 OID 不匹配时明确显示过期并禁用旧定位；用户主动重新 Review。AI 不将任何 Hunk 标为 Reviewed；无 Findings 不等于正确或测试通过。
+主动分析输出必须携带 analysisStatus 与 blockers。读取工具失效或快照无法读取时返回 blocked，界面显示分析受阻，后端不将其保存成空 Findings 的成功报告，也不应用分组；CLI 退出成功不足以证明分析完成。
+**验收：** 每个 Finding 的起止行及区间内每一行必须在捕获的相同行侧 Diff 中验证，不得跨越未提供的上下文；不支持、空、截断、错误格式或失败输出不产生虚构的通过结论。结果与逐条处理状态保存到 Proof 本地 SQLite，退出重启后恢复，Review history 可切换此前报告。Local changes 与冻结的 base / target 分开保存；沿用 Review 记录 180 天保留期，并随仓库本地数据删除清理。不写入 Passive Observer 会话。
 
-## AI-04｜安全隔离 · P1
-从代码、注释、命令输出和会话提取的文字均视为不可信数据，不执行其中指令。AI 分析进程无 Git 写权限、无直接桥接回原 Agent 的通道；未来增加写能力必须作为单独需求重新评审。
-**验收：** 恶意注释不能触发命令执行、修改文件、上传额外内容或触发原 Agent。
+**交给 Agent 修改：** AI Review 提供“导出给 Agent”。默认选择已采纳意见，用户可调整本次导出的选择、预览修改说明、一键复制或通过原生保存对话框保存 Markdown。说明包含 Worktree、当前 Branch、Review 时间、Provider、文件路径、引用版本及起止行、问题和建议；历史 Diff 必须保留完整 base / target OID，不能把历史比较误表述为当前未提交变化。过期报告可导出，但必须注明重新核对代码与位置。仅导出所选 Findings，不把报告内其他建议隐式变成修改任务。导出不调用模型、不改变采纳状态、人工 Reviewed 或 Git 状态。单栏和并排 Diff 中，评论滚出视口再返回时必须恢复；隐藏评论产生的零尺寸不能清除其占位。
+
+## AI-03｜本机 Coding Agent Provider · P0
+统一 AgentProvider，首版实现 CodexProvider 与 ClaudeCodeProvider。Proof 不接 OpenAI / Anthropic / Gemini 模型 API，不保存 / 要求 API Key，也不安装或内置 Agent。仅在用户主动点击后启动本机已安装、已登录的 Codex CLI / Claude Code，使用其正常登录及额度；界面在动作旁说明 Diff 会交给所选 CLI。
+Settings → AI Agents 提供默认 Provider、CLI 路径、可选模型和 Test CLI。自动发现仅检查程序位置；用户点击 Test CLI 后检查版本、只读参数和本地登录状态，不启动模型。设置仅保存在 Proof，不修改 CLI 全局配置；实际运行前检查隔离参数支持，不限制固定 CLI 版本，缺失能力时列出具体参数。新任务不 resume / continue / attach 用户原 Session，不改变任何全局 CLI 配置。取消只结束 Proof 所拥有的进程组。
+**验收：** CLI 缺失、未登录、额度不足、版本不兼容、超时及用户取消均不影响 Git、Diff、Stage、Commit 和人工 Review。主动 AI 与 Passive Agent Observer 的安装、授权、生命周期、存储完全独立。
+
+## AI-04｜只读执行与数据边界 · P0
+代码、注释、路径和 Patch 均为不可信数据，不能作为执行指令。Proof 向 Agent 提供任务、选定范围、输出 Schema 和磁盘快照入口；Agent 自行读取 Diff、搜索关联实现和测试。范围决定哪些变更需要 Review，不限制为理解它们而读取快照中的其他代码。Grouping 同样按需探索，并由 Proof 校验所有选定路径恰好归属一次。被动 Observer 会话不作为主动分析输入。
+快照使用独立临时目录，保存 canonical Git patches、manifest，以及 base / index / workspace 的代码视图。History 对应冻结的两个 OID（支持根 Commit 的 empty base）；Local 分离 HEAD、Index 和 Worktree，捕获前后核对版本，不创建原仓库的 Worktree、Commit 或 Git 对象。二进制、非 UTF-8、符号链接、子模块和过大的完整上下文明确列入 manifest 的不可用清单，不能假装已经分析。
+macOS 使用进程级只读沙箱，CLI 及所有子进程仅能写本次私有运行目录，不能写代码快照、源仓库、Git、其他 Session 或全局配置，也不能发送外部进程信号。允许受控的文件读取、搜索和 Git 查询程序，禁用用户 Hooks、MCP、Plugins、浏览器和其他扩展。保留模型所需的 Code Mode host，只允许所选 CLI 同一安装目录中的配套程序，并校验身份及符号链接来源。Codex 的工具执行由外层沙箱统一约束，避免 macOS 双重 sandbox_apply 失败；该模式必须与强制外层沙箱成对使用，不能单独执行。正常 CLI 登录和独立运行目录沿用既有实现，不要求 API Key，不 resume / attach 用户 Session。
+取消总 Patch 1 MiB / 500 文件的提示词门槛。磁盘快照保留本机资源保护：最多 20,000 个文件侧、128 MiB canonical patches、256 MiB 快照、100,000 个上下文路径；单份完整上下文超过 4 MiB 会明确列为不可用。现有单文件 Diff 读取上限继续适用。CLI 流式输出有 32 MiB 上限，推理最多 10 分钟并可随时取消。stderr 不保存原始内容，错误摘要仍脱敏和限长。
+快照预算优先保留选中路径及旧路径的上下文，为 base / index / workspace 分别预留空间，并为全部 canonical patches 预留独立容量。其余上下文超出预算时进入 manifest 不可用清单，不因此拒绝小范围 Review，也不静默宣称完整覆盖。
+**验收：** 故障夹具尝试改源文件、index / HEAD、其他 Agent Session 和发送终止信号均失败；超时 / 取消不遗留进程；删除 Proof 本地数据后迟到结果不能重新写入分组。
+
+## AI-05｜UI 与来源真值 · P0
+保持 **Files / Change groups | Diff | Context / AI Review**。中央 Diff 占主要区域；左侧提供文件树和逻辑分组切换，右侧用结构化报告和定位动作，不做聊天框。历史范围比较继续使用独立 Diff tab。
+Git Diff 永远是 Source of Truth；AI 分组、风险与解释仅为辅助，最终 Review 由人完成。AI Commit、生成代码或 Agent 自称完成均不构成人工 Reviewed。
+
+## AI-06｜主动任务活动与取消 · P0
+Grouping、Review、独立 Diff tab 共用活动面板，显示准备变更 / 快照、启动 Agent、读取文件、搜索代码、Git 查询、执行命令和校验结果等实际阶段。仅在已知文件路径匹配时显示路径，不显示内部推理、原始命令参数、工具输出和凭据。捕获阶段可显示真实文件计数；Agent 探索期间不伪造百分比。
+始终显示运行时长。连续 15 秒没有新事件时提示等待新活动，不能将无事件直接判为卡死或失败。最近 40 条活动有界保留，重复准备事件合并；活动可展开查看。取消后显示正在取消，终止本任务所拥有的进程组，完成或失败后结束运行状态。事件按窗口和一次性读取 ticket 隔离，监听先于任务注册，结束后解除监听；旧任务和其他窗口事件不能更新当前任务。
+
 
 # 15｜Repository 页面与传统 Git 能力
 
@@ -394,7 +416,7 @@ Monaco 等组件只负责展示和文本交互；Git patch 与 Hunk 身份由独
 | AgentEvent | event_id、原生 ID、事件 / 接收时间、工具引用、裁剪字段、截断 / 丢失状态、schema_version |
 | EvidenceLink | 事件与文件 / Hunk / Snapshot 的关联、证据类型、理由、人工修正记录 |
 | ValidationRun | 命令状态、结构化报告、开始 / 结束时间、快照绑定质量、过期原因 |
-| ChangeGroup / Analysis | P1；Hunk 引用、用户定义与 AI 建议区分、生成快照、分析来源 |
+| ChangeGroup / Analysis | P0；文件引用、分组版本、生成快照、Provider、结构化 Findings；与人工 Review 分离 |
 | RecoveryPoint / Operation | 显式写操作、预期 / 实际基准、恢复内容、过期时间、操作结果 |
 
 ## 17.2 数据一致性要求
@@ -434,15 +456,16 @@ Review 不自动 Stage；Stage 不自动 Review；Commit 不自动 Push；Agent 
 | --- | --- | --- |
 | 桌面壳 | Tauri 2 | macOS / Windows 的渲染与权限分别验收，不能以跨平台框架代替实测 [S8](https://v2.tauri.app/reference/webview-versions/) |
 | 前端 | React + TypeScript + Vite | 代码阅读、面板、快捷键与无障碍优先 |
-| 设计系统 | Tailwind CSS + 可访问基础组件 | 自有设计令牌；不把组件库默认样式当作产品设计 |
-| Diff | Monaco 候选 + 独立 Git 模型 | 原型验证滚动、字体、性能、选择与 patch 映射；候选可替换 |
+| 设计系统 | Tailwind CSS 4 + shadcn 源码组件 + Base UI | 明暗主题、紧凑控件与统一焦点/弹层；专业 Git 术语保留英文 |
+| Diff | 本地打包的 Monaco + 独立 Git 模型 | Git Hunk 与行范围是依据；编辑器只读，Stage/Review 不使用编辑器重新计算的 Patch |
+| 窗口交互 | Zustand + react-resizable-panels + dnd kit + react-hotkeys-hook + Motion | 窗口状态隔离；宽度按仓库保存；拖动有键盘替代；遵循减少动态效果设置 |
 | 本地核心 | Rust + 异步任务 | Git、文件观察、存储、IPC 与前端边界分离 |
 | Git | 首版优先系统 Git CLI | 兼容用户环境需实测，不能承诺自动等同终端环境 |
 | 存储 | SQLite + 受限内容文件 | 不要求服务端数据库；有事务、清理和迁移策略 |
 | 观察 | 轻量桥接 + 独立本地采集服务 | 桥接无重处理；采集与 GUI 生命周期解耦 |
 
 ## 19.2 模块职责
-前端负责呈现与用户动作，不直接拥有任意 shell 能力。Git 核心处理查询与显式写操作；观察服务只接收事件和读所需文件；关联引擎输出证据链接；Review 引擎管理版本绑定。未来 AI 分析作为可关闭模块，不进入 Git 正确性链路。
+前端负责呈现与用户动作，不直接拥有任意 shell 能力。Git 核心处理查询与显式写操作；观察服务只接收事件和读所需文件；关联引擎输出证据链接；Review 引擎管理版本绑定。主动 AI 使用独立 AgentProvider 与只读进程；不进入 Git 正确性链路，也不连接 Passive Observer 的 Agent Session。
 
 ## 19.3 IPC 与 API 契约
 内部命令建议包括 ListChanges、GetDiff、StagePatch、UnstagePatch、CommitPreview、Commit、SetReviewMark、ListEvidence、ConfigureObserver。每个写命令携带 worktree_id、请求版本及预期内容指纹；事件包含 schema_version。权限按窗口 / 能力收敛，避免向任意 WebView 暴露通用执行入口。[S9](https://v2.tauri.app/security/capabilities/)
@@ -487,7 +510,7 @@ Hook 可能先收到包含敏感字段的上游负载；产品保证的是按授
 | --- | --- | --- |
 | 规范化观察元数据与已授权任务 | 30 天 | 到期删除；失去证据的链接标明原因 |
 | 已授权命令输出摘要 | 7 天；每事件持久化文本不超过 64 KiB | 截断显式标记；不落无限日志 |
-| Review 标记与操作元数据 | 180 天，可按仓库清理 | 重校验适用性，不自动补造原始证据 |
+| Review 报告、处理状态、人工标记与操作元数据 | 180 天，可按仓库清理 | 重校验适用性，不自动补造原始证据 |
 | 丢弃恢复点 | 7 天或总计 256 MiB，先到者生效 | 丢弃前提示可恢复范围；恢复点满时不静默失去保护 |
 | 全应用数据 | 2 GiB 拟定软上限 | 先清可重建缓存 / 到期记录；仍超限则暂停内容采集并提示 |
 
@@ -599,7 +622,7 @@ Hook 可能先收到包含敏感字段的上游负载；产品保证的是按授
 | M2：Git / Review Alpha | P0 Git、版本绑定、恢复点、基础历史 | AT-01—15 通过；存在问题的写动作不得开放 |
 | M3：观察 Beta | 授权安装、后台服务、证据关联、数据管理 | AT-16—28 通过；支持矩阵与降级说明发布 |
 | M4：v0.1 内测 | 安装包、说明、基线性能与完整回归 | AT-29—30、用户测试、安全与隐私检查通过 |
-| M5：稳定与扩展 | Windows 正式验收、Git 增强、按需 AI | 分别补需求和门槛，不把 P1 未验收能力塞入 P0 |
+| M5：稳定与扩展 | Windows 正式验收、Git 增强、AI 范围扩展 | 分别补需求和门槛，不把 P1 未验收能力塞入 P0 |
 
 ## 26.2 上线与回滚
 先面向小范围开发者本地内测。观察接入与每个高风险 Git 动作独立开关；发现兼容性问题可关闭该适配组合，不影响普通 Diff。回滚前保证数据库版本兼容或提供只读恢复；回滚不修改用户仓库历史。
@@ -641,7 +664,7 @@ Hook 可能先收到包含敏感字段的上游负载；产品保证的是按授
 | D05 | 采集等级与默认保留 | 第21章提案；敏感字段显式授权 | 隐私评审 + 首轮用户反馈 |
 | D06 | 资源预算 | 第22章拟定值 | 基线测试后确认；变更须记录理由 |
 | D07 | 提交审查策略 | 默认提醒，可选仅约束 GUI 的严格模式 | 用户测试确认不会误解为全局保护 |
-| D08 | AI 服务供应方 | v0.1 不选；后续本地或用户自配 | P1 数据授权、安全和成本评审 |
+| D08 | AI 执行方式 | 已确定：本机 Codex CLI / Claude Code；无模型 API / API Key | Provider 隔离、版本和故障测试；真实模型调用按用户动作验收 |
 
 ## 28.1 需求冻结
 M0 关闭可行性风险，M1 冻结主要交互与状态语言，M2 前冻结 P0 写操作范围。新增 Agent、远程环境、自动执行、团队功能或精细归属均作为新需求评审，不用“技术顺手”直接扩展权限。
@@ -691,7 +714,7 @@ Command / Ctrl+K 打开命令面板；Command / Ctrl+P 搜索变化文件；Alt+
 | 上下文归属 | CTX-01—05 | AT-20—22；P1 精细归属另加真值集 |
 | 命令与验证证据 | EVD-01—05 | AT-23—25；成功 / 过期 / 未知对照 |
 | 历史与设置 | HIS-01—04、SET-01—05 | 历史基准、导航恢复、字段授权、AT-28—29 |
-| 智能增强 | AI-01—04 | P1 专项验收；不作为 v0.1 依赖 |
+| 核心 AI 辅助 | AI-01—05 | 本机 Provider、只读故障夹具、分组编辑与 Findings 定位验收；无 Agent 降级验收 |
 | 安全与性能 | SEC-01—05、NFR-01—09 | AT-18—19、26—30；权限与资源故障注入 |
 
 ## 30.2 评审必须回答的问题
@@ -741,3 +764,46 @@ Command / Ctrl+K 打开命令面板；Command / Ctrl+P 搜索变化文件；Alt+
 
 ## 31.3 文档结论
 **让用户继续用喜欢的 Agent 写代码，用真实 Diff、可核对证据和人工审查把修改看清楚。** 首版的价值不依赖“知道 Agent 的全部思考”，而依赖基础 Git 正确、状态可信、交互好用。
+
+
+## Diff workspace 补充（2026-09-14）
+
+Local changes 和历史 Diff 复用文件栏、分组、可收起 / 拖动的侧栏与中央阅读组件。提供 Open in Window，历史窗口保留不可变比较 OID，本地窗口实时更新。窗口独立拥有监听和取消票据，关闭一个窗口不影响其他窗口。语法高亮按语言解析，并与搜索、行内 Diff 同时显示；大文件保留原文和有界降级。验收包括范围隔离、分组持久化、键盘操作、窗口请求和数据清理广播。详见 DIFF-WORKSPACE.md。
+
+### Diff 加载稳定性
+Local changes 与历史 Diff 使用同一加载层，固定在中央阅读区内。切换文件时不得插入额外布局行或改变两侧栏、中央面板的尺寸；尚未读取的文件显示路径与占位内容，不能继续操作上一文件。刷新同一文件时保留已显示内容、禁用写操作，并在区内显示更新与取消读取按钮。
+
+## SET-04｜界面语言 · P0
+
+提供简体中文与 English，在设置的外观与阅读中切换。现有用户默认保持简体中文；语言设置保存于 Proof 本机数据库，退出后保留，多窗口同步。切换立即生效，不清空 Commit 草稿、文件选择、Diff tabs 或阅读状态。
+
+中文界面的普通按钮、提示、错误说明和无障碍标签统一用中文；Git、History、Commit、Review、Diff、Branch、Worktree、Stage 等术语保留英文。日期与数字使用所选语言格式。macOS 菜单跟随同一语言设置。
+
+源代码、文件/Branch 名称、Commit message、用户备注、原始日志与已有 AI 报告保留原文。只有用户主动发起的新 Grouping/Review 任务使用当前语言；语言切换不调用模型，也不改变已有任务。
+
+**验收：** 切换、重启恢复、保存失败回退与多窗口同步有回归覆盖；语言设置不会被另一窗口的阅读偏好覆盖。两份文案目录保持键与插值参数一致，Git 内容不因语言变化而改变。详见 `I18N.md`。
+
+## HG-01｜History Git 操作 · P0
+
+History 工具栏提供 Fetch / Pull / Push 和创建 Branch。Branch 侧栏与图中标签共用菜单，提供 Switch、创建 Branch、Merge 到当前 Branch、将当前 Branch Rebase 到目标、重命名、删除、复制 Branch 名称与比较。远程 Branch 可创建本地 tracking Branch 并 Switch。右键之外提供可见的更多操作按钮及键盘导航。
+
+Commit 菜单提供 Detached checkout、创建 Branch / Tag、Cherry-pick、Revert、Rebase、Reset soft / mixed / hard、复制完整 SHA / Commit message。Merge Commit 的 Cherry-pick / Revert 明确选择 Mainline Parent。比较继续在独立 Diff tab 展示。
+
+Pull 明确选择 Remote、远程 Branch 与 fast-forward-only / Merge / Rebase，默认 fast-forward-only。Push 显示明确目标，仅推送所选 Branch；不隐式 force、mirror 或推送额外 refs。沿用用户现有 Git 登录方式，不收集 API Key，不调用 Agent，不自动执行网络操作。
+
+所有写操作先校验信任和当前 Git 状态，显示目标与影响；Rebase、Reset、Abort 要求确认改写或丢弃影响。执行前再次校验 HEAD / Branch、目标引用、Worktree / Index、配置与 Git 流程状态。过期预览停止，Git 失败不自动重试或回滚。执行后显示实际结果并刷新 History 与 Local changes。
+
+Merge / Rebase / Cherry-pick / Revert / Pull 前需先处理本地修改，不自动 Stash。冲突时提供逐文件 Stage 解决结果、Continue 与 Abort。Stage 解决结果表示用户确认文件已在编辑器中处理，不表示 AI Review 或人工 Review 已完成。
+
+**验收：** 临时真实仓库覆盖成功、分叉、冲突、登录/远程失败、过期预览、多 Worktree 与未合并 Branch 保护；UI 覆盖工具栏、右键/键盘菜单、复制、切换/重命名、执行后刷新、冲突继续和 Reset 确认。详见 `HISTORY-ACTIONS.md`。
+
+
+## UI-07｜统一组件与代码阅读 · P0
+
+Local changes 和历史 Diff 复用同一 Files / Change groups、Diff、Context / AI Review 工作区。基础按钮、字段、菜单、弹窗、提示和通知使用共享组件；视觉参数来自 Tailwind 语义令牌，不在每个页面分别设计。
+
+文本 Diff 使用只读 Monaco；统一和并排视图均映射 Git 原始行号。Hunk 操作与行范围 Review 留在代码区，气泡支持采纳、不采纳和撤销。全文、上下文增减、空白筛选与搜索只改变阅读范围，不能改变 Git Patch。二进制、符号链接、Submodule、特殊文本或编辑器加载失败时保留可用的专用/简化阅读器。大型 Diff 继续按需加载。
+
+用户可拖动调整侧栏宽度、排列 Diff tabs、在逻辑分组之间移动文件，并保留键盘或菜单操作。固定导航页不参与 Diff tab 排序。分组拖动仅修改 Proof 的分组记录；过期快照或分组修订冲突必须拒绝覆盖。
+
+**验收：** 切换文件、tab、明暗主题和全文范围时保持布局与源代码位置；Review 气泡不会因高度测量反复重建；模态窗口和菜单支持 Escape、焦点恢复和键盘选择。Monaco 与 Worker 随应用本地打包，离线可用。尺寸适配不覆盖用户保存的宽度；关闭/隐藏大型阅读器后释放文本模型。详见 `UI-MIGRATION.md`。

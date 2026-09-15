@@ -1,3 +1,5 @@
+import { Textarea, Input, Button } from "./ui/controls";
+import { t } from "../i18n";
 import { useState } from "react";
 import { CaretDown, GitCommit, ArrowClockwise } from "@phosphor-icons/react";
 
@@ -34,52 +36,53 @@ export function CommitComposer({
 }) {
   const [menu, setMenu] = useState(false);
   const all = !amend && staged === 0 && unstaged > 0;
-  const label = amend ? "Amend" : all ? "Stage all & Commit" : "Commit";
+  const label = amend ? "Amend" : all ? t("Stage all & Commit") : "Commit";
   return (
-    <section className="commit-composer" aria-label="Commit">
+    <section className="commit-composer" aria-label={t("Commit")}>
       <div className="composer-heading">
         <GitCommit size={16} />
-        <strong>{amend ? "Amend last commit" : "Commit"}</strong>
+        <strong>{amend ? t("Amend last commit") : "Commit"}</strong>
         <span title={branch ?? "Detached HEAD"}>
           {branch ?? "Detached HEAD"}
         </span>
       </div>
-      <textarea
+      <Textarea
         id="quick-commit-message"
-        aria-label="Commit message"
+        aria-label={t("Commit message")}
         rows={3}
         value={message}
         onChange={(event) => onMessage(event.target.value)}
         disabled={busy}
         placeholder={
           amend
-            ? "Update commit message…"
-            : "Summary (required)\n\nDescription…"
+            ? t("Update commit message…")
+            : t("Summary (required)\n\nDescription…")
         }
       />
       <div className="composer-options">
         <label>
-          <input
+          <Input
             type="checkbox"
             checked={amend}
             onChange={(event) => onAmend(event.target.checked)}
             disabled={!head || busy || disabled}
           />
-          Amend <code>{head?.slice(0, 7)}</code>
+          {t("Amend ")}
+          <code>{head?.slice(0, 7)}</code>
         </label>
         {strictReview && (
-          <button className="review-policy" onClick={onReviewSettings}>
-            Review required
-          </button>
+          <Button className="review-policy" onClick={onReviewSettings}>
+            {t("Review required")}
+          </Button>
         )}
       </div>
       {amend && (
         <p className="amend-note">
-          将替换上一条 Commit。已 Push 的提交需要协调后再改写。
+          {t("将替换上一条 Commit。已 Push 的提交需要协调后再改写。")}
         </p>
       )}
       <div className="composer-submit">
-        <button
+        <Button
           className="button primary"
           disabled={
             disabled ||
@@ -94,20 +97,20 @@ export function CommitComposer({
           ) : (
             <GitCommit size={15} />
           )}
-          <span>{busy ? "处理中…" : label}</span>
+          <span>{busy ? t("处理中…") : label}</span>
           <span className="button-count">
             {all ? staged + unstaged : staged}
           </span>
-        </button>
-        <button
+        </Button>
+        <Button
           className="button primary composer-menu-trigger"
-          aria-label="更多 Commit 操作"
+          aria-label={t("更多 Commit 操作")}
           aria-expanded={menu}
           disabled={busy || disabled}
           onClick={() => setMenu(!menu)}
         >
           <CaretDown size={12} />
-        </button>
+        </Button>
         {menu && (
           <div
             className="composer-menu"
@@ -122,24 +125,27 @@ export function CommitComposer({
               }
             }}
           >
-            <button
+            <Button
               disabled={busy || !message.trim() || !unstaged}
               onClick={() => {
                 setMenu(false);
                 onCommit(true);
               }}
             >
-              Stage all & {amend ? "Amend" : "Commit"}
-              <small>{staged + unstaged} files</small>
-            </button>
+              {t("Stage all & ")}
+              {amend ? "Amend" : "Commit"}
+              <small>
+                {staged + unstaged} {t(" files")}
+              </small>
+            </Button>
           </div>
         )}
       </div>
       <p className="composer-hint">
         {demo
-          ? "Demo · 在桌面应用中执行 Git 操作"
+          ? t("Demo · 在桌面应用中执行 Git 操作")
           : amend && !staged
-            ? "仅更新上一条 Commit 的说明"
+            ? t("仅更新上一条 Commit 的说明")
             : `${staged} staged · ${unstaged} unstaged`}
       </p>
     </section>

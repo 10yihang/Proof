@@ -1,22 +1,58 @@
 use proof_core::{Error, Proof};
 use std::sync::{Arc, Mutex};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
-struct AppState(Arc<Mutex<Proof>>);
+struct AppState(Result<Arc<Mutex<Proof>>, Error>);
+fn lock_core(core: &Mutex<Proof>) -> Result<std::sync::MutexGuard<'_, Proof>, Error> {
+    let unavailable = || {
+        Error::new(
+            "CORE_UNAVAILABLE",
+            "本地核心暂时不可用，请重启应用。",
+            "Mutex poisoned",
+        )
+    };
+    if proof_core::read_cancellation_active() {
+        loop {
+            proof_core::check_read_cancellation()?;
+            match core.try_lock() {
+                Ok(proof) => return Ok(proof),
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    std::thread::sleep(std::time::Duration::from_millis(2))
+                }
+                Err(_) => return Err(unavailable()),
+            }
+        }
+    }
+    core.lock().map_err(|_| unavailable())
+}
+fn session(core: &Mutex<Proof>, epoch: u64) -> Result<std::sync::MutexGuard<'_, Proof>, Error> {
+    let mut proof = lock_core(core)?;
+    proof.synchronize_data_epoch()?;
+    proof.check_data_epoch(epoch)?;
+    Ok(proof)
+}
+
+mod diagnostics;
+mod diff_windows;
 #[cfg(unix)]
 mod observer;
+mod read_requests;
+mod review_export;
 mod watcher;
+#[cfg(target_os = "macos")]
+mod window_menu;
 
 #[tauri::command]
 async fn watch_workspace(
+    window: tauri::WebviewWindow,
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
-    watch: tauri::State<'_, Mutex<watcher::WorkspaceWatch>>,
+    watch: tauri::State<'_, Mutex<std::collections::HashMap<String, watcher::WorkspaceWatch>>>,
     workspace_id: Option<String>,
     generation: u64,
 ) -> Result<bool, Error> {
     let paths = if let Some(id) = &workspace_id {
-        let core = state.0.clone();
+        let core = state.0.clone()?;
         let id = id.clone();
         tauri::async_runtime::spawn_blocking(move || {
             core.lock()
@@ -34,49 +70,170 @@ async fn watch_workspace(
     } else {
         vec![]
     };
-    let mut current = watch.lock().map_err(|error| {
+    let mut owners = watch.lock().map_err(|error| {
         Error::new(
             "WATCH_UNAVAILABLE",
             "文件监听不可用，已改用定时刷新。",
             error,
         )
     })?;
+    let current = owners.entry(window.label().to_owned()).or_default();
     if generation < current.generation {
         return Ok(false);
     }
     current.generation = generation;
     current.watcher = None;
     if let Some(id) = workspace_id {
-        current.watcher = Some(watcher::start(app, id, paths)?);
+        current.watcher = Some(watcher::start(app, id, generation, paths)?);
     }
     Ok(current.watcher.is_some())
 }
 
 #[tauri::command]
+fn prepare_read_request(
+    window: tauri::WebviewWindow,
+    reads: tauri::State<'_, read_requests::ReadRequests>,
+) -> Result<String, Error> {
+    reads.prepare(window.label())
+}
+#[tauri::command]
+fn cancel_read_request(
+    window: tauri::WebviewWindow,
+    reads: tauri::State<'_, read_requests::ReadRequests>,
+    ticket: String,
+) -> bool {
+    reads.cancel(window.label(), &ticket)
+}
+
+#[tauri::command]
 async fn proof_command(
+    window: tauri::WebviewWindow,
     state: tauri::State<'_, AppState>,
+    diagnostics: tauri::State<'_, diagnostics::DiagnosticState>,
+    application_diagnostics: tauri::State<'_, diagnostics::ApplicationDiagnosticState>,
     #[cfg(unix)] observer: tauri::State<'_, observer::ObserverState>,
     command: String,
     args: serde_json::Value,
 ) -> Result<serde_json::Value, Error> {
-    let core = state.0.clone();
+    let app = window.app_handle().clone();
+    let owner = window.label().to_owned();
+    let core = state.0.clone()?;
+    let metrics = diagnostics.0.clone();
+    let application_information = application_diagnostics.0.clone();
+    let started = std::time::Instant::now();
+    let request_epoch = args["_dataEpoch"].as_u64();
+    let read_ticket = if let Some(ticket) = args.get("_readTicket") {
+        Some(window.state::<read_requests::ReadRequests>().claim(
+            window.label(),
+            ticket.as_str().ok_or_else(|| {
+                Error::new(
+                    "INVALID_READ_REQUEST",
+                    "读取请求已失效。",
+                    "Invalid read ticket",
+                )
+            })?,
+            &command,
+        )?)
+    } else {
+        None
+    };
     #[cfg(unix)]
     let observer = observer.inner.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        #[cfg(unix)]
-        if observer::handles(&command) {
-            return observer::dispatch(&core, &observer, &command, args);
+        let work = || {
+            if diff_windows::handles(&command) {
+                return diff_windows::dispatch(&app, &core, &owner, &command, &args);
+            }
+            if command == "save_review_instructions" {
+                return review_export::dispatch(&app, &core, &args);
+            }
+            if diagnostics::handles(&command) {
+                let result = diagnostics::dispatch(&app, &core, &metrics, &command, &args);
+                if let Err(error) = &result {
+                    if let Ok(mut information) = application_information.lock() {
+                        information.note_failure(&error.code);
+                    }
+                }
+                return result;
+            }
+            // Capture the generation before execution. Never wait for the Git mutex
+            // after an operation has completed merely to record its measurements.
+            let measurement_generation = if proof_core::DiagnosticMetrics::tracks(&command) {
+                lock_core(&core)?.diagnostic_generation().ok()
+            } else {
+                None
+            };
+            let progress_ticket = args["_readTicket"].as_str().unwrap_or_default().to_owned();
+            let last_preparation =
+                std::cell::RefCell::new(None::<(&'static str, std::time::Instant)>);
+            let progress = |event: proof_core::AiProgress| {
+                if matches!(event.phase, "preparing" | "snapshot") {
+                    let now = std::time::Instant::now();
+                    if last_preparation.borrow().is_some_and(|(phase, at)| {
+                        phase == event.phase && now.duration_since(at).as_millis() < 100
+                    }) {
+                        return;
+                    }
+                    *last_preparation.borrow_mut() = Some((event.phase, now));
+                }
+                let _ = app.emit_to(
+                    &owner,
+                    "proof://ai-progress",
+                    serde_json::json!({"ticket":progress_ticket,"event":event}),
+                );
+            };
+            let result = {
+                #[cfg(unix)]
+                if observer::handles(&command) {
+                    observer::dispatch(&core, &observer, &command, args)
+                } else {
+                    dispatch_with_progress(&core, &command, args, &progress)
+                }
+                #[cfg(not(unix))]
+                dispatch_with_progress(&core, &command, args, &progress)
+            };
+            #[cfg(target_os = "macos")]
+            if result.is_ok() && matches!(command.as_str(), "set_ui_language" | "delete_local_data")
+            {
+                window_menu::refresh(&app);
+            }
+            if let Some(generation) = measurement_generation {
+                if let Ok(mut metrics) = metrics.lock() {
+                    metrics.record(
+                        generation,
+                        request_epoch,
+                        &command,
+                        started.elapsed(),
+                        result.as_ref().err().map(|e| e.code.as_str()),
+                        result.as_ref().ok(),
+                    );
+                }
+            }
+            result
+        };
+        if let Some(ticket) = read_ticket {
+            ticket.cancellation.run(work)
+        } else {
+            work()
         }
-        dispatch(&core, &command, args)
     })
     .await
     .map_err(|e| Error::new("CORE_UNAVAILABLE", "本地核心任务未完成。", e))?
 }
 
+#[cfg(test)]
 fn dispatch(
     core: &Mutex<Proof>,
     command: &str,
     args: serde_json::Value,
+) -> Result<serde_json::Value, Error> {
+    dispatch_with_progress(core, command, args, &|_| {})
+}
+fn dispatch_with_progress(
+    core: &Mutex<Proof>,
+    command: &str,
+    args: serde_json::Value,
+    progress: &dyn Fn(proof_core::AiProgress),
 ) -> Result<serde_json::Value, Error> {
     fn unavailable() -> Error {
         Error::new(
@@ -90,11 +247,21 @@ fn dispatch(
             .and_then(|v| v.as_str())
             .ok_or_else(|| Error::new("INVALID_REQUEST", "请求字段缺失。", key))
     }
-    fn session(core: &Mutex<Proof>, epoch: u64) -> Result<std::sync::MutexGuard<'_, Proof>, Error> {
-        let mut proof = core.lock().map_err(|_| unavailable())?;
-        proof.synchronize_data_epoch()?;
-        proof.check_data_epoch(epoch)?;
-        Ok(proof)
+    fn context_range(args: &serde_json::Value) -> Result<Option<u16>, Error> {
+        if args["fullFile"].as_bool() == Some(true) {
+            return Ok(None);
+        }
+        args["contextLines"]
+            .as_u64()
+            .and_then(|n| u16::try_from(n).ok())
+            .map(Some)
+            .ok_or_else(|| {
+                Error::new(
+                    "INVALID_CONTEXT_SIZE",
+                    "上下文行数无效。",
+                    "Expected an unsigned context size",
+                )
+            })
     }
     if command == "data_session" {
         let mut proof = core.lock().map_err(|_| unavailable())?;
@@ -108,6 +275,43 @@ fn dispatch(
             "Missing renderer data generation",
         )
     })?;
+    if command == "agent_providers" {
+        return serde_json::to_value(session(core, data_epoch)?.agent_providers()?)
+            .map_err(Error::from);
+    }
+    if command == "probe_ai_agent" {
+        if !proof_core::read_cancellation_active() {
+            return Err(Error::new(
+                "INVALID_READ_REQUEST",
+                "检测缺少取消句柄。",
+                "Agent probe requires a read ticket",
+            ));
+        }
+        let probe = session(core, data_epoch)?.prepare_agent_probe(
+            serde_json::from_value(args["provider"].clone())?,
+            serde_json::from_value(args["options"].clone())?,
+        )?;
+        let result = probe.run()?;
+        drop(session(core, data_epoch)?);
+        return serde_json::to_value(result).map_err(Error::from);
+    }
+    if command == "run_ai_task" {
+        if !proof_core::read_cancellation_active() {
+            return Err(Error::new(
+                "INVALID_READ_REQUEST",
+                "AI 任务缺少取消句柄。",
+                "AI requires an owned read ticket",
+            ));
+        }
+        let job = session(core, data_epoch)?.prepare_ai_task_with_progress(
+            serde_json::from_value(args["request"].clone())?,
+            progress,
+        )?;
+        // Capture under the core lock; inference never holds the Git mutex.
+        let result = job.run_with_progress(progress)?;
+        let result = job.finish(&*session(core, data_epoch)?, result)?;
+        return serde_json::to_value(result).map_err(Error::from);
+    }
     if command == "observer_program_locations" {
         drop(session(core, data_epoch)?);
         return serde_json::to_value(proof_core::observer_program_locations()).map_err(Error::from);
@@ -135,6 +339,54 @@ fn dispatch(
     }
     let mut proof = session(core, data_epoch)?;
     let value = match command {
+        "ui_language" => serde_json::to_value(proof.ui_language()?),
+        "set_ui_language" => serde_json::to_value(
+            proof.set_ui_language(serde_json::from_value(args["language"].clone())?)?,
+        ),
+        "agent_settings" => serde_json::to_value(proof.agent_settings()?),
+        "set_agent_settings" => serde_json::to_value(
+            proof.set_agent_settings(serde_json::from_value(args["update"].clone())?)?,
+        ),
+        "ai_review_reports" => serde_json::to_value(
+            proof.ai_review_reports(string(&args, "workspaceId")?, string(&args, "scope")?)?,
+        ),
+        "ai_review_report" => serde_json::to_value(
+            proof.ai_review_report(string(&args, "workspaceId")?, string(&args, "reportId")?)?,
+        ),
+        "set_ai_finding_decision" => serde_json::to_value(proof.set_ai_finding_decision(
+            string(&args, "workspaceId")?,
+            string(&args, "reportId")?,
+            serde_json::from_value(args["expectedRevision"].clone())?,
+            serde_json::from_value(args["findingIndex"].clone())?,
+            serde_json::from_value(args["decision"].clone())?,
+        )?),
+        "change_groups" => {
+            serde_json::to_value(proof.change_groups(string(&args, "workspaceId")?)?)
+        }
+        "comparison_change_groups" => serde_json::to_value(proof.comparison_change_groups(
+            string(&args, "workspaceId")?,
+            string(&args, "base")?,
+            string(&args, "target")?,
+        )?),
+        "set_comparison_change_groups" => {
+            serde_json::to_value(proof.set_comparison_change_groups(
+                string(&args, "workspaceId")?,
+                string(&args, "base")?,
+                string(&args, "target")?,
+                args["expectedRevision"].as_u64().ok_or_else(|| {
+                    Error::new("INVALID_REQUEST", "分组版本缺失。", "Missing revision")
+                })?,
+                serde_json::from_value(args["groups"].clone())?,
+            )?)
+        }
+        "set_change_groups" => serde_json::to_value(proof.set_change_groups(
+            string(&args, "workspaceId")?,
+            args["expectedRevision"].as_u64().ok_or_else(|| {
+                Error::new("INVALID_REQUEST", "分组版本缺失。", "Missing revision")
+            })?,
+            string(&args, "expectedToken")?,
+            serde_json::from_value(args["groups"].clone())?,
+        )?),
         "data_workspaces" => serde_json::to_value(proof.data_workspaces()?),
         "remove_recent_workspace" => {
             serde_json::to_value(proof.remove_recent_workspace(string(&args, "workspaceId")?)?)
@@ -187,25 +439,37 @@ fn dispatch(
             string(&args, "path")?,
             serde_json::from_value(args["side"].clone())?,
         )?),
+        "read_file_diff" => serde_json::to_value(proof.read_file_diff(
+            string(&args, "workspaceId")?,
+            string(&args, "path")?,
+            serde_json::from_value(args["side"].clone())?,
+            args["loadLarge"].as_bool().unwrap_or(false),
+        )?),
+        "read_compare_file" => serde_json::to_value(proof.read_compare_file(
+            string(&args, "workspaceId")?,
+            string(&args, "base")?,
+            string(&args, "target")?,
+            string(&args, "path")?,
+            args["loadLarge"].as_bool().unwrap_or(false),
+        )?),
         "mark_reviewed" => serde_json::to_value(proof.mark_reviewed(
             string(&args, "snapshotId")?,
             args["hunkId"].as_str(),
             args["reviewed"].as_bool().unwrap_or(false),
         )?),
         "diff_context" => serde_json::to_value(
-            proof.diff_context(
-                string(&args, "snapshotId")?,
-                args["contextLines"]
-                    .as_u64()
-                    .and_then(|n| u16::try_from(n).ok())
-                    .ok_or_else(|| {
-                        Error::new(
-                            "INVALID_CONTEXT_SIZE",
-                            "上下文行数无效。",
-                            "Expected an unsigned context size",
-                        )
-                    })?,
-            )?,
+            proof.read_diff_context(string(&args, "snapshotId")?, context_range(&args)?)?,
+        ),
+        "compare_context" => serde_json::to_value(proof.compare_context(
+            string(&args, "workspaceId")?,
+            string(&args, "base")?,
+            string(&args, "target")?,
+            string(&args, "path")?,
+            string(&args, "snapshotId")?,
+            context_range(&args)?,
+        )?),
+        "mark_comparison_reviewed" => serde_json::to_value(
+            proof.mark_comparison_reviewed(serde_json::from_value(args.clone())?)?,
         ),
         "stage" => serde_json::to_value(
             proof.stage(string(&args, "snapshotId")?, args["hunkId"].as_str())?,
@@ -286,6 +550,39 @@ fn dispatch(
             string(&args, "target")?,
             string(&args, "path")?,
         )?),
+        "context_overview" => serde_json::to_value(
+            proof.context_overview(string(&args, "workspaceId")?, string(&args, "path")?)?,
+        ),
+        "context_candidates" => serde_json::to_value(proof.context_candidates(
+            string(&args, "workspaceId")?,
+            string(&args, "path")?,
+            args["search"].as_str().unwrap_or(""),
+            serde_json::from_value(args["before"].clone())?,
+        )?),
+        "context_session_events" => serde_json::to_value(proof.context_session_events(
+            string(&args, "workspaceId")?,
+            string(&args, "sessionId")?,
+            serde_json::from_value(args["before"].clone())?,
+        )?),
+        "context_history" => serde_json::to_value(proof.context_history(
+            string(&args, "workspaceId")?,
+            string(&args, "path")?,
+            args["offset"].as_u64().unwrap_or(0) as usize,
+        )?),
+        "update_context_association" => serde_json::to_value(proof.update_context_association(
+            string(&args, "workspaceId")?,
+            string(&args, "path")?,
+            string(&args, "sessionId")?,
+            serde_json::from_value(args["action"].clone())?,
+            string(&args, "note")?,
+            string(&args, "expectedRevision")?,
+        )?),
+        "undo_context_association" => serde_json::to_value(proof.undo_context_association(
+            string(&args, "workspaceId")?,
+            string(&args, "path")?,
+            string(&args, "changeId")?,
+            string(&args, "expectedRevision")?,
+        )?),
         "observer_file_context" => serde_json::to_value(
             proof.observer_file_context(string(&args, "workspaceId")?, string(&args, "path")?)?,
         ),
@@ -294,6 +591,23 @@ fn dispatch(
             args["path"].as_str(),
             args["offset"].as_u64().unwrap_or(0) as usize,
         )?),
+        "history_repository_state" => {
+            serde_json::to_value(proof.history_repository_state(string(&args, "workspaceId")?)?)
+        }
+        "history_commit_message" => serde_json::to_value(
+            proof.history_commit_message(string(&args, "workspaceId")?, string(&args, "oid")?)?,
+        ),
+        "prepare_history_action" => serde_json::to_value(proof.prepare_history_action(
+            string(&args, "workspaceId")?,
+            serde_json::from_value(args["request"].clone())?,
+            string(&args, "expectedToken")?,
+        )?),
+        "execute_history_action" => {
+            serde_json::to_value(proof.execute_history_action(
+                string(&args, "workspaceId")?,
+                string(&args, "previewId")?,
+            )?)
+        }
         "branches" => serde_json::to_value(proof.branches(string(&args, "workspaceId")?)?),
         "worktrees" => serde_json::to_value(proof.worktrees(string(&args, "workspaceId")?)?),
         "switch_branch" => serde_json::to_value(proof.switch_branch_from(
@@ -309,25 +623,73 @@ fn dispatch(
 }
 
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_dialog::init())
+    let builder = tauri::Builder::default().plugin(tauri_plugin_dialog::init());
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .menu(window_menu::create)
+        .on_menu_event(window_menu::handle);
+    builder
         .setup(|app| {
             let data_dir = std::env::var_os("PROOF_DATA_DIR")
                 .map(std::path::PathBuf::from)
                 .unwrap_or(app.path().app_data_dir()?);
-            let core = Arc::new(Mutex::new(Proof::open(&data_dir)?));
+            let core = Proof::open(&data_dir).map(|proof| Arc::new(Mutex::new(proof)));
+            app.manage(diagnostics::ApplicationDiagnosticState(Arc::new(
+                Mutex::new(proof_core::ApplicationDiagnostics::new(
+                    data_dir.clone(),
+                    core.as_ref().err().map(|e| e.code.as_str()),
+                )),
+            )));
             #[cfg(unix)]
             {
                 let observer = observer::ObserverState::new(data_dir, app.path().home_dir()?)?;
-                observer.start(core.clone());
+                if let Ok(core) = &core {
+                    observer.start(core.clone());
+                }
                 app.manage(observer);
             }
-            app.manage(AppState(core));
-            app.manage(Mutex::new(watcher::WorkspaceWatch::default()));
+            app.manage(AppState(core.map_err(|error| {
+                Error::new(
+                    "CORE_STARTUP_FAILED",
+                    "无法打开本地数据。你可以导出应用诊断，检查目录权限后重新启动。",
+                    format!("{}: {}", error.code, error.detail),
+                )
+            })));
+            #[cfg(target_os = "macos")]
+            window_menu::refresh(app.handle());
+            app.manage(diagnostics::DiagnosticState::default());
+            app.manage(read_requests::ReadRequests::default());
+            app.manage(diff_windows::DiffWindows::default());
+            app.manage(Mutex::new(std::collections::HashMap::<
+                String,
+                watcher::WorkspaceWatch,
+            >::new()));
             Ok(())
         })
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
+                if let Some(reads) = window.try_state::<read_requests::ReadRequests>() {
+                    reads.cancel_owner(window.label());
+                }
+            }
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                window
+                    .state::<diff_windows::DiffWindows>()
+                    .remove(window.label());
+                if let Ok(mut owners) = window
+                    .state::<Mutex<std::collections::HashMap<String, watcher::WorkspaceWatch>>>()
+                    .lock()
+                {
+                    owners.remove(window.label());
+                }
+            }
+            if matches!(event, tauri::WindowEvent::Destroyed)
+                && window
+                    .app_handle()
+                    .webview_windows()
+                    .keys()
+                    .all(|label| label == window.label())
+            {
                 #[cfg(unix)]
                 window
                     .state::<observer::ObserverState>()
@@ -335,7 +697,13 @@ pub fn run() {
                     .store(false, std::sync::atomic::Ordering::Release);
             }
         })
-        .invoke_handler(tauri::generate_handler![proof_command, watch_workspace])
+        .invoke_handler(tauri::generate_handler![
+            proof_command,
+            prepare_read_request,
+            cancel_read_request,
+            watch_workspace,
+            diagnostics::application_diagnostic
+        ])
         .run(tauri::generate_context!())
         .expect("Proof could not start");
 }
@@ -348,6 +716,31 @@ mod tests {
         os::unix::fs::PermissionsExt,
         time::{Duration, Instant},
     };
+
+    #[test]
+    fn a_cancelled_read_does_not_wait_for_another_operation_to_release_core() {
+        let temp = tempfile::tempdir().unwrap();
+        let core = Arc::new(Mutex::new(Proof::open(temp.path()).unwrap()));
+        let locked = core.lock().unwrap();
+        let cancellation = proof_core::ReadCancellation::default();
+        let read_core = core.clone();
+        let read_cancel = cancellation.clone();
+        let (send, receive) = std::sync::mpsc::channel();
+        let (start, started) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let result = read_cancel.run(|| {
+                start.send(()).unwrap();
+                dispatch(&read_core, "read_file_diff", serde_json::json!({"_dataEpoch":0,"workspaceId":"unused","path":"unused","side":"unstaged"}))
+            });
+            send.send(result).unwrap();
+        });
+        started.recv_timeout(Duration::from_secs(1)).unwrap();
+        cancellation.cancel();
+        let result = receive.recv_timeout(Duration::from_secs(1));
+        drop(locked);
+        worker.join().unwrap();
+        assert_eq!(result.unwrap().unwrap_err().code, "READ_CANCELLED");
+    }
 
     #[test]
     fn deletion_epoch_rejects_stale_renderer_settings_including_delayed_writes() {

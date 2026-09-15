@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 
 type Metrics = { old: number; new: number; viewport: number };
@@ -124,8 +125,10 @@ export function SplitScrollbars({
           ref={side === "old" ? old : next}
           tabIndex={0}
           role="region"
-          aria-label={`${side === "old" ? "修改前" : "修改后"}代码横向滚动`}
-          title="可拖动滚动条、按左右方向键，或在代码栏上横向滚动"
+          aria-label={t("{v0}代码横向滚动", {
+            v0: side === "old" ? t("修改前") : t("修改后"),
+          })}
+          title={t("可拖动滚动条、按左右方向键，或在代码栏上横向滚动")}
           style={{ width: metrics.viewport || "100%" }}
           onScroll={(event) => {
             if (event.currentTarget.clientWidth > 0)

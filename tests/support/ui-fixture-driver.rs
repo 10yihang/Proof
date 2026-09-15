@@ -10,6 +10,64 @@ fn dispatch(proof: &mut Proof, command: &str, a: &Value) -> Result<Value, Error>
         proof.check_data_epoch(a["_dataEpoch"].as_u64().unwrap_or(0))?;
     }
     Ok(match command {
+        "ui_language" => json!(proof.ui_language()?),
+        "set_ui_language" => {
+            json!(proof.set_ui_language(serde_json::from_value(a["language"].clone())?)?)
+        }
+        "agent_settings" => json!(proof.agent_settings()?),
+        "set_agent_settings" => {
+            json!(proof.set_agent_settings(serde_json::from_value(a["update"].clone())?)?)
+        }
+        "agent_providers" => json!([]), // Never start a real Coding Agent from the UI fixture.
+        "ai_review_reports" => json!(proof.ai_review_reports(s("workspaceId"), s("scope"))?),
+        "ai_review_report" => json!(proof.ai_review_report(s("workspaceId"), s("reportId"))?),
+        "set_ai_finding_decision" => json!(proof.set_ai_finding_decision(
+            s("workspaceId"),
+            s("reportId"),
+            serde_json::from_value(a["expectedRevision"].clone())?,
+            serde_json::from_value(a["findingIndex"].clone())?,
+            serde_json::from_value(a["decision"].clone())?
+        )?),
+        "change_groups" => json!(proof.change_groups(s("workspaceId"))?),
+        "comparison_change_groups" => {
+            json!(proof.comparison_change_groups(s("workspaceId"), s("base"), s("target"))?)
+        }
+        "set_comparison_change_groups" => json!(proof.set_comparison_change_groups(
+            s("workspaceId"),
+            s("base"),
+            s("target"),
+            a["expectedRevision"].as_u64().unwrap_or(0),
+            serde_json::from_value(a["groups"].clone())?
+        )?),
+        "set_change_groups" => json!(proof.set_change_groups(
+            s("workspaceId"),
+            a["expectedRevision"].as_u64().unwrap_or(0),
+            s("expectedToken"),
+            serde_json::from_value(a["groups"].clone())?
+        )?),
+        "mark_comparison_reviewed" => {
+            json!(proof.mark_comparison_reviewed(serde_json::from_value(a.clone())?)?)
+        }
+        "diff_context" => json!(proof.read_diff_context(
+            s("snapshotId"),
+            if a["fullFile"].as_bool() == Some(true) {
+                None
+            } else {
+                Some(a["contextLines"].as_u64().unwrap_or(3).try_into().unwrap())
+            }
+        )?),
+        "compare_context" => json!(proof.compare_context(
+            s("workspaceId"),
+            s("base"),
+            s("target"),
+            s("path"),
+            s("snapshotId"),
+            if a["fullFile"].as_bool() == Some(true) {
+                None
+            } else {
+                Some(a["contextLines"].as_u64().unwrap_or(3).try_into().unwrap())
+            }
+        )?),
         "data_session" => json!(proof.data_session()?),
         "data_workspaces" => json!(proof.data_workspaces()?),
         "data_usage" => json!(proof.data_usage(a["workspaceId"].as_str())?),
@@ -45,6 +103,75 @@ fn dispatch(proof: &mut Proof, command: &str, a: &Value) -> Result<Value, Error>
         "set_trust" => {
             json!(proof.set_trust(s("workspaceId"), a["trusted"].as_bool().unwrap_or(false))?)
         }
+        "fixture_context_session" => {
+            // Test-only adapter input. This command is deliberately absent from native dispatch.
+            let installation =
+                proof.create_observer_registration(proof_core::ObserverAgent::Claude, "2.1.236")?;
+            proof.set_observer_consent(&proof_core::ObserverConsent {
+                installation_id: installation.installation.id.clone(),
+                workspace_id: s("workspaceId").into(),
+                enabled: true,
+                prompt: true,
+                command: false,
+                output: false,
+                reply: false,
+                background: false,
+            })?;
+            let workspace = proof
+                .recent_workspaces()?
+                .into_iter()
+                .find(|w| w.id == s("workspaceId"))
+                .unwrap();
+            let at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64;
+            let payload = json!({"hook_event_name":"PostToolUse", "session_id":s("session"), "cwd":workspace.path,
+                "tool_use_id":"test-call", "tool_name":"Write", "tool_input":{"file_path":s("path")},
+                "prompt":format!("Context fixture {}",s("session")), "tool_response":{"success":true}});
+            json!(proof.ingest_observer_event(proof_core::ObserverInput {
+                installation_id: &installation.installation.id,
+                token: &installation.token,
+                agent: proof_core::ObserverAgent::Claude,
+                agent_version: "2.1.236",
+                payload: &serde_json::to_vec(&payload)?,
+                bridge_started_at: at,
+                received_at: at,
+                foreground_lease_until: Some(at + 5000),
+                received_policy_revision: proof.observer_policy_revision()?,
+            })?)
+        }
+        "context_overview" => json!(proof.context_overview(s("workspaceId"), s("path"))?),
+        "context_candidates" => json!(proof.context_candidates(
+            s("workspaceId"),
+            s("path"),
+            s("search"),
+            serde_json::from_value(a["before"].clone())?
+        )?),
+        "context_session_events" => json!(proof.context_session_events(
+            s("workspaceId"),
+            s("sessionId"),
+            serde_json::from_value(a["before"].clone())?
+        )?),
+        "context_history" => json!(proof.context_history(
+            s("workspaceId"),
+            s("path"),
+            a["offset"].as_u64().unwrap_or(0) as usize
+        )?),
+        "update_context_association" => json!(proof.update_context_association(
+            s("workspaceId"),
+            s("path"),
+            s("sessionId"),
+            serde_json::from_value(a["action"].clone())?,
+            s("note"),
+            s("expectedRevision")
+        )?),
+        "undo_context_association" => json!(proof.undo_context_association(
+            s("workspaceId"),
+            s("path"),
+            s("changeId"),
+            s("expectedRevision")
+        )?),
         "observer_file_context" => json!(proof.observer_file_context(s("workspaceId"), s("path"))?),
         "commit_graph" => json!(proof.commit_graph(
             s("workspaceId"),
@@ -67,6 +194,19 @@ fn dispatch(proof: &mut Proof, command: &str, a: &Value) -> Result<Value, Error>
             s("path"),
             serde_json::from_value(a["side"].clone())?
         )?),
+        "read_file_diff" => json!(proof.read_file_diff(
+            s("workspaceId"),
+            s("path"),
+            serde_json::from_value(a["side"].clone())?,
+            a["loadLarge"].as_bool().unwrap_or(false)
+        )?),
+        "read_compare_file" => json!(proof.read_compare_file(
+            s("workspaceId"),
+            s("base"),
+            s("target"),
+            s("path"),
+            a["loadLarge"].as_bool().unwrap_or(false)
+        )?),
         "stage_files" => json!(proof.stage_files(
             s("workspaceId"),
             &serde_json::from_value::<Vec<String>>(a["paths"].clone())?,
@@ -86,6 +226,18 @@ fn dispatch(proof: &mut Proof, command: &str, a: &Value) -> Result<Value, Error>
             a["expectedToken"].as_str()
         )?),
         "commit" => json!(proof.commit(s("previewId"), s("message"))?),
+        "history_repository_state" => json!(proof.history_repository_state(s("workspaceId"))?),
+        "history_commit_message" => {
+            json!(proof.history_commit_message(s("workspaceId"), s("oid"))?)
+        }
+        "prepare_history_action" => json!(proof.prepare_history_action(
+            s("workspaceId"),
+            serde_json::from_value(a["request"].clone())?,
+            s("expectedToken")
+        )?),
+        "execute_history_action" => {
+            json!(proof.execute_history_action(s("workspaceId"), s("previewId"))?)
+        }
         "branches" => json!(proof.branches(s("workspaceId"))?),
         "worktrees" => json!(proof.worktrees(s("workspaceId"))?),
         "switch_branch" => json!(proof.switch_branch_from(

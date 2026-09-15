@@ -15,6 +15,10 @@ use std::{
 pub(crate) struct Git {
     pub executable: String,
 }
+pub(crate) struct FileGuard {
+    pub token: String,
+    pub base: String,
+}
 impl Git {
     pub fn raw(&self, path: &Path, args: &[&str]) -> Result<Output> {
         let mut cmd = process::git_command(&self.executable, path);
@@ -124,6 +128,21 @@ impl Git {
         cmd.args(args);
         process::checked(process::run(cmd, None, Duration::from_secs(20))?)
     }
+    pub(crate) fn query_diff(
+        &self,
+        workspace: &Workspace,
+        args: &[&str],
+        limit: usize,
+    ) -> Result<Vec<u8>> {
+        let mut cmd = self.command(workspace)?;
+        cmd.args(args);
+        process::checked(process::run_diff(
+            cmd,
+            None,
+            Duration::from_secs(20),
+            limit,
+        )?)
+    }
     pub fn head(&self, workspace: &Workspace) -> Result<Option<String>> {
         let result = self.raw(
             Path::new(&workspace.path),
@@ -174,36 +193,74 @@ impl Git {
         }
         None
     }
+    fn status(&self, workspace: &Workspace) -> Result<Vec<u8>> {
+        self.query(
+            workspace,
+            &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        )
+    }
+    pub fn changed_file(
+        &self,
+        workspace: &Workspace,
+        path: &str,
+        side: Side,
+    ) -> Result<ChangedFile> {
+        // Keep repository-wide status so rename detection retains both paths.
+        // A single Diff does not need list version stamps or a Git version label.
+        parse_status(&self.status(workspace)?)?
+            .into_iter()
+            .find(|file| file.path == path && file.side == side)
+            .ok_or_else(|| {
+                Error::new(
+                    "CHANGE_MISSING",
+                    "此文件在当前比较范围内已无变化，请刷新列表。",
+                    path,
+                )
+            })
+    }
     pub fn changes(&self, workspace: &Workspace) -> Result<Changes> {
         let head = self.head(workspace)?;
         let branch = self.branch(workspace)?;
         let index = self.index_bytes(workspace)?;
-        let status = self.query(
-            workspace,
-            &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
-        )?;
+        let status = self.status(workspace)?;
         let files = parse_status(&status)?;
         let mut stamps = Vec::new();
         let mut file_versions = std::collections::HashMap::new();
         let operation = self.state(workspace);
+        let (environment, (version, file_stamps)) = read_pair(
+            || self.diff_environment(workspace, files.iter().map(|file| file.path.as_str())),
+            || {
+                let version = text(process::checked(
+                    self.raw(Path::new(&workspace.path), &["--version"])?,
+                )?)?;
+                let file_stamps = files
+                    .iter()
+                    .map(|file| {
+                        let full = checked_path(workspace, &file.path)?;
+                        let stamp = file_stamp(&full)?;
+                        let old_stamp = file
+                            .old_path
+                            .as_deref()
+                            .map(|path| {
+                                checked_path(workspace, path).and_then(|path| file_stamp(&path))
+                            })
+                            .transpose()?
+                            .unwrap_or_default();
+                        Ok((stamp, old_stamp))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Ok((version, file_stamps))
+            },
+        )?;
         let base_version = fingerprint(&[
             head.as_deref().unwrap_or("").as_bytes(),
             branch.as_deref().unwrap_or("").as_bytes(),
             &index,
             operation.as_deref().unwrap_or("").as_bytes(),
             &[u8::from(workspace.trusted)],
-            self.diff_environment(workspace, files.iter().map(|file| file.path.as_str()))?
-                .as_bytes(),
+            environment.as_bytes(),
         ]);
-        for file in &files {
-            let full = checked_path(workspace, &file.path)?;
-            let stamp = file_stamp(&full)?;
-            let old_stamp = file
-                .old_path
-                .as_deref()
-                .map(|path| checked_path(workspace, path).and_then(|path| file_stamp(&path)))
-                .transpose()?
-                .unwrap_or_default();
+        for (file, (stamp, old_stamp)) in files.iter().zip(file_stamps) {
             let version = fingerprint(&[
                 base_version.as_bytes(),
                 file.path.as_bytes(),
@@ -223,9 +280,6 @@ impl Git {
             &stamps,
             base_version.as_bytes(),
         ]);
-        let version = text(process::checked(
-            self.raw(Path::new(&workspace.path), &["--version"])?,
-        )?)?;
         Ok(Changes {
             workspace: workspace.clone(),
             head,
@@ -244,27 +298,48 @@ impl Git {
         path: &str,
         old_path: Option<&str>,
     ) -> Result<String> {
+        Ok(self.capture_file_guard(workspace, path, old_path)?.token)
+    }
+    pub fn capture_file_guard(
+        &self,
+        workspace: &Workspace,
+        path: &str,
+        old_path: Option<&str>,
+    ) -> Result<FileGuard> {
         let (_, repository_identity, workspace_identity) = self.discover(&workspace.path)?;
-        let head = self.head(workspace)?.unwrap_or_default();
-        let branch = self.branch(workspace)?.unwrap_or_default();
-        let index = self.index_bytes(workspace)?;
-        let content = worktree_bytes(workspace, path)?;
-        let old = old_path
-            .map(|p| worktree_bytes(workspace, p))
-            .transpose()?
-            .unwrap_or_default();
-        Ok(fingerprint(&[
+        let ((head, branch, index, content, old), environment) = read_pair(
+            || {
+                let head = self.head(workspace)?;
+                let branch = self.branch(workspace)?;
+                let index = self.index_bytes(workspace)?;
+                let content = worktree_bytes(workspace, path)?;
+                let old = old_path
+                    .map(|p| worktree_bytes(workspace, p))
+                    .transpose()?
+                    .unwrap_or_default();
+                Ok((head, branch, index, content, old))
+            },
+            || self.diff_environment(workspace, std::iter::once(path)),
+        )?;
+        let token = fingerprint(&[
             workspace.id.as_bytes(),
             repository_identity.as_bytes(),
             workspace_identity.as_bytes(),
-            head.as_bytes(),
-            branch.as_bytes(),
+            head.as_deref().unwrap_or_default().as_bytes(),
+            branch.as_deref().unwrap_or_default().as_bytes(),
             &index,
             &content,
             &old,
-            self.diff_environment(workspace, std::iter::once(path))?
-                .as_bytes(),
-        ]))
+            environment.as_bytes(),
+        ]);
+        Ok(FileGuard {
+            token,
+            base: format!(
+                "{}:{}",
+                head.as_deref().unwrap_or("unborn"),
+                branch.as_deref().unwrap_or("detached"),
+            ),
+        })
     }
 
     /// Diff also depends on effective attributes and config, including nested,
@@ -275,22 +350,28 @@ impl Git {
         workspace: &Workspace,
         paths: impl Iterator<Item = &'a str>,
     ) -> Result<String> {
-        let config = process::checked(self.raw(
-            Path::new(&workspace.path),
-            &["config", "--null", "--list", "--includes"],
-        )?)?;
         let mut input = Vec::new();
         for path in paths {
             input.extend_from_slice(path.as_bytes());
             input.push(0);
         }
-        let mut command = self.command(workspace)?;
-        command.args(["check-attr", "--all", "-z", "--stdin"]);
-        let attributes = process::checked(process::run(
-            command,
-            Some(&input),
-            Duration::from_secs(20),
-        )?)?;
+        let (config, attributes) = read_pair(
+            || {
+                process::checked(self.raw(
+                    Path::new(&workspace.path),
+                    &["config", "--null", "--list", "--includes"],
+                )?)
+            },
+            || {
+                let mut command = self.command(workspace)?;
+                command.args(["check-attr", "--all", "-z", "--stdin"]);
+                process::checked(process::run(
+                    command,
+                    Some(&input),
+                    Duration::from_secs(20),
+                )?)
+            },
+        )?;
         Ok(fingerprint(&[&config, &attributes]))
     }
 
@@ -331,14 +412,29 @@ impl Git {
         checked_path(workspace, path)?;
         self.query(workspace, &["cat-file", "--filters", &format!(":{path}")])
     }
-    pub fn patch(&self, workspace: &Workspace, file: &ChangedFile) -> Result<String> {
-        self.patch_with_context(workspace, file, 3)
-    }
-    pub(crate) fn patch_with_context(
+    pub(crate) fn patch_for_read(
         &self,
         workspace: &Workspace,
         file: &ChangedFile,
-        context: u16,
+        limit: usize,
+    ) -> Result<String> {
+        self.patch_with_limit(workspace, file, 3, Some(limit))
+    }
+    pub(crate) fn patch_context_for_read(
+        &self,
+        workspace: &Workspace,
+        file: &ChangedFile,
+        context: u32,
+        limit: usize,
+    ) -> Result<String> {
+        self.patch_with_limit(workspace, file, context, Some(limit))
+    }
+    fn patch_with_limit(
+        &self,
+        workspace: &Workspace,
+        file: &ChangedFile,
+        context: u32,
+        limit: Option<usize>,
     ) -> Result<String> {
         checked_path(workspace, &file.path)?;
         let unified = format!("--unified={context}");
@@ -361,7 +457,11 @@ impl Git {
             args.extend(["--no-index", "--", "/dev/null", &file.path]);
             let mut cmd = self.command(workspace)?;
             cmd.args(args);
-            let result = process::run(cmd, None, Duration::from_secs(20))?;
+            let result = if let Some(limit) = limit {
+                process::run_diff(cmd, None, Duration::from_secs(20), limit)?
+            } else {
+                process::run(cmd, None, Duration::from_secs(20))?
+            };
             if result.code != 0 && result.code != 1 {
                 return text(process::checked(result)?);
             }
@@ -376,7 +476,11 @@ impl Git {
             checked_path(workspace, old)?;
             args.push(old);
         }
-        text(self.query(workspace, &args)?)
+        text(if let Some(limit) = limit {
+            self.query_diff(workspace, &args, limit)?
+        } else {
+            self.query(workspace, &args)?
+        })
     }
     pub fn apply(
         &self,
@@ -523,6 +627,38 @@ impl Git {
         }
         Ok(result)
     }
+}
+
+/// Overlap two independent reads, and always join before returning either result.
+/// Callers keep identity checks, mutations and before/after guards sequential.
+fn read_pair<A: Send, B>(
+    first: impl FnOnce() -> Result<A> + Send,
+    second: impl FnOnce() -> Result<B>,
+) -> Result<(A, B)> {
+    let cancellation = crate::read_cancel::current();
+    std::thread::scope(|scope| {
+        let worker = std::thread::Builder::new()
+            .name("proof-git-read".into())
+            .spawn_scoped(scope, move || {
+                crate::read_cancel::with_scope(cancellation, first)
+            })
+            .map_err(|error| {
+                Error::new(
+                    "GIT_READ_START",
+                    "无法启动 Git 读取任务，请稍后重试。",
+                    error,
+                )
+            })?;
+        let second = second();
+        let first = worker.join().map_err(|_| {
+            Error::new(
+                "GIT_READ_FAILED",
+                "Git 读取任务未能完成，请刷新后重试。",
+                "Read worker panicked",
+            )
+        })?;
+        Ok((first?, second?))
+    })
 }
 
 fn file_stamp(path: &Path) -> Result<String> {
@@ -713,4 +849,37 @@ pub(crate) fn text(bytes: Vec<u8>) -> Result<String> {
 
 pub(crate) fn index_override(command: &mut std::process::Command, path: &Path) {
     command.env("GIT_INDEX_FILE", OsString::from(path));
+}
+
+#[cfg(test)]
+mod read_tests {
+    use super::*;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    };
+
+    #[test]
+    fn failed_read_waits_for_the_other_reader_to_finish() {
+        let (started, ready) = mpsc::channel();
+        let (release, wait) = mpsc::channel();
+        let finished = AtomicBool::new(false);
+        let worker_finished = &finished;
+        let error = read_pair(
+            move || {
+                started.send(()).unwrap();
+                wait.recv_timeout(Duration::from_secs(3)).unwrap();
+                worker_finished.store(true, Ordering::Release);
+                Ok(())
+            },
+            || {
+                ready.recv_timeout(Duration::from_secs(3)).unwrap();
+                release.send(()).unwrap();
+                Err::<(), _>(Error::new("FIXTURE_READ", "Fixture read failed", "fixture"))
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "FIXTURE_READ");
+        assert!(finished.load(Ordering::Acquire));
+    }
 }

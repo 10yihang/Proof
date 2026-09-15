@@ -300,3 +300,46 @@ fn shared_hook_survives_one_repository_deletion_and_blocks_unsafe_final_deletion
     assert!(f.proof.observer_hook_records().unwrap().is_empty());
     assert_eq!(git(&second, &["status", "--porcelain"]), "");
 }
+
+#[test]
+fn a_new_codex_version_can_preview_install_and_check_its_bridge() {
+    let mut f = Fixture::new();
+    fs::write(
+        &f.program,
+        "#!/bin/sh\nprintf 'codex-cli 99.0.0-preview.2\\n'\n",
+    )
+    .unwrap();
+    let before = fs::read(&f.config).unwrap();
+    let preview = f.preview();
+    assert_eq!(preview.agent_version, "99.0.0-preview.2");
+    assert_eq!(fs::read(&f.config).unwrap(), before);
+    let result = f.manager.apply(&f.proof, &preview.id).unwrap();
+    assert!(result.observing_enabled, "{:?}", result.warning);
+    assert!(f
+        .proof
+        .observer_events(&f.workspace.id, None, 0)
+        .unwrap()
+        .is_empty());
+    fs::write(&f.program, "#!/bin/sh\nprintf 'codex-cli 100.0.0\\n'\n").unwrap();
+    f.manager.tick(&f.proof).unwrap();
+    assert!(f
+        .proof
+        .observer_consents()
+        .unwrap()
+        .iter()
+        .any(|consent| consent.enabled));
+    fs::set_permissions(&f.program, fs::Permissions::from_mode(0o777)).unwrap();
+    f.manager.tick(&f.proof).unwrap();
+    assert!(f
+        .proof
+        .observer_consents()
+        .unwrap()
+        .iter()
+        .all(|consent| !consent.enabled));
+    let undo = f
+        .manager
+        .preview_uninstall(&f.proof, &result.installation_id)
+        .unwrap();
+    f.manager.apply(&f.proof, &undo.id).unwrap();
+    assert_eq!(fs::read(&f.config).unwrap(), before);
+}

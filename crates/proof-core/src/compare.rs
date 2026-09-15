@@ -1,5 +1,19 @@
 use crate::{git, patch, ChangedFile, Error, FileDiff, FileKind, Proof, Result, Side, Workspace};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComparisonReviewRequest {
+    pub workspace_id: String,
+    pub base: String,
+    pub target: String,
+    pub path: String,
+    pub snapshot_id: String,
+    pub hunk_id: Option<String>,
+    pub reviewed: bool,
+}
+fn review_scope(base: &str, target: &str) -> String {
+    format!("comparison:{base}:{target}")
+}
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Comparison {
@@ -107,7 +121,103 @@ fn files(
     }
     Ok(files)
 }
+pub(crate) fn file_patch(
+    git: &git::Git,
+    workspace: &Workspace,
+    base: &str,
+    target: &str,
+    file: &ChangedFile,
+    context: u32,
+    limit: usize,
+) -> Result<Vec<u8>> {
+    let path = file.path.as_str();
+    let unified = format!("--unified={context}");
+    let mut args = vec!["--no-literal-pathspecs", "--no-replace-objects"];
+    if base == "empty" {
+        args.extend(["diff-tree", "-r", "--root", "--no-commit-id", "-p"]);
+    } else {
+        args.push("diff");
+    }
+    args.extend([
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-color",
+        "--find-renames",
+        "--full-index",
+        &unified,
+    ]);
+    if base != "empty" {
+        args.push(base);
+    }
+    args.extend([target, "--"]);
+    let selected_paths: Vec<_> = std::iter::once(path)
+        .chain(file.old_path.as_deref())
+        .collect();
+    let mut pathspecs = Vec::new();
+    for selected in selected_paths {
+        pathspecs.push(format!(":(top,literal){selected}"));
+        let escaped: String = selected
+            .chars()
+            .flat_map(|c| {
+                if ['\\', '*', '?', '[', ']'].contains(&c) {
+                    vec!['\\', c]
+                } else {
+                    vec![c]
+                }
+            })
+            .collect();
+        pathspecs.push(format!(":(top,glob,exclude){escaped}/**"));
+    }
+    args.extend(pathspecs.iter().map(String::as_str));
+    git.query_diff(workspace, &args, limit)
+}
 impl Proof {
+    /// A reading surface must keep the captured pair, even if a branch moves.
+    pub fn frozen_comparison(
+        &self,
+        workspace_id: &str,
+        base: &str,
+        target: &str,
+    ) -> Result<Comparison> {
+        let comparison = if base == "empty" {
+            self.compare_commit(workspace_id, target, 0)?
+        } else {
+            self.compare_refs(workspace_id, base, target)?
+        };
+        if comparison.base_oid != base || comparison.target_oid != target {
+            return Err(Error::new(
+                "COMPARE_SNAPSHOT",
+                "比较范围已变化，请重新打开 Diff。",
+                "Expected immutable comparison OIDs",
+            ));
+        }
+        Ok(comparison)
+    }
+    /// A Commit is a comparison target, not evidence that somebody reviewed it.
+    /// This command writes only explicit, content-bound local Review records.
+    pub fn mark_comparison_reviewed(&mut self, request: ComparisonReviewRequest) -> Result<()> {
+        let diff = self.compare_file(
+            &request.workspace_id,
+            &request.base,
+            &request.target,
+            &request.path,
+        )?;
+        if diff.id != request.snapshot_id {
+            return Err(Error::new(
+                "COMPARE_CHANGED",
+                "比较内容已更新，请重新打开此 Diff。",
+                "The reviewed comparison no longer matches its captured patch",
+            ));
+        }
+        let units = crate::service::selected_units(&diff, request.hunk_id.as_deref())?;
+        self.store.mark(
+            &request.workspace_id,
+            &request.path,
+            &review_scope(&request.base, &request.target),
+            &units,
+            request.reviewed,
+        )
+    }
     pub fn compare_refs(&self, workspace_id: &str, base: &str, target: &str) -> Result<Comparison> {
         let workspace = self.store.workspace(workspace_id)?;
         let git = self.git()?;
@@ -172,6 +282,23 @@ impl Proof {
         target: &str,
         path: &str,
     ) -> Result<FileDiff> {
+        match self.read_compare_file(workspace_id, base, target, path, true)? {
+            crate::DiffRead::Ready { diff } => Ok(diff),
+            crate::DiffRead::Deferred { .. } => Err(Error::new(
+                "DIFF_READ_LIMIT",
+                "此 Diff 超过读取上限，请使用外部 Git 工具查看。",
+                "Patch exceeds the bounded reader limit",
+            )),
+        }
+    }
+    pub fn read_compare_file(
+        &self,
+        workspace_id: &str,
+        base: &str,
+        target: &str,
+        path: &str,
+        allow_large: bool,
+    ) -> Result<crate::DiffRead> {
         for oid in [base, target].into_iter().filter(|oid| *oid != "empty") {
             if ![40, 64].contains(&oid.len()) || !oid.bytes().all(|c| c.is_ascii_hexdigit()) {
                 return Err(Error::new(
@@ -200,44 +327,38 @@ impl Proof {
                     "Unknown comparison path",
                 )
             })?;
-        let mut args = vec!["--no-literal-pathspecs", "--no-replace-objects"];
-        if base == "empty" {
-            args.extend(["diff-tree", "-r", "--root", "--no-commit-id", "-p"]);
-        } else {
-            args.push("diff");
-        }
-        args.extend([
-            "--no-ext-diff",
-            "--no-textconv",
-            "--no-color",
-            "--find-renames",
-            "--full-index",
-            "--unified=3",
-        ]);
-        if base != "empty" {
-            args.push(base);
-        }
-        args.extend([target, "--"]);
-        let selected_paths: Vec<_> = std::iter::once(path)
-            .chain(file.old_path.as_deref())
-            .collect();
-        let mut pathspecs = Vec::new();
-        for selected in selected_paths {
-            pathspecs.push(format!(":(top,literal){selected}"));
-            let escaped: String = selected
-                .chars()
-                .flat_map(|c| {
-                    if ['\\', '*', '?', '[', ']'].contains(&c) {
-                        vec!['\\', c]
-                    } else {
-                        vec![c]
-                    }
+        let raw = match file_patch(
+            &git,
+            &workspace,
+            base,
+            target,
+            &file,
+            3,
+            crate::diff_load::read_limit(allow_large),
+        ) {
+            Ok(raw) => raw,
+            Err(error) if error.code == "DIFF_OUTPUT_LIMIT" => {
+                return Ok(crate::DiffRead::Deferred {
+                    summary: crate::DiffSummary {
+                        workspace_id: workspace_id.into(),
+                        path: path.into(),
+                        old_path: file.old_path,
+                        side: Side::Unstaged,
+                        base: base.into(),
+                        captured_at: crate::now(),
+                        patch_bytes: None,
+                        reason: if allow_large {
+                            "read_limit"
+                        } else {
+                            "patch_size"
+                        }
+                        .into(),
+                        can_load: !allow_large,
+                    },
                 })
-                .collect();
-            pathspecs.push(format!(":(top,glob,exclude){escaped}/**"));
-        }
-        args.extend(pathspecs.iter().map(String::as_str));
-        let raw = git.query(&workspace, &args)?;
+            }
+            Err(error) => return Err(error),
+        };
         let patch = String::from_utf8(raw).map_err(|_| {
             Error::new(
                 "COMPARE_ENCODING",
@@ -245,6 +366,21 @@ impl Proof {
                 "Unsupported diff encoding",
             )
         })?;
+        if let Some((reason, can_load)) = crate::diff_load::load_reason(&patch, allow_large) {
+            return Ok(crate::DiffRead::Deferred {
+                summary: crate::DiffSummary {
+                    workspace_id: workspace_id.into(),
+                    path: path.into(),
+                    old_path: file.old_path,
+                    side: Side::Unstaged,
+                    base: base.into(),
+                    captured_at: crate::now(),
+                    patch_bytes: Some(patch.len()),
+                    reason: reason.into(),
+                    can_load,
+                },
+            });
+        }
         let metadata = patch::metadata(&patch);
         if metadata.sections > 1 {
             return Err(Error::new(
@@ -254,12 +390,14 @@ impl Proof {
             ));
         }
         let id = crate::fingerprint(&[
+            b"comparison-v1",
             workspace_id.as_bytes(),
             base.as_bytes(),
             target.as_bytes(),
             path.as_bytes(),
+            patch.as_bytes(),
         ]);
-        let hunks = patch::hunks(&patch, &id);
+        let mut hunks = patch::hunks(&patch, &id);
         let additions = hunks
             .iter()
             .flat_map(|h| &h.lines)
@@ -283,27 +421,58 @@ impl Proof {
         } else {
             FileKind::Text
         };
-        Ok(FileDiff {
-            id,
-            workspace_id: workspace_id.into(),
-            path: path.into(),
-            old_path: file.old_path,
-            side: Side::Unstaged,
-            base: base.into(),
-            captured_at: crate::now(),
-            token: target.into(),
-            patch,
-            hunks,
-            additions,
-            deletions,
-            kind,
-            notice: (kind == FileKind::Binary).then(|| "Binary 文件内容不同。".into()),
-            can_stage: false,
-            can_stage_hunks: false,
-            can_discard: false,
-            can_discard_hunks: false,
-            discard_reason: None,
-            guard: String::new(),
+        if hunks.is_empty() || metadata.mode_changed() {
+            hunks.push(crate::Hunk {
+                id: crate::fingerprint(&[id.as_bytes(), b"metadata"]),
+                header: if metadata.mode_changed() {
+                    format!(
+                        "文件权限 {} → {}",
+                        metadata.old_mode.as_deref().unwrap_or(""),
+                        metadata.new_mode.as_deref().unwrap_or("")
+                    )
+                } else {
+                    "文件属性与内容变化".into()
+                },
+                old_start: 0,
+                new_start: 0,
+                lines: vec![],
+                review_state: "unreviewed".into(),
+                patch: String::new(),
+            });
+        }
+        let units: Vec<_> = hunks.iter().map(|hunk| hunk.id.as_str()).collect();
+        let marks = self.store.review_states(workspace_id, &units)?;
+        for hunk in &mut hunks {
+            hunk.review_state = if marks.get(&hunk.id).copied().unwrap_or(false) {
+                "reviewed"
+            } else {
+                "unreviewed"
+            }
+            .into();
+        }
+        Ok(crate::DiffRead::Ready {
+            diff: FileDiff {
+                id,
+                workspace_id: workspace_id.into(),
+                path: path.into(),
+                old_path: file.old_path,
+                side: Side::Unstaged,
+                base: base.into(),
+                captured_at: crate::now(),
+                token: target.into(),
+                patch,
+                hunks,
+                additions,
+                deletions,
+                kind,
+                notice: (kind == FileKind::Binary).then(|| "Binary 文件内容不同。".into()),
+                can_stage: false,
+                can_stage_hunks: false,
+                can_discard: false,
+                can_discard_hunks: false,
+                discard_reason: None,
+                guard: String::new(),
+            },
         })
     }
 }

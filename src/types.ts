@@ -62,11 +62,30 @@ export interface FileDiff {
   canDiscardHunks: boolean;
   discardReason: string | null;
 }
+export interface DiffSummary {
+  workspaceId: string;
+  path: string;
+  oldPath: string | null;
+  side: Side;
+  base: string;
+  capturedAt: number;
+  patchBytes: number | null;
+  reason:
+    "patch_size" | "line_count" | "long_line" | "read_limit" | "file_limit";
+  canLoad: boolean;
+}
+export type DiffRead =
+  | { state: "ready"; diff: FileDiff }
+  | { state: "deferred"; summary: DiffSummary };
+export const readTarget = (read: DiffRead) =>
+  read.state === "ready" ? read.diff : read.summary;
 export interface DiffContext {
   snapshotId: string;
   contextLines: number;
+  fullFile?: boolean;
   gaps: { beforeHunkId: string | null; lines: DiffLine[] }[];
 }
+export type DiffContextRange = number | "file";
 export interface Preferences {
   theme: "light" | "dark" | "system";
   fontSize: number;
@@ -92,6 +111,8 @@ export interface CommitPreview {
   files: ChangedFile[];
   reviewed: number;
   total: number;
+  coverageComputed?: boolean;
+  unreadFiles?: string[];
   indexFingerprint: string;
   capturedAt: number;
   amend: boolean;

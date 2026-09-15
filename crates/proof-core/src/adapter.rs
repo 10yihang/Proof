@@ -43,10 +43,14 @@ pub fn observer_adapter_profile(
     agent: ObserverAgent,
     version: &str,
 ) -> Option<ObserverAdapterProfile> {
-    let events = match (agent, version) {
-        (ObserverAgent::Codex, "0.153.4") => CODEX_EVENTS,
-        (ObserverAgent::Claude, "2.1.236") => CLAUDE_EVENTS,
-        _ => return None,
+    if !valid_version(version) {
+        return None;
+    }
+    // The adapter describes a Hook protocol, not an executable version allowlist.
+    // A recognizable version is only a candidate; it never proves live delivery.
+    let events = match agent {
+        ObserverAgent::Codex => CODEX_EVENTS,
+        ObserverAgent::Claude => CLAUDE_EVENTS,
     };
     Some(ObserverAdapterProfile {
         adapter_version: crate::OBSERVER_ADAPTER_VERSION.into(),
@@ -258,14 +262,14 @@ fn parse_version(agent: ObserverAgent, bytes: &[u8]) -> Option<String> {
         ObserverAgent::Codex => text.strip_prefix("codex-cli ")?,
         ObserverAgent::Claude => text.strip_suffix(" (Claude Code)")?,
     };
-    if version.is_empty()
-        || version.len() > 64
-        || !version
+    valid_version(version).then(|| version.into())
+}
+
+fn valid_version(version: &str) -> bool {
+    !version.is_empty()
+        && version.len() <= 64
+        && version
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b".-+".contains(&b))
-        || !version.bytes().next()?.is_ascii_digit()
-    {
-        return None;
-    }
-    Some(version.into())
+        && version.as_bytes()[0].is_ascii_digit()
 }

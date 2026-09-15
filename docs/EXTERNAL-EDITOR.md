@@ -1,5 +1,7 @@
 # External editor · 2026-09-13
 
+2026-09-14 更新：macOS 原生选择器、TextEdit 精确文件 handoff、真实编辑保存后自动刷新，以及撤销测试编辑恢复原字节已通过。保存配置不会启动编辑器；Index、HEAD、Git 配置和 Review 均保持。详见 `NATIVE-GIT-READING.md` 与 `.artifacts/native-git-reading-01/native-acceptance.json`。下文“尚未原生验证”是此前检查点；Windows 及完整兼容矩阵仍未完成。
+
 依据 PRD DIFF-02、SET-01、SEC-02。Proof 的代码视图保持只读；用户点击工具栏或 Command 中的“在外部编辑器打开”后，显式将当前 Worktree 文件交给所配置应用。该功能不创建临时可编辑的 Index/历史版本，也不把打开文件记录成 Review 或测试通过。
 
 ## 产品流程

@@ -1,3 +1,5 @@
+import { Button } from "./ui/controls";
+import { t } from "../i18n";
 import { useState, type ReactNode } from "react";
 import { ArrowRight, FileCode } from "@phosphor-icons/react";
 import { FileTree } from "./FileTree";
@@ -29,8 +31,8 @@ export function CommitWorkspace({
   const [selected, setSelected] = useState<string | null>(null);
   const selectedFile = changes.files.find((file) => fileKey(file) === selected);
   return (
-    <main className="commit-workspace" aria-label="Commit 工作区">
-      <section className="commit-stage-files" aria-label="选择提交文件">
+    <main className="commit-workspace" aria-label={t("Commit 工作区")}>
+      <section className="commit-stage-files" aria-label={t("选择提交文件")}>
         <FileTree
           files={changes.files}
           selected={selected}
@@ -46,17 +48,18 @@ export function CommitWorkspace({
         />
         <div className="commit-file-inspector">
           <FileCode size={16} />
-          <span>{selectedFile?.path ?? "选择文件以查看 Diff"}</span>
-          <button
+          <span>{selectedFile?.path ?? t("选择文件以查看 Diff")}</span>
+          <Button
             className="button compact"
             disabled={!selectedFile}
             onClick={() => selectedFile && onOpenDiff(selectedFile)}
           >
-            查看 Diff <ArrowRight size={14} />
-          </button>
+            {t("查看 Diff ")}
+            <ArrowRight size={14} />
+          </Button>
         </div>
       </section>
-      <aside className="commit-details" aria-label="提交说明与选项">
+      <aside className="commit-details" aria-label={t("提交说明与选项")}>
         {children}
       </aside>
     </main>

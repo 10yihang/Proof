@@ -245,15 +245,13 @@ impl ObserverManager {
         probe: ObserverProbe,
         fields: CaptureFields,
     ) -> Result<HookPreview> {
-        // The real macOS Codex compatibility run is the first enabled provider.
-        if !cfg!(target_os = "macos")
-            || probe.agent != ObserverAgent::Codex
-            || probe.version != "0.153.4"
-        {
+        // Keep the supported provider/platform boundary, not a CLI version pin.
+        // Config parsing, preview, executable identity and bridge checks follow.
+        if !cfg!(target_os = "macos") || probe.agent != ObserverAgent::Codex {
             return Err(Error::new(
                 "OBSERVER_COMBINATION_UNVERIFIED",
                 "此 Agent 与平台组合尚未完成真实 Hook 验证。",
-                "Only the tested macOS Codex combination is enabled",
+                "Hook installation is currently available for Codex on macOS",
             ));
         }
         let workspace = proof
@@ -773,7 +771,7 @@ impl ObserverManager {
             .into_iter()
             .filter(|r| r.state == "installed")
         {
-            if !proof.observer_hook_program_matches(&record)? {
+            if !proof.observer_hook_program_source_trusted(&record)? {
                 proof
                     .invalidate_observer_installation(&record.installation_id, "program_changed")?;
             } else if self.configuration_issue(&record).is_some() {

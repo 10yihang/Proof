@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Combobox } from "@base-ui/react/combobox";
 import {
   CaretDown,
   GitBranch,
@@ -8,9 +9,12 @@ import {
   Globe,
   ArrowClockwise,
 } from "@phosphor-icons/react";
+import { Button } from "./ui/controls";
+import { t, uiMessage } from "../i18n";
 import { asError, useRequest } from "../api";
 import { demoGraphPage } from "../graph-demo";
 import type { BranchEntry, Changes, ProofError } from "../types";
+import { branchRef } from "../history-actions";
 
 export function BranchPicker({
   changes,
@@ -32,20 +36,15 @@ export function BranchPicker({
     [search, setSearch] = useState("");
   const [branches, setBranches] = useState<BranchEntry[]>([]),
     [loading, setLoading] = useState(false);
-  const [error, setError] = useState<ProofError | null>(null);
-  const root = useRef<HTMLDivElement>(null),
-    trigger = useRef<HTMLButtonElement>(null),
-    input = useRef<HTMLInputElement>(null);
-  function close() {
-    setOpened(false);
-    trigger.current?.focus();
-  }
+  const [error, setError] = useState<ProofError | null>(null),
+    [revision, setRevision] = useState(0);
+  const input = useRef<HTMLInputElement>(null);
+  const selecting = useRef(false);
   useEffect(() => {
     if (!opened) return;
     let cancelled = false;
     setLoading(true);
     setError(null);
-    input.current?.focus();
     void (
       demo
         ? Promise.resolve(demoGraphPage().branches)
@@ -53,8 +52,8 @@ export function BranchPicker({
             workspaceId: changes.workspace.id,
           })
     )
-      .then((result) => {
-        if (!cancelled) setBranches(result);
+      .then((value) => {
+        if (!cancelled) setBranches(value);
       })
       .catch((error) => {
         if (!cancelled) setError(asError(error));
@@ -62,214 +61,207 @@ export function BranchPicker({
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
-    function outside(event: PointerEvent) {
-      if (event.target instanceof Node && !root.current?.contains(event.target))
-        setOpened(false);
-    }
-    document.addEventListener("pointerdown", outside);
     return () => {
       cancelled = true;
-      document.removeEventListener("pointerdown", outside);
     };
-  }, [opened, changes.workspace.id, changes.head, changes.branch, demo]);
+  }, [
+    opened,
+    changes.workspace.id,
+    changes.head,
+    changes.branch,
+    demo,
+    revision,
+  ]);
+  async function select(branch: BranchEntry) {
+    if (selecting.current || busy) return;
+    if (branch.current) {
+      setOpened(false);
+      return;
+    }
+    if (demo || !changes.workspace.trusted) return;
+    selecting.current = true;
+    try {
+      const name = branch.remote
+        ? branch.name.slice(branch.name.indexOf("/") + 1)
+        : branch.name;
+      const local = branch.remote
+        ? branches.find((b) => !b.remote && b.name === name)
+        : null;
+      if (
+        await onSwitch(
+          local?.name ?? name,
+          branch.remote && !local,
+          branch.remote && !local ? branch.name : undefined,
+        )
+      )
+        setOpened(false);
+    } finally {
+      selecting.current = false;
+    }
+  }
   const matches = branches.filter((branch) =>
     branch.name.toLowerCase().includes(search.toLowerCase()),
   );
-  async function select(branch: BranchEntry) {
-    if (branch.current) {
-      close();
-      return;
-    }
-    let name = branch.name;
-    if (branch.remote) {
-      name = name.slice(name.indexOf("/") + 1);
-      const local = branches.find(
-        (candidate) => !candidate.remote && candidate.name === name,
-      );
-      if (local) {
-        if (await onSwitch(local.name, false)) close();
-        return;
-      }
-    }
-    if (
-      await onSwitch(
-        name,
-        branch.remote,
-        branch.remote ? branch.name : undefined,
-      )
-    )
-      close();
-  }
+  const items = matches.map(branchRef);
   return (
-    <div
-      className="branch-switcher"
-      ref={root}
-      onKeyDown={(event) => {
-        if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-        if (event.key === "Escape") {
-          event.preventDefault();
-          event.stopPropagation();
-          close();
+    <Combobox.Root<string>
+      items={items}
+      filter={null}
+      open={opened}
+      value={
+        branches.find((b) => b.current)
+          ? branchRef(branches.find((b) => b.current)!)
+          : null
+      }
+      inputValue={search}
+      onInputValueChange={setSearch}
+      onOpenChange={(open, details) => {
+        if (details.reason === "item-press" || selecting.current) {
+          details.cancel();
+          return;
         }
-        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-          event.preventDefault();
-          const options = [
-            ...(root.current?.querySelectorAll<HTMLButtonElement>(
-              ".branch-option:not(:disabled)",
-            ) ?? []),
-          ];
-          const index = options.indexOf(
-            document.activeElement as HTMLButtonElement,
-          );
-          options[
-            Math.max(
-              0,
-              Math.min(
-                options.length - 1,
-                index + (event.key === "ArrowDown" ? 1 : -1),
-              ),
-            )
-          ]?.focus();
-        }
+        setOpened(open);
+        if (open) setSearch("");
       }}
+      onValueChange={(value) => {
+        const branch = branches.find((b) => branchRef(b) === value);
+        if (branch) void select(branch);
+      }}
+      itemToStringLabel={(value) =>
+        branches.find((b) => branchRef(b) === value)?.name ?? value
+      }
     >
-      <button
-        ref={trigger}
-        className="branch-picker"
-        aria-label={`切换 Branch，当前 ${changes.branch ?? "Detached HEAD"}`}
-        aria-haspopup="dialog"
-        aria-expanded={opened}
-        disabled={busy}
-        onClick={() => {
-          setOpened(!opened);
-          setSearch("");
-        }}
+      <Combobox.Trigger
+        render={
+          <Button
+            className="branch-picker"
+            disabled={busy}
+            aria-label={t("切换 Branch，当前 {v0}", {
+              v0: changes.branch ?? "Detached HEAD",
+            })}
+          />
+        }
       >
         <GitBranch size={15} />
         <span>{changes.branch ?? "Detached HEAD"}</span>
         <CaretDown size={11} />
-      </button>
-      {opened && (
-        <div
-          className="branch-popover"
-          role="dialog"
-          aria-label="Switch branch"
+      </Combobox.Trigger>
+      <Combobox.Portal>
+        <Combobox.Positioner
+          side="bottom"
+          align="start"
+          sideOffset={8}
+          collisionPadding={8}
+          className="z-[230]"
         >
-          <div className="branch-search">
-            <MagnifyingGlass size={16} />
-            <input
-              ref={input}
-              aria-label="搜索 Branch"
-              placeholder="Find or create a branch…"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.nativeEvent.isComposing || event.keyCode === 229)
-                  return;
-                if (
-                  event.key === "Enter" &&
-                  matches.length === 1 &&
-                  !busy &&
-                  !demo &&
-                  changes.workspace.trusted
-                )
-                  void select(matches[0]);
-              }}
-            />
-          </div>
-          <div className="branch-options">
+          <Combobox.Popup
+            initialFocus={input}
+            aria-label={t("Switch branch")}
+            className="proof-branch-popup w-80 origin-(--transform-origin) overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-xl outline-none duration-150 data-starting-style:scale-95 data-starting-style:opacity-0 data-ending-style:opacity-0"
+          >
+            <div className="flex h-11 items-center gap-2 border-b border-border px-3 text-muted-foreground">
+              <MagnifyingGlass size={16} />
+              <Combobox.Input
+                ref={input}
+                className="min-w-0 flex-1 border-0 bg-transparent p-0 text-[12px] text-foreground outline-none shadow-none focus:ring-0"
+                aria-label={t("搜索 Branch")}
+                placeholder={t("Find or create a branch…")}
+              />
+            </div>
             {loading && (
-              <div className="branch-empty">
+              <div className="branch-empty flex gap-2">
                 <ArrowClockwise className="spinning" size={14} />
-                载入 Branch…
+                {t("载入 Branch…")}
               </div>
             )}
             {error && (
-              <p role="alert" className="branch-empty">
-                {error.message}
-                <button
-                  onClick={() => {
-                    setOpened(false);
-                    requestAnimationFrame(() => setOpened(true));
-                  }}
+              <div className="branch-empty" role="alert">
+                {uiMessage(error.message)}
+                <Button
+                  className="text-button"
+                  onClick={() => setRevision((value) => value + 1)}
                 >
-                  重试
-                </button>
+                  {t("重试")}
+                </Button>
+              </div>
+            )}
+            <Combobox.List
+              className="max-h-80 overflow-y-auto p-1"
+              aria-label={t("分支")}
+            >
+              {matches.map((branch, index) => (
+                <div key={branchRef(branch)}>
+                  {(index === 0 ||
+                    matches[index - 1].remote !== branch.remote) && (
+                    <div className="px-2 py-2 text-[10px] font-medium text-muted-foreground">
+                      {branch.remote
+                        ? t("Remote branches")
+                        : t("Local branches")}
+                    </div>
+                  )}
+                  <Combobox.Item
+                    value={branchRef(branch)}
+                    className="branch-option flex min-h-8 items-center gap-2 rounded-md px-2 py-1.5 text-[12px] outline-none data-highlighted:bg-accent data-disabled:opacity-40"
+                    disabled={
+                      busy ||
+                      loading ||
+                      (!branch.current && (demo || !changes.workspace.trusted))
+                    }
+                  >
+                    {branch.remote ? (
+                      <Globe size={14} />
+                    ) : (
+                      <GitBranch size={14} />
+                    )}
+                    <span className="min-w-0 flex-1 truncate">
+                      {branch.name}
+                    </span>
+                    {branch.current ? (
+                      <Check size={14} />
+                    ) : (
+                      <code className="text-[10px] text-muted-foreground">
+                        {branch.oid.slice(0, 7)}
+                      </code>
+                    )}
+                  </Combobox.Item>
+                </div>
+              ))}
+              {!loading && !matches.length && (
+                <Combobox.Empty className="branch-empty">
+                  {t("没有匹配的 Branch")}
+                </Combobox.Empty>
+              )}
+            </Combobox.List>
+            {search.trim() &&
+              !branches.some((b) => !b.remote && b.name === search.trim()) && (
+                <Button
+                  className="branch-option create-branch w-full border-t border-border px-3 py-2 text-[12px]"
+                  disabled={
+                    busy || loading || demo || !changes.workspace.trusted
+                  }
+                  onClick={() =>
+                    void onSwitch(search.trim(), true).then((ok) => {
+                      if (ok) setOpened(false);
+                    })
+                  }
+                >
+                  <Plus size={15} />
+                  <span>
+                    {t("Create branch “")}
+                    {search.trim()}”
+                  </span>
+                </Button>
+              )}
+            {(demo || !changes.workspace.trusted) && (
+              <p className="branch-empty">
+                {demo
+                  ? t("Demo · Git 操作在桌面应用中可用")
+                  : t("信任仓库后可切换 Branch")}
               </p>
             )}
-            {(["local", "remote"] as const).map((group) => (
-              <div key={group}>
-                {matches.some(
-                  (branch) => branch.remote === (group === "remote"),
-                ) && (
-                  <div className="branch-section-label">
-                    {group === "local" ? "Local branches" : "Remote branches"}
-                  </div>
-                )}
-                {matches
-                  .filter((branch) => branch.remote === (group === "remote"))
-                  .map((branch) => (
-                    <button
-                      className="branch-option"
-                      key={`${group}:${branch.name}`}
-                      disabled={
-                        busy ||
-                        loading ||
-                        (!branch.current &&
-                          (demo || !changes.workspace.trusted))
-                      }
-                      title={
-                        branch.remote
-                          ? `Checkout ${branch.name} as a local branch`
-                          : `Switch to ${branch.name}`
-                      }
-                      onClick={() => void select(branch)}
-                    >
-                      {branch.remote ? (
-                        <Globe size={15} />
-                      ) : (
-                        <GitBranch size={15} />
-                      )}
-                      <span>{branch.name}</span>
-                      {branch.current ? (
-                        <Check size={15} />
-                      ) : (
-                        <code>{branch.oid.slice(0, 7)}</code>
-                      )}
-                    </button>
-                  ))}
-              </div>
-            ))}
-            {!loading && !matches.length && (
-              <p className="branch-empty">没有匹配的 Branch</p>
-            )}
-          </div>
-          {search.trim() &&
-            !branches.some(
-              (branch) => !branch.remote && branch.name === search.trim(),
-            ) && (
-              <button
-                className="branch-option create-branch"
-                disabled={busy || loading || demo || !changes.workspace.trusted}
-                onClick={() =>
-                  void onSwitch(search.trim(), true).then((ok) => {
-                    if (ok) close();
-                  })
-                }
-              >
-                <Plus size={15} />
-                <span>Create branch “{search.trim()}”</span>
-              </button>
-            )}
-          {(demo || !changes.workspace.trusted) && (
-            <p className="branch-empty">
-              {demo
-                ? "Demo · Git 操作在桌面应用中可用"
-                : "信任仓库后可切换 Branch"}
-            </p>
-          )}
-        </div>
-      )}
-    </div>
+          </Combobox.Popup>
+        </Combobox.Positioner>
+      </Combobox.Portal>
+    </Combobox.Root>
   );
 }

@@ -15,30 +15,41 @@ use std::{
 };
 
 pub struct Proof {
+    pub(crate) ai_busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub(crate) ai_cancellation: Option<crate::ReadCancellation>,
     pub(crate) store: Store,
     pub(crate) data_dir: PathBuf,
     snapshots: HashMap<String, FileDiff>,
     snapshot_order: VecDeque<String>,
+    snapshot_bytes: usize,
     pub(crate) contexts: VecDeque<DiffContext>,
     previews: HashMap<String, CommitPreview>,
     pub(crate) graphs: VecDeque<crate::graph::GraphSnapshot>,
+    pub(crate) history_actions: VecDeque<crate::history_actions::PreparedAction>,
     pub(crate) data_previews: VecDeque<crate::local_data::DataDeletionPreview>,
     pub(crate) cached_data_epoch: u64,
+    pub(crate) diagnostic_previews:
+        std::cell::RefCell<VecDeque<crate::diagnostics::PreparedDiagnostic>>,
 }
 impl Proof {
     pub fn open(data_dir: impl AsRef<Path>) -> Result<Self> {
         let store = Store::open(data_dir.as_ref())?;
         let data_dir = fs::canonicalize(data_dir.as_ref())?;
         let mut core = Self {
+            ai_busy: Default::default(),
+            ai_cancellation: None,
             store,
             data_dir,
             snapshots: HashMap::new(),
             snapshot_order: VecDeque::new(),
+            snapshot_bytes: 0,
             contexts: VecDeque::new(),
             previews: HashMap::new(),
             graphs: VecDeque::new(),
+            history_actions: VecDeque::new(),
             data_previews: VecDeque::new(),
             cached_data_epoch: 0,
+            diagnostic_previews: std::cell::RefCell::new(VecDeque::new()),
         };
         core.maintain_local_data()?;
         core.synchronize_data_epoch()?;
@@ -69,14 +80,25 @@ impl Proof {
             .collect())
     }
     pub(crate) fn clear_reading_cache(&mut self) {
+        self.history_actions.clear();
+        if let Some(cancellation) = self.ai_cancellation.take() {
+            cancellation.cancel();
+        }
         self.snapshots.clear();
         self.snapshot_order.clear();
+        self.snapshot_bytes = 0;
         self.contexts.clear();
         self.previews.clear();
         self.graphs.clear();
         self.data_previews.clear();
+        self.diagnostic_previews.borrow_mut().clear();
     }
     pub fn set_trust(&self, id: &str, trusted: bool) -> Result<()> {
+        if !trusted {
+            if let Some(cancellation) = &self.ai_cancellation {
+                cancellation.cancel();
+            }
+        }
         self.store.trust(id, trusted)
     }
     pub fn preferences(&self) -> Result<Preferences> {
@@ -110,31 +132,97 @@ impl Proof {
     }
 
     pub fn file_diff(&mut self, workspace_id: &str, path: &str, side: Side) -> Result<FileDiff> {
+        match self.read_file_diff(workspace_id, path, side, true)? {
+            crate::DiffRead::Ready { diff } => Ok(diff),
+            crate::DiffRead::Deferred { .. } => Err(Error::new(
+                "DIFF_READ_LIMIT",
+                "此 Diff 超过读取上限，请使用外部 Git 工具查看。",
+                "Patch exceeds the bounded reader limit",
+            )),
+        }
+    }
+    pub fn read_file_diff(
+        &mut self,
+        workspace_id: &str,
+        path: &str,
+        side: Side,
+        allow_large: bool,
+    ) -> Result<crate::DiffRead> {
         let workspace = self.store.workspace(workspace_id)?;
         let git = self.git()?;
-        let changes = git.changes(&workspace)?;
-        let file = changes
-            .files
-            .iter()
-            .find(|f| f.path == path && f.side == side)
-            .ok_or_else(|| {
-                Error::new(
-                    "CHANGE_MISSING",
-                    "此文件在当前比较范围内已无变化，请刷新列表。",
-                    path,
-                )
-            })?;
-        let before = git.guard(&workspace, path, file.old_path.as_deref())?;
-        let raw_patch = git.patch(&workspace, file)?;
+        let file = git.changed_file(&workspace, path, side)?;
+        let operation = git.state(&workspace);
+        let full_path = git::checked_path(&workspace, path)?;
+        if fs::symlink_metadata(&full_path)
+            .is_ok_and(|metadata| metadata.is_file() && metadata.len() > 32 * 1024 * 1024)
+        {
+            return Ok(crate::DiffRead::Deferred {
+                summary: crate::DiffSummary {
+                    workspace_id: workspace_id.into(),
+                    path: path.into(),
+                    old_path: file.old_path,
+                    side,
+                    base: format!(
+                        "{}:{}",
+                        git.head(&workspace)?.as_deref().unwrap_or("unborn"),
+                        git.branch(&workspace)?.as_deref().unwrap_or("detached")
+                    ),
+                    captured_at: now(),
+                    patch_bytes: None,
+                    reason: "file_limit".into(),
+                    can_load: false,
+                },
+            });
+        }
+        let before = git.capture_file_guard(&workspace, path, file.old_path.as_deref())?;
+        let raw_patch =
+            git.patch_for_read(&workspace, &file, crate::diff_load::read_limit(allow_large));
         let after = git.guard(&workspace, path, file.old_path.as_deref())?;
-        if before != after {
+        if before.token != after {
             return Err(Error::stale());
         }
-        let base = format!(
-            "{}:{}",
-            changes.head.as_deref().unwrap_or("unborn"),
-            changes.branch.as_deref().unwrap_or("detached")
-        );
+        // The displayed and persisted base must come from the same references
+        // as the validated content, not a preceding repository-list read.
+        let base = before.base;
+        let raw_patch = match raw_patch {
+            Ok(patch) => patch,
+            Err(error) if error.code == "DIFF_OUTPUT_LIMIT" => {
+                return Ok(crate::DiffRead::Deferred {
+                    summary: crate::DiffSummary {
+                        workspace_id: workspace_id.into(),
+                        path: path.into(),
+                        old_path: file.old_path,
+                        side,
+                        base,
+                        captured_at: now(),
+                        patch_bytes: None,
+                        reason: if allow_large {
+                            "read_limit"
+                        } else {
+                            "patch_size"
+                        }
+                        .into(),
+                        can_load: !allow_large,
+                    },
+                });
+            }
+            Err(error) => return Err(error),
+        };
+        if let Some((reason, can_load)) = crate::diff_load::load_reason(&raw_patch, allow_large) {
+            return Ok(crate::DiffRead::Deferred {
+                summary: crate::DiffSummary {
+                    workspace_id: workspace_id.into(),
+                    path: path.into(),
+                    old_path: file.old_path,
+                    side,
+                    base,
+                    captured_at: now(),
+                    patch_bytes: Some(raw_patch.len()),
+                    reason: reason.into(),
+                    can_load,
+                },
+            });
+        }
         let identity = fingerprint(&[
             workspace_id.as_bytes(),
             side.as_str().as_bytes(),
@@ -184,6 +272,7 @@ impl Proof {
             });
         }
         for hunk in &mut hunks {
+            crate::check_read_cancellation()?;
             hunk.review_state =
                 self.store
                     .review_state(workspace_id, path, side.as_str(), &hunk.id)?;
@@ -218,7 +307,7 @@ impl Proof {
             && !file.conflicted
             && kind != FileKind::Submodule
             && !raw_patch.starts_with("Untracked symbolic link")
-            && changes.operation.is_none();
+            && operation.is_none();
         let can_discard = can_stage
             && side == Side::Unstaged
             && kind == FileKind::Text
@@ -233,7 +322,7 @@ impl Proof {
             side,
             base,
             captured_at: now(),
-            token: fingerprint(&[raw_patch.as_bytes(), before.as_bytes()]),
+            token: fingerprint(&[raw_patch.as_bytes(), before.token.as_bytes()]),
             patch: raw_patch,
             hunks,
             additions,
@@ -251,17 +340,38 @@ impl Proof {
             can_discard,
             can_discard_hunks: can_discard && file.status == "M",
             discard_reason: (!can_discard).then(|| "仅支持已信任仓库中，已跟踪的普通文本变化；暂存、重命名和属性变化不在丢弃范围内。".into()),
-            guard: before,
+            guard: before.token,
         };
+        let snapshot = diff.clone();
+        let bytes = snapshot.retained_bytes();
+        const SNAPSHOT_BYTES: usize = 64 * 1024 * 1024;
+        if bytes > SNAPSHOT_BYTES {
+            return Ok(crate::DiffRead::Deferred {
+                summary: crate::DiffSummary {
+                    workspace_id: diff.workspace_id,
+                    path: diff.path,
+                    old_path: diff.old_path,
+                    side,
+                    base: diff.base,
+                    captured_at: diff.captured_at,
+                    patch_bytes: Some(diff.patch.len()),
+                    reason: "read_limit".into(),
+                    can_load: false,
+                },
+            });
+        }
+        self.snapshot_bytes += bytes;
         self.snapshot_order.push_back(diff.id.clone());
-        self.snapshots.insert(diff.id.clone(), diff.clone());
-        while self.snapshot_order.len() > 64 {
+        self.snapshots.insert(diff.id.clone(), snapshot);
+        while self.snapshot_order.len() > 64 || self.snapshot_bytes > SNAPSHOT_BYTES {
             if let Some(old) = self.snapshot_order.pop_front() {
-                self.snapshots.remove(&old);
+                if let Some(expired) = self.snapshots.remove(&old) {
+                    self.snapshot_bytes -= expired.retained_bytes();
+                }
                 self.contexts.retain(|context| context.snapshot_id != old);
             }
         }
-        Ok(diff)
+        Ok(crate::DiffRead::Ready { diff })
     }
     pub(crate) fn snapshot(&self, id: &str) -> Result<FileDiff> {
         self.snapshots
@@ -346,13 +456,16 @@ impl Proof {
         let matches_index = git.index_bytes(&workspace)? == expected_index;
         // Explicitly re-read index and HEAD after the mutation. UI always refreshes
         // from this actual state rather than assuming an optimistic update succeeded.
-        let after = git.changes(&workspace).map_err(|e| {
-            Error::new(
-                "GIT_APPLIED_REFRESH_REQUIRED",
-                "Git 已执行暂存操作，但核对结果失败。请刷新后检查实际索引。",
-                e,
-            )
-        })?;
+        let (actual_head, actual_branch) =
+            (|| -> Result<_> { Ok((git.head(&workspace)?, git.branch(&workspace)?)) })().map_err(
+                |e| {
+                    Error::new(
+                        "GIT_APPLIED_REFRESH_REQUIRED",
+                        "Git 已执行暂存操作，但核对结果失败。请刷新后检查实际索引。",
+                        e,
+                    )
+                },
+            )?;
         let migration_warning = self
             .migrate_after_stage(&diff, hunk_id)
             .err()
@@ -360,8 +473,8 @@ impl Proof {
         let matches_base = diff.base
             == format!(
                 "{}:{}",
-                after.head.as_deref().unwrap_or("unborn"),
-                after.branch.as_deref().unwrap_or("detached")
+                actual_head.as_deref().unwrap_or("unborn"),
+                actual_branch.as_deref().unwrap_or("detached")
             );
         let mut result = OperationResult {
             ok: matches_index && matches_base,
@@ -373,8 +486,8 @@ impl Proof {
                 "已暂存所选变化"
             }
             .into(),
-            actual_head: after.head,
-            actual_branch: after.branch,
+            actual_head,
+            actual_branch,
             warning: if matches_index && matches_base {
                 migration_warning
             } else {
@@ -398,20 +511,36 @@ impl Proof {
         if source.kind != FileKind::Text {
             return Ok(());
         }
+        let units: Vec<&str> = source
+            .hunks
+            .iter()
+            .filter(|h| {
+                !h.patch.is_empty() && (selected.is_none() || selected == Some(h.id.as_str()))
+            })
+            .map(|h| h.id.as_str())
+            .collect();
+        // Read current persisted marks: a user may have marked the already
+        // captured snapshot after opening it. Unreviewed Stage needs no target
+        // Diff or migration, and must not pay for an unrelated full repository read.
+        if units.is_empty()
+            || !self
+                .store
+                .has_reviewed_units(&source.workspace_id, &units)?
+        {
+            return Ok(());
+        }
         let target_side = if source.side == Side::Staged {
             Side::Unstaged
         } else {
             Side::Staged
         };
-        let changes = self.changes(&source.workspace_id)?;
-        if !changes
-            .files
-            .iter()
-            .any(|f| f.path == source.path && f.side == target_side)
-        {
-            return Ok(());
-        }
-        let target = self.file_diff(&source.workspace_id, &source.path, target_side)?;
+        // file_diff already resolves current file status and validates the
+        // captured content. Unstage may legitimately leave no target change.
+        let target = match self.file_diff(&source.workspace_id, &source.path, target_side) {
+            Ok(target) => target,
+            Err(error) if error.code == "CHANGE_MISSING" => return Ok(()),
+            Err(error) => return Err(error),
+        };
         // A successful operation alone is insufficient. Both complete base blob
         // identities and exact hunk patches must agree across the comparison sides.
         if source.base != target.base
@@ -505,8 +634,14 @@ impl Proof {
         }
         let (mut reviewed, mut total) = (0, 0);
         let coverage = coverage || self.store.preferences()?.strict_review;
+        let mut unread_files = Vec::new();
         for file in files.iter().filter(|_| coverage) {
-            let diff = self.file_diff(workspace_id, &file.path, Side::Staged)?;
+            let crate::DiffRead::Ready { diff } =
+                self.read_file_diff(workspace_id, &file.path, Side::Staged, true)?
+            else {
+                unread_files.push(file.path.clone());
+                continue;
+            };
             total += diff.hunks.len();
             reviewed += diff
                 .hunks
@@ -544,6 +679,8 @@ impl Proof {
             files,
             reviewed,
             total,
+            coverage_computed: coverage,
+            unread_files,
             index_fingerprint: fingerprint(&[&before]),
             captured_at: now(),
             amend,
@@ -587,7 +724,15 @@ impl Proof {
             let mut reviewed = 0;
             let mut total = 0;
             for file in &preview.files {
-                let diff = self.file_diff(&workspace.id, &file.path, Side::Staged)?;
+                let crate::DiffRead::Ready { diff } =
+                    self.read_file_diff(&workspace.id, &file.path, Side::Staged, true)?
+                else {
+                    return Err(Error::new(
+                        "REVIEW_REQUIRED",
+                        "此文件的 Diff 超过读取上限，无法完成 Strict Review。",
+                        &file.path,
+                    ));
+                };
                 total += diff.hunks.len();
                 reviewed += diff
                     .hunks
@@ -843,7 +988,7 @@ impl Proof {
     }
 }
 
-fn selected_units(diff: &FileDiff, hunk_id: Option<&str>) -> Result<Vec<String>> {
+pub(crate) fn selected_units(diff: &FileDiff, hunk_id: Option<&str>) -> Result<Vec<String>> {
     if let Some(id) = hunk_id {
         if !diff.hunks.iter().any(|h| h.id == id) {
             return Err(Error::new("HUNK_MISSING", "所选变化块已失效。", id));

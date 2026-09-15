@@ -130,6 +130,8 @@ pub struct FileDiff {
 pub struct DiffContext {
     pub snapshot_id: String,
     pub context_lines: u16,
+    #[serde(default)]
+    pub full_file: bool,
     pub gaps: Vec<ContextGap>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -224,6 +226,10 @@ pub struct CommitPreview {
     pub files: Vec<ChangedFile>,
     pub reviewed: usize,
     pub total: usize,
+    #[serde(default)]
+    pub coverage_computed: bool,
+    #[serde(default)]
+    pub unread_files: Vec<String>,
     pub index_fingerprint: String,
     pub captured_at: u64,
     #[serde(default)]

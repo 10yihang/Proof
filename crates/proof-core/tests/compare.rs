@@ -99,7 +99,10 @@ fn branch_and_commit_comparison_is_frozen_visual_and_read_only() {
         .compare_file(&workspace.id, &base, &head, "binary.dat")
         .unwrap();
     assert_eq!(binary.kind, FileKind::Binary);
-    assert!(binary.hunks.is_empty());
+    assert_eq!(binary.hunks.len(), 1);
+    assert!(binary.hunks[0].lines.is_empty());
+    assert!(binary.hunks[0].patch.is_empty());
+    assert_eq!(binary.hunks[0].review_state, "unreviewed");
     let added = proof
         .compare_file(&workspace.id, &base, &head, "literal[1].txt")
         .unwrap();

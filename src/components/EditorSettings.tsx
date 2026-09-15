@@ -1,3 +1,5 @@
+import { Button, Select, Input } from "./ui/controls";
+import { t, uiMessage } from "../i18n";
 import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
@@ -101,7 +103,7 @@ export function EditorSettings({
     const revision = generation.current;
     try {
       const path = await open({
-        title: "选择外部编辑器",
+        title: t("选择外部编辑器"),
         multiple: false,
         directory: false,
         defaultPath:
@@ -150,7 +152,13 @@ export function EditorSettings({
       else
         onSaveError({
           ...asError(error),
-          message: `${scope === "application" ? "应用默认" : (workspaceName ?? "此仓库")}的编辑器设置未保存。${asError(error).message}`,
+          message: t("{v0}的编辑器设置未保存。{v1}", {
+            v0:
+              scope === "application"
+                ? t("应用默认")
+                : (workspaceName ?? t("此仓库")),
+            v1: asError(error).message,
+          }),
         });
     } finally {
       if (revision === generation.current) setSaving(false);
@@ -167,71 +175,72 @@ export function EditorSettings({
     current && (current.mode !== draft.mode || current.path !== draft.path);
   const disabled = !native || loading || saving || picking;
   return (
-    <section className="editor-settings" aria-label="外部编辑器">
-      <h3>外部编辑器</h3>
+    <section className="editor-settings" aria-label={t("外部编辑器")}>
+      <h3>{t("外部编辑器")}</h3>
       <p className="muted">
-        从 Diff 打开当前 Worktree 文件，保存后自动更新变化。
+        {t("从 Diff 打开当前 Worktree 文件，保存后自动更新变化。")}
       </p>
       {!native && (
         <p className="setting-callout">
           <Code size={17} />
-          请在桌面应用中选择编辑器。
+          {t("请在桌面应用中选择编辑器。")}
         </p>
       )}
       <div
         className="editor-scope segmented"
         role="group"
-        aria-label="编辑器设置范围"
+        aria-label={t("编辑器设置范围")}
       >
-        <button
+        <Button
           disabled={disabled}
           aria-pressed={scope === "application"}
           onClick={() => chooseScope("application")}
         >
-          应用默认
-        </button>
-        <button
+          {t("应用默认")}
+        </Button>
+        <Button
           disabled={disabled || !workspaceId}
           aria-pressed={scope === "repository"}
           onClick={() => chooseScope("repository")}
         >
-          此仓库
-        </button>
+          {t("此仓库")}
+        </Button>
       </div>
       {scope === "repository" && (
         <p className="inline-help">
-          应用于 {workspaceName ?? "此仓库"} 及关联 Worktree。
+          {t("应用于 ")}
+          {workspaceName ?? t("此仓库")} {t(" 及关联 Worktree。")}
         </p>
       )}
       {loading && (
         <p role="status" className="inline-help">
           <ArrowClockwise className="spinning" size={14} />
-          读取编辑器设置…
+          {t("读取编辑器设置…")}
         </p>
       )}
       {error && (
         <div className="editor-error" role="alert">
           <Warning size={16} />
           <div>
-            <strong>{error.message}</strong>
+            <strong>{uiMessage(error.message)}</strong>
             <details>
-              <summary>查看详情</summary>
+              <summary>{t("查看详情")}</summary>
               <pre>{error.detail}</pre>
             </details>
-            <button
+            <Button
               className="button compact"
               disabled={saving}
               onClick={() => void load()}
             >
-              重新读取设置
-            </button>
+              {t("重新读取设置")}
+            </Button>
           </div>
         </div>
       )}
       <label className="field-label" htmlFor="editor-mode">
-        {scope === "repository" ? "此仓库使用" : "默认使用"}
+        {scope === "repository" ? t("此仓库使用") : t("默认使用")}
       </label>
-      <select
+      <Select
         id="editor-mode"
         value={draft.mode}
         disabled={disabled}
@@ -241,20 +250,20 @@ export function EditorSettings({
         }}
       >
         {scope === "repository" && (
-          <option value="inherit">继承应用默认</option>
+          <option value="inherit">{t("继承应用默认")}</option>
         )}
-        <option value="disabled">不使用外部编辑器</option>
-        <option value="application">指定编辑器</option>
-      </select>
+        <option value="disabled">{t("不使用外部编辑器")}</option>
+        <option value="application">{t("指定编辑器")}</option>
+      </Select>
       {draft.mode === "application" && (
         <>
           <div
             className="editor-application-list"
             role="group"
-            aria-label="已安装的编辑器"
+            aria-label={t("已安装的编辑器")}
           >
             {applications.map((app) => (
-              <button
+              <Button
                 key={app.path}
                 title={`${app.name}\n${app.path}`}
                 disabled={disabled}
@@ -267,14 +276,14 @@ export function EditorSettings({
                 <Code size={17} />
                 <span>{app.name}</span>
                 {draft.path === app.path && <Check size={15} />}
-              </button>
+              </Button>
             ))}
           </div>
           <label className="field-label" htmlFor="editor-path">
-            编辑器路径
+            {t("编辑器路径")}
           </label>
           <div className="path-input">
-            <input
+            <Input
               id="editor-path"
               value={draft.path}
               disabled={disabled}
@@ -288,39 +297,39 @@ export function EditorSettings({
                 setSaved(false);
               }}
             />
-            <button
+            <Button
               className="button"
               disabled={disabled}
               onClick={() => void pick()}
             >
               <FolderOpen size={16} />
-              选择应用
-            </button>
+              {t("选择应用")}
+            </Button>
           </div>
         </>
       )}
       {settings && (
         <div className="editor-effective">
-          <span>{workspaceId ? "当前 Worktree" : "应用默认"}</span>
-          <strong>{settings.effective?.name ?? "未启用"}</strong>
+          <span>{workspaceId ? t("当前 Worktree") : t("应用默认")}</span>
+          <strong>{settings.effective?.name ?? t("未启用")}</strong>
           <small>
             {settings.source === "repository"
-              ? "此仓库覆盖应用默认"
-              : "使用应用默认"}
+              ? t("此仓库覆盖应用默认")
+              : t("使用应用默认")}
           </small>
         </div>
       )}
       <div className="editor-settings-actions">
         <span role="status">
           {saving
-            ? "保存中…"
+            ? t("保存中…")
             : saved
-              ? "已保存"
+              ? t("已保存")
               : dirty
-                ? "有未保存的修改"
+                ? t("有未保存的修改")
                 : ""}
         </span>
-        <button
+        <Button
           className="button primary"
           disabled={
             disabled ||
@@ -329,8 +338,8 @@ export function EditorSettings({
           }
           onClick={() => void save()}
         >
-          保存
-        </button>
+          {t("保存")}
+        </Button>
       </div>
     </section>
   );

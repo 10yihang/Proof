@@ -12,7 +12,33 @@ use std::{
 };
 use wait_timeout::ChildExt;
 
+type StdoutObserver<'a> = &'a mut dyn FnMut(&[u8]);
+
 const OUTPUT_LIMIT: usize = 32 * 1024 * 1024;
+pub fn run(command: Command, input: Option<&[u8]>, timeout: Duration) -> Result<Output> {
+    run_inner(command, input, timeout, None, None)
+}
+// Only read-only Diff commands terminate early; writes retain full verification.
+pub(crate) fn run_diff(
+    command: Command,
+    input: Option<&[u8]>,
+    timeout: Duration,
+    limit: usize,
+) -> Result<Output> {
+    run_inner(command, input, timeout, Some(limit.min(OUTPUT_LIMIT)), None)
+}
+/// Stream owned process stdout as it arrives while retaining bounded final output.
+pub(crate) fn run_observed(
+    command: Command,
+    input: Option<&[u8]>,
+    timeout: Duration,
+    observer: &mut dyn FnMut(&[u8]),
+) -> Result<Output> {
+    run_inner(command, input, timeout, Some(OUTPUT_LIMIT), Some(observer))
+}
+fn diff_limit_error(limit: usize) -> Error {
+    Error::new("DIFF_OUTPUT_LIMIT", "Diff 超过当前读取范围。", limit)
+}
 static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
 
 /// One-way cancellation for this process's own Git operations. Used only by the
@@ -29,7 +55,14 @@ pub struct Output {
 // Drain pipes concurrently, retaining bounded data. A timeout kills only the process
 // group created for this operation, never an existing Git/Agent process.
 #[cfg(not(unix))]
-pub fn run(mut command: Command, input: Option<&[u8]>, timeout: Duration) -> Result<Output> {
+fn run_inner(
+    mut command: Command,
+    input: Option<&[u8]>,
+    timeout: Duration,
+    diff_limit: Option<usize>,
+    mut observer: Option<StdoutObserver<'_>>,
+) -> Result<Output> {
+    crate::check_read_cancellation()?;
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -53,7 +86,11 @@ pub fn run(mut command: Command, input: Option<&[u8]>, timeout: Duration) -> Res
         drop(stdin);
         result
     });
-    fn drain(mut pipe: impl Read) -> std::io::Result<(Vec<u8>, bool)> {
+    fn drain(
+        mut pipe: impl Read,
+        limit: usize,
+        notify: Option<std::sync::Arc<AtomicBool>>,
+    ) -> std::io::Result<(Vec<u8>, bool)> {
         let mut result = Vec::new();
         let mut buf = [0u8; 8192];
         let mut exceeded = false;
@@ -62,17 +99,42 @@ pub fn run(mut command: Command, input: Option<&[u8]>, timeout: Duration) -> Res
             if n == 0 {
                 break;
             }
-            let keep = n.min(OUTPUT_LIMIT.saturating_sub(result.len()));
+            let keep = n.min(limit.saturating_sub(result.len()));
             result.extend_from_slice(&buf[..keep]);
             exceeded |= keep < n;
+            if exceeded {
+                if let Some(notify) = &notify {
+                    notify.store(true, Ordering::Release);
+                }
+            }
         }
         Ok((result, exceeded))
     }
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
-    let out = thread::spawn(move || drain(stdout));
-    let err = thread::spawn(move || drain(stderr));
-    let status = child.wait_timeout(timeout)?;
+    let diff_exceeded = std::sync::Arc::new(AtomicBool::new(false));
+    let notification = diff_limit.map(|_| diff_exceeded.clone());
+    let out =
+        thread::spawn(move || drain(stdout, diff_limit.unwrap_or(OUTPUT_LIMIT), notification));
+    let err = thread::spawn(move || drain(stderr, OUTPUT_LIMIT, None));
+    let deadline = std::time::Instant::now() + timeout;
+    let mut cancelled = None;
+    let status = loop {
+        if let Err(error) = crate::check_read_cancellation() {
+            cancelled = Some(error);
+            break None;
+        }
+        if diff_exceeded.load(Ordering::Acquire) {
+            break None;
+        }
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            break None;
+        }
+        if let Some(status) = child.wait_timeout(remaining.min(Duration::from_millis(20)))? {
+            break Some(status);
+        }
+    };
     if status.is_none() {
         #[cfg(unix)]
         unsafe {
@@ -96,6 +158,12 @@ pub fn run(mut command: Command, input: Option<&[u8]>, timeout: Duration) -> Res
             "stderr reader failed",
         )
     })??;
+    if let Some(error) = cancelled {
+        return Err(error);
+    }
+    if diff_exceeded.load(Ordering::Acquire) {
+        return Err(diff_limit_error(diff_limit.unwrap()));
+    }
     if status.is_none() {
         return Err(Error::new(
             "PROCESS_TIMEOUT",
@@ -110,6 +178,9 @@ pub fn run(mut command: Command, input: Option<&[u8]>, timeout: Duration) -> Res
             OUTPUT_LIMIT,
         ));
     }
+    if let Some(observer) = observer.as_mut() {
+        observer(&stdout);
+    }
     Ok(Output {
         code: status.unwrap().code().unwrap_or(-1),
         stdout,
@@ -118,11 +189,18 @@ pub fn run(mut command: Command, input: Option<&[u8]>, timeout: Duration) -> Res
 }
 
 #[cfg(unix)]
-pub fn run(mut command: Command, input: Option<&[u8]>, timeout: Duration) -> Result<Output> {
+fn run_inner(
+    mut command: Command,
+    input: Option<&[u8]>,
+    timeout: Duration,
+    diff_limit: Option<usize>,
+    mut observer: Option<StdoutObserver<'_>>,
+) -> Result<Output> {
     use std::{
         os::{fd::AsRawFd, unix::process::CommandExt},
         time::Instant,
     };
+    crate::check_read_cancellation()?;
     if SHUTTING_DOWN.load(Ordering::Acquire) {
         return Err(Error::new(
             "PROCESS_CANCELLED",
@@ -185,7 +263,8 @@ pub fn run(mut command: Command, input: Option<&[u8]>, timeout: Duration) -> Res
     let mut err_eof = false;
     let mut exceeded = false;
     let mut status = None;
-    loop {
+    let exit_status = loop {
+        crate::check_read_cancellation()?;
         if SHUTTING_DOWN.load(Ordering::Acquire) {
             return Err(Error::new(
                 "PROCESS_CANCELLED",
@@ -217,10 +296,17 @@ pub fn run(mut command: Command, input: Option<&[u8]>, timeout: Duration) -> Res
                 revents: 0,
             },
         ];
+        // Once all pipes close there is no fd left to wake poll on child exit.
+        // Reap promptly without installing a process-global SIGCHLD handler.
+        let interval = if out_eof && err_eof && stdin.is_none() {
+            1
+        } else {
+            10
+        };
         let wait = deadline
             .saturating_duration_since(Instant::now())
             .as_millis()
-            .clamp(1, 10) as i32;
+            .clamp(1, interval) as i32;
         if unsafe { libc::poll(polls.as_mut_ptr(), polls.len() as libc::nfds_t, wait) } < 0
             && std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted
         {
@@ -244,9 +330,9 @@ pub fn run(mut command: Command, input: Option<&[u8]>, timeout: Duration) -> Res
                 stdin.take();
             }
         }
-        for (poll, bytes, eof) in [
-            (&polls[1], &mut out, &mut out_eof),
-            (&polls[2], &mut err, &mut err_eof),
+        for (poll, bytes, eof, is_stdout) in [
+            (&polls[1], &mut out, &mut out_eof, true),
+            (&polls[2], &mut err, &mut err_eof, false),
         ] {
             if poll.revents == 0 {
                 continue;
@@ -256,6 +342,15 @@ pub fn run(mut command: Command, input: Option<&[u8]>, timeout: Duration) -> Res
             if count == 0 {
                 *eof = true;
             } else if count > 0 {
+                if is_stdout {
+                    if let Some(observer) = observer.as_mut() {
+                        observer(&buffer[..count as usize]);
+                    }
+                }
+                if is_stdout && diff_limit.is_some_and(|limit| bytes.len() + count as usize > limit)
+                {
+                    return Err(diff_limit_error(diff_limit.unwrap()));
+                }
                 let keep = (count as usize).min(OUTPUT_LIMIT.saturating_sub(bytes.len()));
                 bytes.extend_from_slice(&buffer[..keep]);
                 exceeded |= keep < count as usize;
@@ -273,27 +368,40 @@ pub fn run(mut command: Command, input: Option<&[u8]>, timeout: Duration) -> Res
         }
         if let Some(status) = status {
             if out_eof && err_eof {
-                owned.complete = true;
-                if exceeded {
-                    return Err(Error::new(
-                        "OUTPUT_LIMIT",
-                        "内容超过读取上限，请缩小范围。",
-                        OUTPUT_LIMIT,
-                    ));
-                }
-                return Ok(Output {
-                    code: status.code().unwrap_or(-1),
-                    stdout: out,
-                    stderr: err,
-                });
+                break status;
             }
         }
+    };
+    owned.complete = true;
+    if exceeded {
+        return Err(Error::new(
+            "OUTPUT_LIMIT",
+            "内容超过读取上限，请缩小范围。",
+            OUTPUT_LIMIT,
+        ));
     }
+    Ok(Output {
+        code: exit_status.code().unwrap_or(-1),
+        stdout: out,
+        stderr: err,
+    })
 }
 
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    #[test]
+    fn diff_output_limit_stops_a_live_producer_instead_of_draining_it() {
+        let mut command = Command::new("/bin/sh");
+        command.args([
+            "-c",
+            "while :; do printf '0123456789abcdef0123456789abcdef\\n'; done",
+        ]);
+        let started = std::time::Instant::now();
+        let result = run_diff(command, None, Duration::from_secs(10), 1024);
+        assert!(matches!(result, Err(error) if error.code == "DIFF_OUTPUT_LIMIT"));
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
     #[test]
     fn exited_parent_with_inherited_pipe_is_still_bounded() {
         let mut command = Command::new("/bin/sh");
@@ -302,6 +410,43 @@ mod tests {
         let result = run(command, None, Duration::from_millis(100));
         assert!(matches!(result,Err(error) if error.code=="PROCESS_TIMEOUT"));
         assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn closed_output_pipes_do_not_remove_the_process_deadline() {
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "exec 1>&- 2>&-; sleep 30"]);
+        let started = std::time::Instant::now();
+        let result = run(command, None, Duration::from_millis(100));
+        assert!(matches!(result,Err(error) if error.code=="PROCESS_TIMEOUT"));
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn closed_output_pipes_preserve_a_later_exit_status() {
+        let mut command = Command::new("/bin/sh");
+        command.args([
+            "-c",
+            "printf output; printf error >&2; exec 1>&- 2>&-; sleep .03; exit 7",
+        ]);
+        let result = run(command, None, Duration::from_secs(2)).unwrap();
+        assert_eq!(result.code, 7);
+        assert_eq!(result.stdout, b"output");
+        assert_eq!(result.stderr, b"error");
+    }
+
+    #[test]
+    fn child_can_still_read_input_after_closing_both_output_pipes() {
+        let temp = tempfile::tempdir().unwrap();
+        let saved = temp.path().join("input");
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "exec 1>&- 2>&-; cat > \"$1\"", "proof-test"]);
+        command.arg(&saved);
+        let input = vec![b'x'; 1024 * 1024];
+        let result = run(command, Some(&input), Duration::from_secs(2)).unwrap();
+        assert_eq!(result.code, 0);
+        assert!(result.stdout.is_empty() && result.stderr.is_empty());
+        assert_eq!(std::fs::read(saved).unwrap(), input);
     }
 }
 

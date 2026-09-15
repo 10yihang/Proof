@@ -179,6 +179,11 @@
   margin: 17px 0;
   color: var(--muted);
 }
+.commit-unread {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 10px;
+}
 .commit-coverage.complete {
   color: var(--accent);
   background: var(--accent-soft);

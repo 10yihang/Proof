@@ -2517,10 +2517,11 @@ dependencies = [
 
 [[package]]
 name = "proof-core"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "libc",
  "plist",
+ "regex",
  "rusqlite",
  "serde",
  "serde_json",
@@ -2533,9 +2534,11 @@ dependencies = [
 
 [[package]]
 name = "proof-desktop"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "notify",
+ "objc2",
+ "objc2-app-kit",
  "proof-core",
  "proof-observer",
  "serde",
@@ -2544,11 +2547,12 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "tempfile",
+ "uuid",
 ]
 
 [[package]]
 name = "proof-observer"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "libc",
  "proof-core",

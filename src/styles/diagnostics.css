@@ -1,0 +1,145 @@
+.diagnostic-settings > h3 {
+  margin-bottom: 6px;
+}
+.diagnostic-defaults {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 20px 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.diagnostic-defaults > svg {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+.diagnostic-defaults p,
+.diagnostic-confirm p {
+  margin: 6px 0;
+  line-height: 1.65;
+}
+.diagnostic-defaults small,
+.diagnostic-option small,
+.diagnostic-footnote {
+  color: var(--muted);
+  line-height: 1.6;
+}
+.diagnostic-extras {
+  border: 0;
+  padding: 0;
+  margin: 0 0 20px;
+}
+.diagnostic-extras legend {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.diagnostic-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 0;
+  cursor: pointer;
+}
+.diagnostic-option input {
+  margin-top: 3px;
+  accent-color: var(--accent);
+}
+.diagnostic-option span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.diagnostic-option strong {
+  font-weight: 500;
+}
+.diagnostic-confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px;
+  margin-bottom: 18px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+}
+.diagnostic-confirm > svg {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.diagnostic-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.diagnostic-preview {
+  margin-top: 18px;
+}
+.diagnostic-preview header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+.diagnostic-preview header > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.diagnostic-preview header strong {
+  color: var(--text);
+  font-size: 13px;
+}
+.diagnostic-preview pre {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  max-height: 360px;
+  min-height: 160px;
+  overflow: auto;
+  padding: 14px;
+  font: 11px/1.6 var(--font-mono);
+  white-space: pre;
+}
+.diagnostic-preview pre:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.diagnostic-footnote {
+  margin-top: 20px;
+  font-size: 11px;
+}
+.diagnostic-saved {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px;
+  margin: 14px 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.diagnostic-saved > svg {
+  color: var(--add);
+  flex-shrink: 0;
+}
+.diagnostic-saved p {
+  overflow-wrap: anywhere;
+  margin: 6px 0;
+}
+.diagnostic-settings:has(.diagnostic-preview) .diagnostic-defaults {
+  display: none;
+}
+.diagnostic-preview .diagnostic-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  padding: 12px 0 4px;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+}
+.diagnostic-application-button {
+  margin-top: 16px;
+}
