@@ -1,9 +1,9 @@
+import { ContextActivity } from "./ContextActivity";
 import { Button } from "./ui/controls";
-import { uiMessage, t, getLanguage } from "../i18n";
+import { uiMessage, t } from "../i18n";
 import { useEffect, useRef, useState } from "react";
 import { asError, useRequest } from "../api";
 import {
-  fieldState,
   type ContextEvents,
   type ContextEventCursor,
   type ContextSession,
@@ -12,11 +12,16 @@ import {
 export function ContextSessionEvents({
   workspaceId,
   session,
+  path,
+  onSettings,
 }: {
   workspaceId: string;
   session: ContextSession;
+  path: string;
+  onSettings: () => void;
 }) {
   const request = useRequest();
+  const [allEvents, setAllEvents] = useState(false);
   const [page, setPage] = useState<
     (ContextEvents & { locallyExpired?: boolean }) | null
   >(null);
@@ -32,6 +37,7 @@ export function ContextSessionEvents({
       const result = await request<ContextEvents>("context_session_events", {
         workspaceId,
         sessionId: session.id,
+        path: allEvents ? null : path,
         before,
       });
       if (n === generation.current) {
@@ -40,6 +46,15 @@ export function ContextSessionEvents({
           expiry: before
             ? { ...previous?.expiry, ...result.expiry }
             : result.expiry,
+          taskContext: before
+            ? [
+                ...(previous?.taskContext ?? []),
+                ...(result.taskContext ?? []),
+              ].filter(
+                (event, index, list) =>
+                  list.findIndex((other) => other.id === event.id) === index,
+              )
+            : result.taskContext,
           events: before
             ? [...(previous?.events ?? []), ...result.events]
             : result.events,
@@ -53,11 +68,12 @@ export function ContextSessionEvents({
     }
   }
   useEffect(() => {
+    setPage(null);
     void load();
     return () => {
       ++generation.current;
     };
-  }, [workspaceId, session.id]);
+  }, [workspaceId, session.id, path, allEvents]);
   useEffect(() => {
     // Each fetched page carries server retention deadlines. Expire cached bytes
     // even when the event count stays unchanged, without resetting other pages.
@@ -66,7 +82,7 @@ export function ContextSessionEvents({
         if (!previous) return previous;
         const now = Date.now();
         let changed = false;
-        const events = previous.events.flatMap((event) => {
+        const expireEvent = (event: ContextEvents["events"][number]) => {
           const deadline = previous.expiry?.[event.id];
           if (deadline && deadline.expiresAt <= now) {
             changed = true;
@@ -87,9 +103,11 @@ export function ContextSessionEvents({
             ];
           }
           return [event];
-        });
+        };
+        const events = previous.events.flatMap(expireEvent);
+        const taskContext = previous.taskContext?.flatMap(expireEvent);
         return changed
-          ? { ...previous, events, locallyExpired: true }
+          ? { ...previous, events, taskContext, locallyExpired: true }
           : previous;
       });
     const timer = setInterval(expire, 1000);
@@ -103,10 +121,26 @@ export function ContextSessionEvents({
   }, []);
   return (
     <div className="observer-events" aria-label={t("会话原始记录")}>
+      <div
+        className="activity-scope-toggle"
+        role="group"
+        aria-label={t("活动范围")}
+      >
+        <Button aria-pressed={!allEvents} onClick={() => setAllEvents(false)}>
+          {t("当前文件")}
+        </Button>
+        <Button aria-pressed={allEvents} onClick={() => setAllEvents(true)}>
+          {t("完整会话")}
+        </Button>
+      </div>
       <div className="context-event-heading">
-        <strong>{t("原始记录")}</strong>
+        <span>
+          {allEvents
+            ? t("会话活动")
+            : t("{v0} 条文件相关记录", { v0: page?.fileEventCount ?? 0 })}
+        </span>
         <Button
-          className="button compact"
+          className="text-button"
           disabled={loading}
           onClick={() => void load()}
         >
@@ -124,7 +158,9 @@ export function ContextSessionEvents({
         <p className="inline-help">{t("部分原始内容已到期清理。")}</p>
       )}
       <p className="inline-help">
-        {t("以下是此会话的 Hook 记录；命令结果与当前 Diff 的版本关系未确认。")}
+        {t(
+          "按已捕获的活动整理；命令退出码和 Agent 回执不代表当前 Diff 已验证。",
+        )}
       </p>
       {error && (
         <p role="alert" className="data-warning">
@@ -132,105 +168,29 @@ export function ContextSessionEvents({
         </p>
       )}
       {page?.cleared && <p>{t("原始会话已清理。")}</p>}
-      {page?.events.map((event) => (
-        <details key={event.id}>
-          <summary>
-            <time>
-              {new Date(event.receivedAt).toLocaleString(getLanguage(), {
-                hour12: false,
-              })}
-            </time>
-            <span>{event.toolName ?? event.kind}</span>
-          </summary>
-          {event.truncated && (
-            <p className="data-warning">{t("此事件内容已截断。")}</p>
-          )}
-          {event.possiblyDuplicate && (
-            <p className="inline-help">
-              {t("事件可能重复，不能据此判断执行次数。")}
+      {page && !loading && !page.events.length && !page.cleared && (
+        <p className="activity-empty">
+          {t("没有明确引用此文件的活动。可切换到完整会话查看其他记录。")}
+        </p>
+      )}
+      {page &&
+        page.events.some(
+          (event) =>
+            event.fieldStatus?.command === "not_authorized" ||
+            event.fieldStatus?.output === "not_authorized",
+        ) && (
+          <div className="activity-availability">
+            <p>
+              {t(
+                "部分操作只记录了名称，命令或输出未开启采集。已有记录无法补回。",
+              )}
             </p>
-          )}
-          {Object.entries(event.fieldStatus ?? {})
-            .filter(([, status]) =>
-              [
-                "not_authorized",
-                "not_provided",
-                "expired",
-                "truncated",
-                "redacted",
-                "limited_or_outside_scope",
-              ].includes(status),
-            )
-            .map(([field, status]) => (
-              <p className="inline-help" key={field}>
-                {(
-                  {
-                    prompt: "Prompt",
-                    command: t("命令"),
-                    output: t("工具输出"),
-                    reply: t("最终回复"),
-                    paths: t("文件路径"),
-                  } as Record<string, string>
-                )[field] ?? field}{" "}
-                · {fieldState(status)}
-              </p>
-            ))}
-          {!!event.paths.length && (
-            <p className="context-path">{event.paths.join(", ")}</p>
-          )}
-          {event.turnId && (
-            <p className="context-path">
-              {t("Turn · ")}
-              {event.turnId}
-            </p>
-          )}
-          {event.toolRef && (
-            <p className="context-path">
-              {t("Tool call · ")}
-              {event.toolRef}
-            </p>
-          )}
-          {event.prompt && (
-            <>
-              <strong className="context-field-label">{t("任务原文")}</strong>
-              <pre>{event.prompt}</pre>
-            </>
-          )}
-          {event.command && (
-            <>
-              <strong className="context-field-label">{t("命令")}</strong>
-              <pre>{event.command}</pre>
-            </>
-          )}
-          {event.commandState !== "not_applicable" && (
-            <p className="muted">
-              {event.exitCode === null
-                ? t("退出状态未知")
-                : event.exitCode === 0
-                  ? t("命令成功 · Exit 0")
-                  : t("命令退出 · Exit {v0}", { v0: event.exitCode })}{" "}
-              {t("· 未关联结构化测试报告")}
-            </p>
-          )}
-          {event.output && (
-            <>
-              <strong className="context-field-label">{t("工具输出")}</strong>
-              <pre>{event.output}</pre>
-            </>
-          )}
-          {event.reply && (
-            <>
-              <strong className="context-field-label">
-                {t("Agent 最终回复 · 原文")}
-              </strong>
-              <pre>{event.reply}</pre>
-              <p className="inline-help">
-                {t("回复中的验证结论来自 Agent，未作为测试报告验证。")}
-              </p>
-            </>
-          )}
-        </details>
-      ))}
+            <Button className="text-button" onClick={onSettings}>
+              {t("调整 Hook 记录内容")}
+            </Button>
+          </div>
+        )}
+      {page && <ContextActivity page={page} path={path} />}
       {loading && <p role="status">{t("读取记录中…")}</p>}
       {page?.next && (
         <Button

@@ -67,8 +67,8 @@ impl<'a> ActivityStream<'a> {
     fn tool(&self, name: &str, input: &Value) {
         let command = input["command"].as_str().unwrap_or_default();
         let phase = match name {
-            "Read" => "reading",
-            "Grep" | "Glob" => "searching",
+            "Read" | "read" => "reading",
+            "Grep" | "Glob" | "grep" | "glob" | "list" => "searching",
             _ if command.contains("rg ")
                 || command.contains("grep ")
                 || command.contains("find ") =>
@@ -80,6 +80,7 @@ impl<'a> ActivityStream<'a> {
         };
         let reference = input["file_path"]
             .as_str()
+            .or_else(|| input["filePath"].as_str())
             .or_else(|| input["path"].as_str())
             .unwrap_or(command);
         let path = self
@@ -95,8 +96,19 @@ impl<'a> ActivityStream<'a> {
     }
     fn event(&self, event: &Value) {
         match event["type"].as_str() {
-            Some("thread.started" | "turn.started" | "system") => {
+            Some("thread.started" | "turn.started" | "system" | "step_start") => {
                 (self.emit)(AiProgress::phase("analyzing"))
+            }
+            Some("tool_use") => {
+                let part = &event["part"];
+                if part["state"]["status"] == "error" {
+                    (self.emit)(AiProgress::phase("tool_failed"));
+                } else {
+                    self.tool(
+                        part["tool"].as_str().unwrap_or_default(),
+                        &part["state"]["input"],
+                    );
+                }
             }
             Some("item.started") if event["item"]["type"] == "command_execution" => {
                 self.tool("Bash", &event["item"])

@@ -1,7 +1,7 @@
 import { DropdownMenuItem as MenuItem } from "./ui/dropdown-menu";
 import { Input, Button, Select } from "./ui/controls";
 import { uiMessage, t, getLanguage } from "../i18n";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
 import {
   ArrowClockwise,
@@ -86,28 +86,91 @@ export function CommitHistory({
   const sequence = useRef(0);
   const scroll = useRef<HTMLDivElement>(null);
   const columnHeader = useRef<HTMLDivElement>(null);
+  const viewIdentity = useRef("");
+  const loadedCommits = useRef(commits);
+  loadedCommits.current = commits;
+  const scrollAnchor = useRef<{
+    oid: string;
+    offset: number;
+    top: number;
+  } | null>(null);
+  useLayoutEffect(() => {
+    const anchor = scrollAnchor.current;
+    if (!anchor || !scroll.current) return;
+    scrollAnchor.current = null;
+    const index = commits.findIndex((commit) => commit.oid === anchor.oid);
+    scroll.current.scrollTop =
+      index >= 0 ? index * GRAPH_ROW_HEIGHT + anchor.offset : anchor.top;
+  }, [commits]);
   useEffect(() => {
     const generation = ++sequence.current;
+    const identity = `${changes.workspace.id}:${scope}:${demo}`;
+    const preserve = viewIdentity.current === identity;
+    viewIdentity.current = identity;
     setBusy(true);
     setError(null);
-    setPage(null);
-    setCommits([]);
-    setSelected(null);
-    setCompared(null);
-    setParent(0);
-    const load = demo
-      ? Promise.resolve(demoGraphPage(scope))
-      : request<CommitGraphPage>("commit_graph", {
+    if (!preserve) {
+      setPage(null);
+      setCommits([]);
+      setSelected(null);
+      setCompared(null);
+      setParent(0);
+    }
+    const load = async () => {
+      let value = demo
+        ? demoGraphPage(scope)
+        : await request<CommitGraphPage>("commit_graph", {
+            workspaceId: changes.workspace.id,
+            scope,
+          });
+      const all = [...value.commits];
+      // Refresh the pages already being browsed, under one new Git snapshot.
+      const count = preserve ? loadedCommits.current.length : 0;
+      while (
+        !demo &&
+        sequence.current === generation &&
+        value.hasMore &&
+        all.length < count
+      ) {
+        value = await request<CommitGraphPage>("commit_graph", {
           workspaceId: changes.workspace.id,
           scope,
+          snapshotId: value.snapshotId,
+          offset: all.length,
         });
-    void load
+        if (!value.commits.length) break;
+        all.push(...value.commits);
+      }
+      return { ...value, commits: all };
+    };
+    void load()
       .then((value) => {
         if (sequence.current !== generation) return;
-        scroll.current?.scrollTo({ top: 0, left: 0 });
+        if (preserve && scroll.current) {
+          const top = scroll.current.scrollTop;
+          const row = loadedCommits.current[Math.floor(top / GRAPH_ROW_HEIGHT)];
+          if (row)
+            scrollAnchor.current = {
+              oid: row.oid,
+              offset: top % GRAPH_ROW_HEIGHT,
+              top,
+            };
+        } else scroll.current?.scrollTo({ top: 0, left: 0 });
         setPage(value);
         setCommits(value.commits);
-        setSelected(value.commits[0] ?? null);
+        setSelected(
+          (previous) =>
+            (preserve &&
+              value.commits.find((commit) => commit.oid === previous?.oid)) ||
+            value.commits[0] ||
+            null,
+        );
+        if (preserve)
+          setCompared(
+            (previous) =>
+              value.commits.find((commit) => commit.oid === previous?.oid) ??
+              null,
+          );
         onBranches(value.branches);
       })
       .catch((cause) => {

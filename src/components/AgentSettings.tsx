@@ -9,7 +9,7 @@ import {
   Terminal,
 } from "@phosphor-icons/react";
 import { asError, useReadRequest, useRequest } from "../api";
-import type { AgentKind, AgentProviderInfo } from "../ai";
+import { agentName, type AgentKind, type AgentProviderInfo } from "../ai";
 import type { ProofError } from "../types";
 export interface AgentOptions {
   executablePath: string | null;
@@ -20,6 +20,7 @@ export interface AgentSettingsValue {
   defaultProvider: AgentKind;
   codex: AgentOptions;
   claudeCode: AgentOptions;
+  codewiz: AgentOptions;
 }
 interface ProbeResult {
   provider: AgentKind;
@@ -35,6 +36,7 @@ const defaults = (): AgentSettingsValue => ({
   defaultProvider: "codex",
   codex: { executablePath: null, model: null },
   claudeCode: { executablePath: null, model: null },
+  codewiz: { executablePath: null, model: null },
 });
 export function AgentSettings({ demo }: { demo: boolean }) {
   const request = useRequest(),
@@ -62,7 +64,7 @@ export function AgentSettings({ demo }: { demo: boolean }) {
         request<AgentProviderInfo[]>("agent_providers"),
       ]);
       if (n === sequence.current && mounted.current) {
-        setDraft(settings);
+        setDraft({ ...defaults(), ...settings });
         setProviders(available);
         setResults({});
       }
@@ -83,7 +85,7 @@ export function AgentSettings({ demo }: { demo: boolean }) {
     };
   }, [demo]);
   function edit(kind: AgentKind, partial: Partial<AgentOptions>) {
-    const key = kind === "codex" ? "codex" : "claudeCode";
+    const key = kind === "claude_code" ? "claudeCode" : kind;
     setDraft((value) => ({ ...value, [key]: { ...value[key], ...partial } }));
     setResults((value) => ({ ...value, [kind]: undefined }));
     setSaved(false);
@@ -92,7 +94,7 @@ export function AgentSettings({ demo }: { demo: boolean }) {
     try {
       const path = await open({
         title: t("选择 {v0} CLI", {
-          v0: kind === "codex" ? "Codex" : t("Claude Code"),
+          v0: agentName(kind),
         }),
         multiple: false,
         directory: false,
@@ -117,6 +119,7 @@ export function AgentSettings({ demo }: { demo: boolean }) {
           defaultProvider: draft.defaultProvider,
           codex: draft.codex,
           claudeCode: draft.claudeCode,
+          codewiz: draft.codewiz,
         },
       });
       if (mounted.current) {
@@ -138,7 +141,7 @@ export function AgentSettings({ demo }: { demo: boolean }) {
     try {
       const result = await reader.read<ProbeResult>("probe_ai_agent", {
         provider: kind,
-        options: kind === "codex" ? draft.codex : draft.claudeCode,
+        options: draft[kind === "claude_code" ? "claudeCode" : kind],
       });
       if (n === sequence.current && mounted.current)
         setResults((value) => ({ ...value, [kind]: result }));
@@ -170,7 +173,7 @@ export function AgentSettings({ demo }: { demo: boolean }) {
       </header>
       <p className="muted">
         {t(
-          "这些设置只保存在 Proof，不修改 Codex / Claude Code 的配置。Agent 观察在单独的设置页。",
+          "这些设置只保存在 Proof，不修改 CLI 配置。Agent 观察在单独的设置页。",
         )}
       </p>
       {demo && (
@@ -205,10 +208,21 @@ export function AgentSettings({ demo }: { demo: boolean }) {
       >
         <option value="codex">{t("Codex")}</option>
         <option value="claude_code">{t("Claude Code")}</option>
+        {providers.some((p) => p.id === "codewiz") && (
+          <option value="codewiz">Codewiz</option>
+        )}
       </Select>
-      {(["codex", "claude_code"] as const).map((kind) => {
-        const options = kind === "codex" ? draft.codex : draft.claudeCode,
-          name = kind === "codex" ? "Codex" : t("Claude Code"),
+      {(
+        [
+          "codex",
+          "claude_code",
+          ...(providers.some((p) => p.id === "codewiz")
+            ? ["codewiz" as const]
+            : []),
+        ] as const
+      ).map((kind) => {
+        const options = draft[kind === "claude_code" ? "claudeCode" : kind],
+          name = agentName(kind),
           found = providers.find((p) => p.id === kind),
           result = results[kind];
         return (
@@ -218,6 +232,13 @@ export function AgentSettings({ demo }: { demo: boolean }) {
               <strong>{name}</strong>
               <span className="tag">{t("Read-only")}</span>
             </header>
+            {kind === "codewiz" && (
+              <p className="muted">
+                {t(
+                  "读取 ~/.config/codewiz 的模型配置和现有登录。每次分析使用独立 Session，关闭 MCP 和插件。",
+                )}
+              </p>
+            )}
             <label className="field-label" htmlFor={`${kind}-path`}>
               {t("CLI path")}
             </label>
@@ -269,7 +290,9 @@ export function AgentSettings({ demo }: { demo: boolean }) {
               autoCapitalize="none"
               autoCorrect="off"
               value={options.model ?? ""}
-              placeholder={t("CLI default")}
+              placeholder={
+                kind === "codewiz" ? "provider/model" : t("CLI default")
+              }
               disabled={loading || saving || !!checking || demo}
               onChange={(e) => edit(kind, { model: e.target.value || null })}
             />

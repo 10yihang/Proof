@@ -31,6 +31,7 @@ import { Modal } from "./Modal";
 import { DataSettings } from "./DataSettings";
 import { ObserverSettings } from "./ObserverSettings";
 import { EditorSettings } from "./EditorSettings";
+import { UpdateSettings } from "./UpdateSettings";
 import { AgentSettings } from "./AgentSettings";
 import { DiagnosticSettings } from "./DiagnosticSettings";
 
@@ -69,6 +70,7 @@ export function Settings({
     | "data"
     | "editor"
     | "diagnostics"
+    | "updates"
     | "agents";
   onError: (error: unknown) => void;
   onRecentChanged?: () => Promise<void>;
@@ -80,6 +82,7 @@ export function Settings({
     | "data"
     | "editor"
     | "diagnostics"
+    | "updates"
     | "agents"
   >(initialSection);
   const language = useLanguage();
@@ -150,6 +153,13 @@ export function Settings({
             <Info size={17} />
             {t("诊断")}
           </Tabs.Tab>
+          <Tabs.Tab
+            value="updates"
+            className={tab === "updates" ? "active" : ""}
+          >
+            <Desktop size={17} />
+            {t("软件更新")}
+          </Tabs.Tab>
         </Tabs.List>
         <ScrollArea
           className="settings-scroll-root min-h-0 min-w-0"
@@ -158,6 +168,7 @@ export function Settings({
         >
           <Tabs.Panel value={tab}>
             {tab === "agents" && <AgentSettings demo={demo} />}
+            {tab === "updates" && <UpdateSettings demo={demo} />}
             {tab === "diagnostics" && (
               <DiagnosticSettings demo={demo} onError={onError} />
             )}

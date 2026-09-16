@@ -118,6 +118,38 @@ test.beforeEach(() =>
     "Build ui-fixture-driver for native Git tests.",
   ),
 );
+test("entering History fetches remote refs quietly and does not fetch again within a minute", async ({ page }) => {
+  const f = await fixture(page);
+  try {
+    await f.invoke("set_ui_language", { language: "en" });
+    const head = f.git("rev-parse", "HEAD");
+    const remoteGit = (...args: string[]) => execFileSync("git", ["-C", f.remote,
+      "-c", "user.name=Proof UI", "-c", "user.email=ui@example.invalid", ...args], { encoding: "utf8" }).trim();
+    const tree = remoteGit("rev-parse", "HEAD^{tree}");
+    const first = remoteGit("commit-tree", tree, "-p", head, "-m", "Auto fetched remote change");
+    remoteGit("update-ref", "refs/heads/main", first);
+    await f.open();
+    await expect(page.locator(".graph-row").filter({ hasText: "Auto fetched remote change" })).toBeVisible();
+    expect(f.git("rev-parse", "refs/remotes/origin/main")).toBe(first);
+    expect(f.git("rev-parse", "HEAD")).toBe(head);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.getByRole("alert").filter({ hasText: /\S/ })).toHaveCount(0);
+    await page.locator(".graph-row").filter({ hasText: "Initial change" }).click();
+    const second = remoteGit("commit-tree", tree, "-p", first, "-m", "Later remote change");
+    remoteGit("update-ref", "refs/heads/main", second);
+    await page.getByRole("tab", { name: /Local changes/ }).click();
+    await page.getByRole("tab", { name: "History", exact: true }).click();
+    await expect.poll(() => f.calls.filter((name) => name === "history_auto_fetch").length).toBeGreaterThanOrEqual(2);
+    await expect(page.locator(".graph-row.is-active")).toContainText("Initial change");
+    expect(f.git("rev-parse", "refs/remotes/origin/main")).toBe(first);
+    await expect(page.locator(".graph-row").filter({ hasText: "Later remote change" })).toHaveCount(0);
+    f.git("branch", "created-in-terminal");
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await expect(page.getByRole("button", { name: "created-in-terminal", exact: true })).toBeVisible();
+    expect(f.git("rev-parse", "refs/remotes/origin/main")).toBe(first);
+  } finally { f.close(); }
+});
+
 test("History creates Branch and Tag in English without premature validation errors", async ({
   page,
 }) => {

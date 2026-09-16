@@ -1,3 +1,4 @@
+import { agentName } from "./ai";
 import type { AiReport } from "./ai";
 import { translate, type Language, type MessageKey } from "./i18n";
 
@@ -54,7 +55,7 @@ export function reviewInstructions(
       ? [`- ${text("当前 Branch")}: ${code(context.branch)}`]
       : []),
     `- ${text("Review 时间")}: ${new Date(report.capturedAt).toISOString()}`,
-    `- ${text("Review 来源")}: ${report.provider === "codex" ? "Codex" : "Claude Code"}`,
+    `- ${text("Review 来源")}: ${agentName(report.provider)}`,
     report.scope.kind === "comparison"
       ? `- ${text("比较范围")}: ${code(report.scope.base)} → ${code(report.scope.target)}`
       : `- ${text("Review 范围")}: Local changes`,

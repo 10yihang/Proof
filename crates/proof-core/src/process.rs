@@ -16,7 +16,7 @@ type StdoutObserver<'a> = &'a mut dyn FnMut(&[u8]);
 
 const OUTPUT_LIMIT: usize = 32 * 1024 * 1024;
 pub fn run(command: Command, input: Option<&[u8]>, timeout: Duration) -> Result<Output> {
-    run_inner(command, input, timeout, None, None)
+    run_inner(command, input, Some(timeout), None, None)
 }
 // Only read-only Diff commands terminate early; writes retain full verification.
 pub(crate) fn run_diff(
@@ -25,16 +25,45 @@ pub(crate) fn run_diff(
     timeout: Duration,
     limit: usize,
 ) -> Result<Output> {
-    run_inner(command, input, timeout, Some(limit.min(OUTPUT_LIMIT)), None)
+    run_inner(
+        command,
+        input,
+        Some(timeout),
+        Some(limit.min(OUTPUT_LIMIT)),
+        None,
+    )
 }
 /// Stream owned process stdout as it arrives while retaining bounded final output.
+#[cfg(all(test, target_os = "macos"))]
 pub(crate) fn run_observed(
     command: Command,
     input: Option<&[u8]>,
     timeout: Duration,
     observer: &mut dyn FnMut(&[u8]),
 ) -> Result<Output> {
-    run_inner(command, input, timeout, Some(OUTPUT_LIMIT), Some(observer))
+    run_inner(
+        command,
+        input,
+        Some(timeout),
+        Some(OUTPUT_LIMIT),
+        Some(observer),
+    )
+}
+/// User-started analysis has no elapsed-time deadline. Cancellation still tears
+/// down only this invocation's process group, and output remains bounded.
+pub(crate) fn run_until_cancelled(
+    command: Command,
+    input: Option<&[u8]>,
+    limit: usize,
+    observer: Option<StdoutObserver<'_>>,
+) -> Result<Output> {
+    run_inner(
+        command,
+        input,
+        None,
+        Some(limit.min(OUTPUT_LIMIT)),
+        observer,
+    )
 }
 fn diff_limit_error(limit: usize) -> Error {
     Error::new("DIFF_OUTPUT_LIMIT", "Diff 超过当前读取范围。", limit)
@@ -58,7 +87,7 @@ pub struct Output {
 fn run_inner(
     mut command: Command,
     input: Option<&[u8]>,
-    timeout: Duration,
+    timeout: Option<Duration>,
     diff_limit: Option<usize>,
     mut observer: Option<StdoutObserver<'_>>,
 ) -> Result<Output> {
@@ -117,7 +146,7 @@ fn run_inner(
     let out =
         thread::spawn(move || drain(stdout, diff_limit.unwrap_or(OUTPUT_LIMIT), notification));
     let err = thread::spawn(move || drain(stderr, OUTPUT_LIMIT, None));
-    let deadline = std::time::Instant::now() + timeout;
+    let deadline = timeout.map(|duration| std::time::Instant::now() + duration);
     let mut cancelled = None;
     let status = loop {
         if let Err(error) = crate::check_read_cancellation() {
@@ -127,7 +156,9 @@ fn run_inner(
         if diff_exceeded.load(Ordering::Acquire) {
             break None;
         }
-        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        let remaining = deadline.map_or(Duration::from_millis(20), |deadline| {
+            deadline.saturating_duration_since(std::time::Instant::now())
+        });
         if remaining.is_zero() {
             break None;
         }
@@ -192,7 +223,7 @@ fn run_inner(
 fn run_inner(
     mut command: Command,
     input: Option<&[u8]>,
-    timeout: Duration,
+    timeout: Option<Duration>,
     diff_limit: Option<usize>,
     mut observer: Option<StdoutObserver<'_>>,
 ) -> Result<Output> {
@@ -256,7 +287,7 @@ fn run_inner(
     if input.is_empty() {
         stdin.take();
     }
-    let deadline = Instant::now() + timeout;
+    let deadline = timeout.map(|duration| Instant::now() + duration);
     let mut out = Vec::new();
     let mut err = Vec::new();
     let mut out_eof = false;
@@ -272,7 +303,7 @@ fn run_inner(
                 "Collector shutdown",
             ));
         }
-        if Instant::now() >= deadline {
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
             return Err(Error::new(
                 "PROCESS_TIMEOUT",
                 "本次 Git 操作超时，请刷新并核对实际状态。",
@@ -303,10 +334,12 @@ fn run_inner(
         } else {
             10
         };
-        let wait = deadline
-            .saturating_duration_since(Instant::now())
-            .as_millis()
-            .clamp(1, interval) as i32;
+        let wait = deadline.map_or(interval, |deadline| {
+            deadline
+                .saturating_duration_since(Instant::now())
+                .as_millis()
+                .clamp(1, interval)
+        }) as i32;
         if unsafe { libc::poll(polls.as_mut_ptr(), polls.len() as libc::nfds_t, wait) } < 0
             && std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted
         {
@@ -390,6 +423,48 @@ fn run_inner(
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    #[test]
+    fn analysis_without_a_deadline_keeps_streaming_until_exit() {
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "printf started; sleep .12; printf finished; exit 7"]);
+        let mut streamed = Vec::new();
+        let output = run_until_cancelled(
+            command,
+            None,
+            1024,
+            Some(&mut |bytes| streamed.extend_from_slice(bytes)),
+        )
+        .unwrap();
+        assert_eq!(output.code, 7);
+        assert_eq!(output.stdout, b"startedfinished");
+        assert_eq!(streamed, output.stdout);
+    }
+
+    #[test]
+    fn silent_analysis_without_a_deadline_is_cancellable_after_pipes_close() {
+        let mut foreign = Command::new("/bin/sleep").arg("30").spawn().unwrap();
+        let cancellation = crate::ReadCancellation::default();
+        let other = cancellation.clone();
+        let worker = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            other.cancel();
+        });
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "exec 1>&- 2>&-; sleep 30"]);
+        let started = std::time::Instant::now();
+        let result = cancellation.run(|| run_until_cancelled(command, None, 1024, None));
+        worker.join().unwrap();
+        let still_alive = foreign.try_wait().unwrap().is_none();
+        let _ = foreign.kill();
+        let _ = foreign.wait();
+        assert_eq!(result.err().unwrap().code, "READ_CANCELLED");
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(
+            still_alive,
+            "Cancelling analysis must preserve other sessions"
+        );
+    }
+
     #[test]
     fn diff_output_limit_stops_a_live_producer_instead_of_draining_it() {
         let mut command = Command::new("/bin/sh");

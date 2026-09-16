@@ -982,10 +982,34 @@ test("a runtime watcher failure resumes fallback refresh", async ({ page }) => {
     ).content = "Fallback file update";
     state.changes.token += ":fallback-save";
   });
-  await expect(page.getByRole("alert").filter({hasText:/\S/})).toContainText("文件监听不可用");
+  await expect(page.getByRole("alert").filter({hasText:/\S/})).toHaveCount(0);
   await expect(page.locator(".diff-scroll")).toContainText(
     "Fallback file update",
   );
+});
+
+test("background changes stay readable without a loading overlay or toast", async ({ page }) => {
+  await openFixture(page, true);
+  await expect.poll(() => page.evaluate(() => (window as any).fixture.watchStarts)).toBe(1);
+  await page.evaluate(() => {
+    const w = window as any, original = w.__TAURI_INTERNALS__.invoke, state = w.fixture;
+    w.__TAURI_INTERNALS__.invoke = async (name: string, payload: any) => {
+      if (payload?.command === "read_file_diff") {
+        await new Promise<void>((resolve) => { w.finishBackgroundDiff = resolve; });
+      }
+      return original(name, payload);
+    };
+    state.diffs["src/api/requests.ts"].hunks[0].lines.find((line: any) => line.kind === "add").content = "Quietly refreshed content";
+    state.changes.token += ":quiet-refresh";
+    state.emitNativeEvent("workspace-invalidated", state.changes.workspace.id);
+  });
+  await expect.poll(() => page.evaluate(() => typeof (window as any).finishBackgroundDiff)).toBe("function");
+  await expect(page.locator(".diff-scroll")).toBeVisible();
+  await expect(page.locator(".diff-loading-layer")).toHaveCount(0);
+  await expect(page.getByRole("alert").filter({ hasText: /\S/ })).toHaveCount(0);
+  await expect(page.locator(".live-status")).toHaveText("实时");
+  await page.evaluate(() => (window as any).finishBackgroundDiff());
+  await expect(page.locator(".diff-scroll")).toContainText("Quietly refreshed content");
 });
 
 for (const command of ["changes", "read_file_diff"] as const) {
@@ -1724,7 +1748,9 @@ async function openFixture(
             executablePath: null as string | null,
             model: null as string | null,
           },
+          codewiz: { executablePath: null as string | null, model: null as string | null },
         },
+        codewizEnabled: false,
         agentAuthenticated: false,
         aiHold: false,
         aiRelease: null as (() => void) | null,
@@ -1793,6 +1819,7 @@ async function openFixture(
             }
             state.calls.push(command + (args.path ? ":" + args.path : ""));
             state.actions.push({ command, args: structuredClone(args) });
+            if (command === "history_auto_fetch") return false;
             if (command === "data_session")
               return { epoch: 0, wipeEpoch: 0, deletedWorkspaceIds: [] };
             if (command === "agent_settings")
@@ -1809,6 +1836,7 @@ async function openFixture(
                 defaultProvider: args.update.defaultProvider,
                 codex: args.update.codex,
                 claudeCode: args.update.claudeCode,
+                codewiz: args.update.codewiz ?? state.agentSettings.codewiz,
               };
               return structuredClone(state.agentSettings);
             }
@@ -1872,14 +1900,14 @@ async function openFixture(
             }
             if (command === "agent_providers")
               return aiEnabled
-                ? ["codex", "claude_code"].map((id) => {
+                ? ["codex", "claude_code", ...(state.codewizEnabled ? ["codewiz"] : [])].map((id) => {
                     const options =
                       id === "codex"
                         ? state.agentSettings.codex
-                        : state.agentSettings.claudeCode;
+                        : id === "codewiz" ? state.agentSettings.codewiz : state.agentSettings.claudeCode;
                     return {
                       id,
-                      name: id === "codex" ? "Codex" : "Claude Code",
+                      name: id === "codex" ? "Codex" : id === "codewiz" ? "Codewiz" : "Claude Code",
                       available: true,
                       path:
                         options.executablePath ??
@@ -4210,6 +4238,54 @@ test("Hook uses current workspace trust and requires a config preview before ins
   await expect(card).toContainText("已暂停");
 });
 
+test("Context: opening a file's activity requests that file, not the entire session", async ({ page }) => {
+  await openContextFixture(page);
+  await page.getByRole("button", { name: /查看文件活动/ }).first().click();
+  await expect.poll(() => page.evaluate(() => (window as any).contextFixture.calls.find((c: any) => c.command === "context_session_events")?.args.path)).toBe("src/api/requests.ts");
+});
+
+test("Context: compact file activity shows edits, commands and failures without opening raw logs", async ({ page }) => {
+  await openContextFixture(page);
+  await page.evaluate(() => {
+    const w = window as any, original = w.__TAURI_INTERNALS__.invoke;
+    w.contextFixture.links[0].session.eventCount = 1060;
+    w.contextFixture.links[0].originalEvidence.pathEventCount = 65;
+    w.__TAURI_INTERNALS__.invoke = async (name: string, payload: any) => {
+      if (payload?.command !== "context_session_events") return original(name, payload);
+      w.contextFixture.calls.push({ command: payload.command, args: structuredClone(payload.args) });
+      const make = (id: string, patch: any = {}) => ({ id, sessionId: "session-a", nativeSessionId: "native-session-a", kind: "PostToolUse", toolName: "Bash", toolRef: id, turnId: "file-turn", receivedAt: Date.now(), paths: ["src/api/requests.ts"], prompt: null, command: "cat src/api/requests.ts", output: null, reply: null, exitCode: 0, commandState: "command_succeeded", fieldStatus: {}, truncated: false, possiblyDuplicate: false, ...patch });
+      const events = [
+        ...Array.from({ length: 60 }, (_, index) => make(`read-${index}`)),
+        ...Array.from({ length: 3 }, (_, index) => make(`edit-${index}`, { toolName: "apply_patch", command: null, output: index === 0 ? "Applied earlier patch" : null, exitCode: null, commandState: "not_applicable" })),
+        make("check", { command: "npm run typecheck", output: "No type errors" }),
+        make("failed", { command: "npm test", output: "Expected 401 but received 200", exitCode: 1, commandState: "command_failed" }),
+      ];
+      if (!payload.args.path) events.unshift(make("unrelated", { turnId: "other-turn", toolName: "Write", paths: ["other.ts"], command: null }));
+      return { events, fileEventCount: 65, taskContext: [make("intent", { kind: "UserPromptSubmit", prompt: "Fix authentication expiry", toolName: null })], expiry: {}, next: null, cleared: false };
+    };
+  });
+  await page.getByRole("button", { name: /查看文件活动/ }).click();
+  await expect(page.getByText("Fix authentication expiry", { exact: true })).toBeVisible();
+  await expect(page.getByText("修改文件 · requests.ts", { exact: true })).toBeVisible();
+  await expect(page.getByText("No type errors", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Expected 401 but received 200", { exact: true }).first()).toBeVisible();
+  await expect(page.locator(".activity-row:visible")).toHaveCount(3);
+  await expect(page.getByText("cat src/api/requests.ts", { exact: true }).first()).not.toBeVisible();
+  await expect(page.getByText("读取、搜索与其他操作 · 60 条", { exact: true })).toBeVisible();
+  await page.screenshot({ path: ".artifacts/hook-context/file-activity-light.png", animations: "disabled" });
+  const edits = page.locator(".activity-row").filter({ hasText: "修改文件 · requests.ts" }).first();
+  await edits.locator(".activity-detail > summary").click();
+  await edits.locator(".activity-repeats details").last().locator("summary").click();
+  await expect(edits.getByText("Applied earlier patch", { exact: true })).toBeVisible();
+  await edits.locator(".activity-detail > summary").click();
+  await page.getByRole("button", { name: "完整会话", exact: true }).click();
+  await expect(page.getByText("修改文件 · other.ts", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "当前文件", exact: true }).click();
+  await expect(page.getByText("修改文件 · other.ts", { exact: true })).toHaveCount(0);
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
+  await page.screenshot({ path: ".artifacts/hook-context/file-activity-dark.png", animations: "disabled" });
+});
+
 test("Context: manual links, notes, unlink and undo preserve original session evidence", async ({
   page,
 }) => {
@@ -4242,7 +4318,7 @@ test("Context: manual links, notes, unlink and undo preserve original session ev
     .filter({ hasText: "native-session-b" });
   await expect(manual).toContainText("用户指定");
   await expect(manual).toContainText("This task also explains");
-  await manual.getByRole("button", { name: /查看会话/ }).click();
+  await manual.getByRole("button", { name: /查看文件活动/ }).click();
   await manual.locator(".observer-events summary").click();
   await expect(manual).toContainText("Prompt");
   await expect(manual).toContainText("未开启记录");
@@ -4411,11 +4487,7 @@ test("Context: manager is scoped to the selected file and stays usable in a narr
   expect(saved.workspaceId).toBe("workflow-test");
   await dialog.getByRole("button", { name: "关闭", exact: true }).click();
   await expect(dialog).toHaveCount(0);
-  expect(
-    await page.evaluate(
-      () => (document.activeElement as HTMLElement)?.textContent,
-    ),
-  ).toContain("关联会话");
+  await expect(page.getByRole("button", { name: "关联会话", exact: true })).toBeFocused();
 });
 
 test("Context: cached event pages survive new activity and expire output without a count change", async ({
@@ -4464,10 +4536,11 @@ test("Context: cached event pages survive new activity and expire output without
       };
     };
   });
-  await page.getByRole("button", { name: /查看会话/ }).click();
+  await page.getByRole("button", { name: /查看文件活动/ }).click();
   const events = page.getByLabel("会话原始记录");
   await events.getByRole("button", { name: "加载更早的记录" }).click();
-  await events.locator("details").last().locator("summary").click();
+  await events.locator(".activity-routine > summary").click();
+  await events.locator(".activity-row").filter({ hasText: "command-from-older-page" }).locator(".activity-detail > summary").click();
   await expect(events).toContainText("CACHED_OUTPUT_TO_EXPIRE");
   const readsBeforeActivity = await page.evaluate(
     () => (window as any).contextFixture.eventReads,
@@ -4487,7 +4560,7 @@ test("Context: cached event pages survive new activity and expire output without
   });
   await expect(events).toContainText("工具输出 · 记录已清理");
   await expect(events).toContainText("command-from-older-page");
-  await expect(events.locator("details").last()).toHaveAttribute("open", "");
+  await expect(events.locator(".activity-row").filter({ hasText: "command-from-older-page" }).locator(".activity-detail")).toHaveAttribute("open", "");
   expect(
     await page.evaluate(() => (window as any).contextFixture.eventReads),
   ).toBe(readsBeforeActivity);
@@ -5006,6 +5079,72 @@ test("Agent settings expose default provider, CLI paths, models and a no-inferen
   await expect(
     page.getByRole("combobox", { name: "AI Agent", exact: true }),
   ).toHaveAttribute("data-value","claude_code");
+});
+
+test("Codewiz is hidden until detected and its settings drive Grouping and Review", async ({ page }) => {
+  await openFixture(page, false, true);
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("tab", { name: "AI Agent", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "Codewiz CLI 路径", exact: true })).toHaveCount(0);
+  await page.evaluate(() => { (window as any).fixture.codewizEnabled = true; (window as any).fixture.agentAuthenticated = true; });
+  await page.getByRole("button", { name: "重新读取 Agent 设置", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "Codewiz CLI 路径", exact: true })).toBeVisible();
+  await chooseOption(page.getByLabel("默认 Agent", { exact: true }), "codewiz");
+  await page.getByRole("textbox", { name: "Codewiz 模型", exact: true }).fill("company/model");
+  const card = page.locator(".agent-setting-card").filter({ has: page.getByText("Codewiz", { exact: true }) });
+  await card.getByRole("button", { name: "检测 CLI", exact: true }).click();
+  await expect(card.getByRole("status")).toContainText("未调用模型");
+  await page.getByRole("button", { name: "保存 Agent 设置", exact: true }).click();
+  await expect(page.locator(".agent-settings-footer").getByRole("status")).toContainText("已保存");
+  expect(await page.evaluate(() => (window as any).fixture.actions.filter((a: any) => a.command === "run_ai_task"))).toHaveLength(0);
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "AI 分组", exact: true }).click();
+  await expect(page.locator(".group-toggle")).not.toHaveCount(0);
+  await page.getByRole("button", { name: "显示上下文", exact: true }).click();
+  await page.getByRole("button", { name: "AI Review", exact: true }).click();
+  await expect(page.getByRole("combobox", { name: "AI Agent", exact: true })).toHaveAttribute("data-value", "codewiz");
+  await page.getByRole("button", { name: "Review 当前变更", exact: true }).click();
+  await expect(page.locator(".ai-finding")).toContainText("Missing boundary validation");
+  const actions = await page.evaluate(() => (window as any).fixture.actions);
+  expect(actions.filter((a: any) => a.command === "run_ai_task").map((a: any) => a.args.request.provider)).toEqual(["codewiz", "codewiz"]);
+  expect(actions.filter((a: any) => ["stage", "commit", "mark_reviewed"].includes(a.command))).toHaveLength(0);
+  await page.screenshot({ path: ".artifacts/codewiz/codewiz-review.png" });
+});
+
+test("software update downloads survive closing settings and install only on an explicit click", async ({ page }) => {
+  await openFixture(page);
+  await page.evaluate(() => {
+    const w = window as any, invoke = w.__TAURI_INTERNALS__.invoke;
+    w.fixture.updateCalls = [];
+    w.__TAURI_INTERNALS__.invoke = async (name: string, payload: any) => {
+      if (name === "check_app_update") { w.fixture.updateCalls.push(name); return { id: "u1", version: "0.1.2", currentVersion: "0.1.1", notes: "Improved Diff reading" }; }
+      if (name === "download_app_update") {
+        w.fixture.updateCalls.push(name);
+        payload.onProgress.onmessage({ downloaded: 50, total: 100 });
+        return new Promise<void>((resolve) => { w.fixture.finishUpdateDownload = resolve; });
+      }
+      if (name === "install_app_update") { w.fixture.updateCalls.push(name); throw { code: "UPDATE_WORK_RUNNING", message: "请等待 Git 操作或 AI 分析完成后再安装更新。", detail: "Busy" }; }
+      return invoke(name, payload);
+    };
+  });
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("tab", { name: "软件更新", exact: true }).click();
+  expect(await page.evaluate(() => (window as any).fixture.updateCalls)).toEqual([]);
+  await page.getByRole("button", { name: "检查更新", exact: true }).click();
+  await expect(page.getByText("可用版本：0.1.2", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "下载更新", exact: true }).click();
+  await expect(page.getByText("50%", { exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("tab", { name: "软件更新", exact: true }).click();
+  await expect(page.getByText("50%", { exact: true })).toBeVisible();
+  await page.evaluate(() => (window as any).fixture.finishUpdateDownload());
+  await expect(page.getByRole("button", { name: "安装并重启", exact: true })).toBeEnabled();
+  expect(await page.evaluate(() => (window as any).fixture.updateCalls)).toEqual(["check_app_update", "download_app_update"]);
+  await page.getByRole("button", { name: "安装并重启", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("请等待 Git 操作或 AI 分析完成");
+  await expect(page.getByRole("button", { name: "安装并重启", exact: true })).toBeEnabled();
+  await page.screenshot({ path: ".artifacts/codewiz/software-update.png" });
 });
 test("AI failure details link directly to Agent settings and preserve the error category", async ({
   page,

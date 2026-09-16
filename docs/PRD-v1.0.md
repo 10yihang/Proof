@@ -347,7 +347,7 @@ Settings → AI Agents 提供默认 Provider、CLI 路径、可选模型和 Test
 代码、注释、路径和 Patch 均为不可信数据，不能作为执行指令。Proof 向 Agent 提供任务、选定范围、输出 Schema 和磁盘快照入口；Agent 自行读取 Diff、搜索关联实现和测试。范围决定哪些变更需要 Review，不限制为理解它们而读取快照中的其他代码。Grouping 同样按需探索，并由 Proof 校验所有选定路径恰好归属一次。被动 Observer 会话不作为主动分析输入。
 快照使用独立临时目录，保存 canonical Git patches、manifest，以及 base / index / workspace 的代码视图。History 对应冻结的两个 OID（支持根 Commit 的 empty base）；Local 分离 HEAD、Index 和 Worktree，捕获前后核对版本，不创建原仓库的 Worktree、Commit 或 Git 对象。二进制、非 UTF-8、符号链接、子模块和过大的完整上下文明确列入 manifest 的不可用清单，不能假装已经分析。
 macOS 使用进程级只读沙箱，CLI 及所有子进程仅能写本次私有运行目录，不能写代码快照、源仓库、Git、其他 Session 或全局配置，也不能发送外部进程信号。允许受控的文件读取、搜索和 Git 查询程序，禁用用户 Hooks、MCP、Plugins、浏览器和其他扩展。保留模型所需的 Code Mode host，只允许所选 CLI 同一安装目录中的配套程序，并校验身份及符号链接来源。Codex 的工具执行由外层沙箱统一约束，避免 macOS 双重 sandbox_apply 失败；该模式必须与强制外层沙箱成对使用，不能单独执行。正常 CLI 登录和独立运行目录沿用既有实现，不要求 API Key，不 resume / attach 用户 Session。
-取消总 Patch 1 MiB / 500 文件的提示词门槛。磁盘快照保留本机资源保护：最多 20,000 个文件侧、128 MiB canonical patches、256 MiB 快照、100,000 个上下文路径；单份完整上下文超过 4 MiB 会明确列为不可用。现有单文件 Diff 读取上限继续适用。CLI 流式输出有 32 MiB 上限，推理最多 10 分钟并可随时取消。stderr 不保存原始内容，错误摘要仍脱敏和限长。
+取消总 Patch 1 MiB / 500 文件的提示词门槛。磁盘快照保留本机资源保护：最多 20,000 个文件侧、128 MiB canonical patches、256 MiB 快照、100,000 个上下文路径；单份完整上下文超过 4 MiB 会明确列为不可用。现有单文件 Diff 读取上限继续适用。CLI 流式输出有 32 MiB 上限，推理没有固定时限，直到 Agent 完成或用户主动取消。stderr 不保存原始内容，错误摘要仍脱敏和限长。
 快照预算优先保留选中路径及旧路径的上下文，为 base / index / workspace 分别预留空间，并为全部 canonical patches 预留独立容量。其余上下文超出预算时进入 manifest 不可用清单，不因此拒绝小范围 Review，也不静默宣称完整覆盖。
 **验收：** 故障夹具尝试改源文件、index / HEAD、其他 Agent Session 和发送终止信号均失败；超时 / 取消不遗留进程；删除 Proof 本地数据后迟到结果不能重新写入分组。
 
@@ -783,6 +783,12 @@ Local changes 与历史 Diff 使用同一加载层，固定在中央阅读区内
 
 **验收：** 切换、重启恢复、保存失败回退与多窗口同步有回归覆盖；语言设置不会被另一窗口的阅读偏好覆盖。两份文案目录保持键与插值参数一致，Git 内容不因语言变化而改变。详见 `I18N.md`。
 
+## BG-01｜后台刷新 · P0
+
+进入 History、History 回到前台时，对已信任且有 remote 的仓库自动 fetch。按共享 Git 仓库限制至少 60 秒一次，跨窗口与 Worktree 共用限频，失败也计入间隔，不允许重叠。仅更新远程引用，不改变 HEAD、Index、Worktree 或手动 Fetch 的 FETCH_HEAD，不运行 Hook / submodule / 自动维护，不弹出凭证交互。网络过程不占用 Diff 读取锁；离线保持本地历史可读，手动 Fetch 仍保留完整反馈。
+
+Local Changes 通过文件监听自动刷新，监听不可用时静默转为轮询；切回 Local Changes / Commit 或窗口恢复前台立即核对本地状态。后台刷新保留当前文件、可读 Diff 和滚动位置，不显示通知或加载浮层；临时失败自动重试。持续读取失败只在底部状态标记，不覆盖用户主动操作的错误。History 更新保留选择与视口，只有切换仓库或历史范围才重置。
+
 ## HG-01｜History Git 操作 · P0
 
 History 工具栏提供 Fetch / Pull / Push 和创建 Branch。Branch 侧栏与图中标签共用菜单，提供 Switch、创建 Branch、Merge 到当前 Branch、将当前 Branch Rebase 到目标、重命名、删除、复制 Branch 名称与比较。远程 Branch 可创建本地 tracking Branch 并 Switch。右键之外提供可见的更多操作按钮及键盘导航。
@@ -807,3 +813,14 @@ Local changes 和历史 Diff 复用同一 Files / Change groups、Diff、Context
 用户可拖动调整侧栏宽度、排列 Diff tabs、在逻辑分组之间移动文件，并保留键盘或菜单操作。固定导航页不参与 Diff tab 排序。分组拖动仅修改 Proof 的分组记录；过期快照或分组修订冲突必须拒绝覆盖。
 
 **验收：** 切换文件、tab、明暗主题和全文范围时保持布局与源代码位置；Review 气泡不会因高度测量反复重建；模态窗口和菜单支持 Escape、焦点恢复和键盘选择。Monaco 与 Worker 随应用本地打包，离线可用。尺寸适配不覆盖用户保存的宽度；关闭/隐藏大型阅读器后释放文本模型。详见 `UI-MIGRATION.md`。
+
+## 0.1.1：Codewiz 与在线更新
+
+- 在本机 PATH、常见安装目录或已配置的路径中检测到有效 Codewiz 可执行文件后，才显示 Codewiz 的 Agent 设置和选择项。没有 Codewiz 时隐藏，已有 Codex / Claude Code 与普通 Git 能力不受影响。
+- CodewizProvider 通过 Codewiz 的非交互 JSON CLI 完成主动 Grouping 和 Review，复用统一的只读快照、结果校验、进度、取消和持久化协议。模型配置读取 `~/.config/codewiz`，登录复制到每次任务的私有运行目录；不读取其他 Session，不加载用户 MCP / 插件 / 自定义 Agent 指令。
+- 「设置 → 软件更新」手动检查 GitHub Releases，展示版本说明和下载进度；完成签名校验后由用户点击安装并重启。Git 操作或 AI 分析进行期间阻止安装。失败保持可重试，缺失更新清单不能显示为“已是最新版本”。
+- 0.1.1 内置更新器，后续版本使用同一签名密钥发布。0.1.0 首次升级仍需手动安装。发布清单和签名安装包一同发布到 GitHub Release；私钥不得进入源码或安装包。
+
+## Context：文件活动摘要
+
+右侧默认读取当前文件的 Hook 活动，按原生 Turn 展示任务原文、文件操作、命令结果和 Agent 回执；完整会话须显式切换。过滤在数据库分页前进行，其他文件的工具调用不因共用 Session 混入。重复操作折叠、失败优先呈现，命令和有效输出摘要直接可见。没有原生任务编号时不猜测归属，未采集的历史内容不补造，回执和退出码不自动升级为 Review 或测试通过。该整理仅使用本地已有记录，不调用模型。

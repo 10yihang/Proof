@@ -444,6 +444,7 @@ fn agent_settings_persist_defaults_paths_models_and_use_revision_cas() {
             executable_path: Some(executable.clone()),
             model: Some("gpt-6-astra".into()),
         },
+        codewiz: None,
         claude_code: AgentOptions {
             executable_path: None,
             model: Some("sonnet".into()),
@@ -480,6 +481,40 @@ fn agent_settings_persist_defaults_paths_models_and_use_revision_cas() {
             .is_default
     );
 }
+
+#[test]
+fn legacy_agent_settings_migrate_and_older_clients_preserve_codewiz_options() {
+    let (_, proof, _) = fixture();
+    let legacy = serde_json::json!({"revision":0,"defaultProvider":"codex","codex":{"executablePath":null,"model":null},"claudeCode":{"executablePath":null,"model":null}});
+    proof
+        .store
+        .connection
+        .execute(
+            "INSERT INTO settings(key,value) VALUES('ai:settings',?1)",
+            [legacy.to_string()],
+        )
+        .unwrap();
+    assert_eq!(
+        proof.agent_settings().unwrap().codewiz,
+        AgentOptions::default()
+    );
+    let mut update = legacy.clone();
+    update.as_object_mut().unwrap().remove("revision");
+    update["expectedRevision"] = 0.into();
+    update["codewiz"] = serde_json::json!({"executablePath":null,"model":"company/model"});
+    update["defaultProvider"] = "codewiz".into();
+    let saved = proof
+        .set_agent_settings(serde_json::from_value(update).unwrap())
+        .unwrap();
+    assert_eq!(saved.default_provider, AgentKind::Codewiz);
+    let mut old_update = legacy;
+    old_update.as_object_mut().unwrap().remove("revision");
+    old_update["expectedRevision"] = 1.into();
+    let saved = proof
+        .set_agent_settings(serde_json::from_value(old_update).unwrap())
+        .unwrap();
+    assert_eq!(saved.codewiz.model.as_deref(), Some("company/model"));
+}
 #[test]
 fn invalid_agent_paths_models_and_untrusted_sources_do_not_replace_settings() {
     let (_temp, proof, workspace) = fixture();
@@ -491,6 +526,7 @@ fn invalid_agent_paths_models_and_untrusted_sources_do_not_replace_settings() {
             model: None,
         },
         claude_code: AgentOptions::default(),
+        codewiz: None,
     };
     assert_eq!(
         proof.set_agent_settings(update.clone()).unwrap_err().code,

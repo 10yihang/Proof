@@ -1,3 +1,4 @@
+import { agentName } from "../ai";
 import { AiTaskProgress } from "./AiTaskProgress";
 import { useState } from "react";
 import { ReviewExport } from "./ReviewExport";
@@ -133,8 +134,7 @@ export function AiReviewPanel({
             {ai.reports.map((record) => (
               <option key={record.id} value={record.id}>
                 {new Date(record.capturedAt).toLocaleString(getLanguage())} ·{" "}
-                {record.provider === "codex" ? "Codex" : t("Claude Code")} ·{" "}
-                {record.summary.slice(0, 60)}
+                {agentName(record.provider)} · {record.summary.slice(0, 60)}
               </option>
             ))}
           </Select>
@@ -152,7 +152,7 @@ export function AiReviewPanel({
               {riskLabel(review.overallRisk)}
             </span>
             <span>
-              {ai.report?.provider === "codex" ? "Codex" : t("Claude Code")} ·{" "}
+              {ai.report ? agentName(ai.report.provider) : ""} ·{" "}
               {new Date(ai.report!.capturedAt).toLocaleTimeString(
                 getLanguage(),
                 {

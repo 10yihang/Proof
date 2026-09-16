@@ -130,6 +130,8 @@ pub struct ContextEvents {
     pub expiry: std::collections::BTreeMap<String, ContextEventExpiry>,
     pub next: Option<ContextEventCursor>,
     pub cleared: bool,
+    pub task_context: Vec<ObserverEvent>,
+    pub file_event_count: Option<u64>,
 }
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -242,10 +244,15 @@ fn evidence(
     }
     Ok(answer)
 }
-fn summary(db: &Connection, workspace: &str, session: &str) -> Result<ContextSession> {
+fn summary(
+    db: &Connection,
+    workspace: &str,
+    session: &str,
+    path: Option<&str>,
+) -> Result<ContextSession> {
     let row:Option<(String,Option<String>,Option<String>)>=db.query_row("SELECT i.agent,s.native_session_id,s.native_agent_id FROM observer_sessions s JOIN observer_installations i ON i.id=s.installation_id WHERE s.workspace_id=? AND s.id=?",params![workspace,session],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
     let (count,first,last):(u64,Option<u64>,Option<u64>)=db.query_row("SELECT count(*),min(received_at),max(received_at) FROM observer_events WHERE workspace_id=? AND session_id=? AND expires_at>?",params![workspace,session,now()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
-    let prompt:Option<String>=db.query_row("SELECT payload FROM observer_events WHERE workspace_id=? AND session_id=? AND expires_at>? ORDER BY CASE WHEN json_type(payload,'$.prompt')='text' THEN 0 ELSE 1 END,received_at DESC,id DESC LIMIT 1",params![workspace,session,now()],|r|r.get(0)).optional()?;
+    let prompt:Option<String>=db.query_row("SELECT payload FROM observer_events WHERE workspace_id=?1 AND session_id=?2 AND expires_at>?3 AND (?4 IS NULL OR EXISTS(SELECT 1 FROM json_each(payload,'$.paths') WHERE value=?4) OR json_extract(payload,'$.turnId') IN (SELECT json_extract(payload,'$.turnId') FROM observer_events WHERE workspace_id=?1 AND session_id=?2 AND expires_at>?3 AND EXISTS(SELECT 1 FROM json_each(payload,'$.paths') WHERE value=?4))) ORDER BY CASE WHEN json_type(payload,'$.prompt')='text' THEN 0 ELSE 1 END,received_at DESC,id DESC LIMIT 1",params![workspace,session,now(),path],|r|r.get(0)).optional()?;
     let (excerpt, status) = if let Some(payload) = prompt {
         let event: ObserverEvent = serde_json::from_str(&payload)?;
         (
@@ -287,7 +294,12 @@ fn link(db: &Connection, workspace: &str, path: &str, session: &str) -> Result<C
         .as_ref()
         .map_or(original.path_event_count > 0, |value| value.enabled);
     Ok(ContextLink {
-        session: summary(db, workspace, session)?,
+        session: summary(
+            db,
+            workspace,
+            session,
+            (original.path_event_count > 0).then_some(path),
+        )?,
         original_evidence: original,
         user_override,
         revision: revision(db, workspace, path, session)?,
@@ -437,7 +449,19 @@ impl Proof {
         session: &str,
         before: Option<ContextEventCursor>,
     ) -> Result<ContextEvents> {
+        self.context_session_events_for_file(workspace, session, None, before)
+    }
+    pub fn context_session_events_for_file(
+        &self,
+        workspace: &str,
+        session: &str,
+        path: Option<&str>,
+        before: Option<ContextEventCursor>,
+    ) -> Result<ContextEvents> {
         self.store.recorded_workspace(workspace)?;
+        if let Some(path) = path {
+            self.context_scope(workspace, path, false)?;
+        }
         let owner: Option<String> = self
             .store
             .connection
@@ -456,9 +480,13 @@ impl Proof {
                 expiry: Default::default(),
                 next: None,
                 cleared: true,
+                task_context: vec![],
+                file_event_count: path.map(|_| 0),
             });
         }
-        let mut query=self.store.connection.prepare("SELECT payload,content_expires_at,expires_at FROM observer_events WHERE workspace_id=?1 AND session_id=?2 AND expires_at>?3 AND (?4 IS NULL OR received_at<?4 OR (received_at=?4 AND id<?5)) ORDER BY received_at DESC,id DESC LIMIT 21")?;
+        let page_size = if path.is_some() { 100 } else { 20 };
+        let file_event_count = path.map(|path| self.store.connection.query_row("SELECT count(*) FROM observer_events WHERE workspace_id=?1 AND session_id=?2 AND expires_at>?3 AND EXISTS(SELECT 1 FROM json_each(payload,'$.paths') WHERE value=?4)", params![workspace,session,now(),path], |row| row.get::<_, u64>(0))).transpose()?;
+        let mut query=self.store.connection.prepare("SELECT payload,content_expires_at,expires_at FROM observer_events WHERE workspace_id=?1 AND session_id=?2 AND expires_at>?3 AND (?4 IS NULL OR received_at<?4 OR (received_at=?4 AND id<?5)) AND (?6 IS NULL OR EXISTS(SELECT 1 FROM json_each(payload,'$.paths') WHERE value=?6)) ORDER BY received_at DESC,id DESC LIMIT ?7")?;
         let rows = query
             .query_map(
                 params![
@@ -466,7 +494,9 @@ impl Proof {
                     session,
                     now(),
                     before.as_ref().map(|c| c.received_at),
-                    before.as_ref().map(|c| c.id.as_str())
+                    before.as_ref().map(|c| c.id.as_str()),
+                    path,
+                    page_size + 1
                 ],
                 |r| {
                     Ok((
@@ -477,10 +507,10 @@ impl Proof {
                 },
             )?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-        let has_more = rows.len() > 20;
+        let has_more = rows.len() > page_size;
         let mut events = Vec::new();
         let mut expiry = std::collections::BTreeMap::new();
-        for (payload, content_expires_at, expires_at) in rows.into_iter().take(20) {
+        for (payload, content_expires_at, expires_at) in rows.into_iter().take(page_size) {
             let event = retained_event(&payload, content_expires_at)?;
             expiry.insert(
                 event.id.clone(),
@@ -499,8 +529,46 @@ impl Proof {
         } else {
             None
         };
+        // Only native Turn IDs connect task text to file activity. Never use
+        // proximity in time or the session's latest prompt to invent attribution.
+        let mut task_context = Vec::new();
+        if path.is_some() {
+            let turns: std::collections::BTreeSet<_> = events
+                .iter()
+                .filter_map(|event| event.turn_id.as_deref())
+                .collect();
+            if !turns.is_empty() {
+                let mut query = self.store.connection.prepare("SELECT payload,content_expires_at,expires_at FROM (SELECT payload,content_expires_at,expires_at,received_at,id,row_number() OVER (PARTITION BY json_extract(payload,'$.turnId'),json_extract(payload,'$.kind') ORDER BY received_at DESC,id DESC) AS position FROM observer_events WHERE workspace_id=?1 AND session_id=?2 AND expires_at>?3 AND json_extract(payload,'$.turnId') IN (SELECT value FROM json_each(?4)) AND json_extract(payload,'$.kind') IN ('UserPromptSubmit','Stop','SubagentStop')) WHERE position=1 ORDER BY received_at DESC,id DESC LIMIT 200")?;
+                let rows = query
+                    .query_map(
+                        params![workspace, session, now(), serde_json::to_string(&turns)?],
+                        |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, u64>(1)?,
+                                row.get::<_, u64>(2)?,
+                            ))
+                        },
+                    )?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                for (payload, content_expires_at, expires_at) in rows {
+                    let event = retained_event(&payload, content_expires_at)?;
+                    expiry.insert(
+                        event.id.clone(),
+                        ContextEventExpiry {
+                            content_expires_at,
+                            expires_at,
+                        },
+                    );
+                    task_context.push(event);
+                }
+            }
+        }
         Ok(ContextEvents {
-            cleared: events.is_empty() && before.is_none(),
+            // A session with no matching file events is not a deleted session.
+            cleared: path.is_none() && events.is_empty() && before.is_none(),
+            task_context,
+            file_event_count,
             events,
             expiry,
             next,

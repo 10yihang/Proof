@@ -19,6 +19,8 @@ pub struct AgentSettings {
     pub default_provider: AgentKind,
     pub codex: AgentOptions,
     pub claude_code: AgentOptions,
+    #[serde(default)]
+    pub codewiz: AgentOptions,
 }
 impl Default for AgentSettings {
     fn default() -> Self {
@@ -27,6 +29,7 @@ impl Default for AgentSettings {
             default_provider: AgentKind::Codex,
             codex: AgentOptions::default(),
             claude_code: AgentOptions::default(),
+            codewiz: AgentOptions::default(),
         }
     }
 }
@@ -35,6 +38,7 @@ impl AgentSettings {
         match kind {
             AgentKind::Codex => &self.codex,
             AgentKind::ClaudeCode => &self.claude_code,
+            AgentKind::Codewiz => &self.codewiz,
         }
     }
 }
@@ -45,6 +49,8 @@ pub struct AgentSettingsUpdate {
     pub default_provider: AgentKind,
     pub codex: AgentOptions,
     pub claude_code: AgentOptions,
+    #[serde(default)]
+    pub codewiz: Option<AgentOptions>,
 }
 pub(super) fn read(store: &crate::store::Store) -> Result<AgentSettings> {
     read_connection(&store.connection)
@@ -101,10 +107,17 @@ impl Proof {
     pub fn set_agent_settings(&self, mut update: AgentSettingsUpdate) -> Result<AgentSettings> {
         clean(&mut update.codex)?;
         clean(&mut update.claude_code)?;
-        for kind in [AgentKind::Codex, AgentKind::ClaudeCode] {
+        if let Some(options) = &mut update.codewiz {
+            clean(options)?;
+        }
+        for kind in [AgentKind::Codex, AgentKind::ClaudeCode, AgentKind::Codewiz] {
             let options = match kind {
                 AgentKind::Codex => &update.codex,
                 AgentKind::ClaudeCode => &update.claude_code,
+                AgentKind::Codewiz => match &update.codewiz {
+                    Some(options) => options,
+                    None => continue,
+                },
             };
             if options.executable_path.is_some() {
                 AgentProgram::configured(
@@ -118,7 +131,8 @@ impl Proof {
         }
         let tx =
             Transaction::new_unchecked(&self.store.connection, TransactionBehavior::Immediate)?;
-        if read_connection(&tx)?.revision != update.expected_revision {
+        let previous = read_connection(&tx)?;
+        if previous.revision != update.expected_revision {
             return Err(Error::new(
                 "AI_SETTINGS_CHANGED",
                 "Agent 设置已在其他窗口更新，请重新读取。",
@@ -132,6 +146,7 @@ impl Proof {
             default_provider: update.default_provider,
             codex: update.codex,
             claude_code: update.claude_code,
+            codewiz: update.codewiz.unwrap_or(previous.codewiz),
         };
         tx.execute("INSERT INTO settings(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[KEY,&serde_json::to_string(&value)?])?;
         tx.commit()?;

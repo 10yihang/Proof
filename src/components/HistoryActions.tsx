@@ -38,6 +38,7 @@ export function useHistoryActions(
   demo: boolean,
   onChanged: () => Promise<void>,
   onOpenLocalFile: (path: string) => void,
+  historyActive: boolean,
 ) {
   const request = useRequest();
   const [revision, setRevision] = useState(0);
@@ -51,6 +52,43 @@ export function useHistoryActions(
   const [busy, setBusy] = useState(false);
   const running = useRef(false);
   const [result, setResult] = useState<HistoryActionResult | null>(null);
+  const fetchOwner = useRef(changes.workspace.id);
+  useEffect(() => {
+    fetchOwner.current = changes.workspace.id;
+    return () => {
+      fetchOwner.current = "";
+    };
+  }, [changes.workspace.id]);
+  useEffect(() => {
+    if (!historyActive || demo || !changes.workspace.trusted) return;
+    const fetch = () => {
+      if (document.visibilityState === "hidden" || running.current) return;
+      // Reconcile local refs on entry/focus even while network is throttled.
+      setRevision((value) => value + 1);
+      // The native core owns the per-repository, one-minute throttle. Keeping it
+      // there also covers remounts, multiple windows and linked Worktrees.
+      void request<boolean>("history_auto_fetch", {
+        workspaceId: changes.workspace.id,
+      })
+        .then((fetched) => {
+          if (fetchOwner.current === changes.workspace.id && fetched)
+            setRevision((value) => value + 1);
+        })
+        .catch(() => {
+          // Offline/credentials failures are quiet; a partial fetch can still
+          // have refreshed refs. Manual Fetch retains its full error feedback.
+          if (fetchOwner.current === changes.workspace.id)
+            setRevision((value) => value + 1);
+        });
+    };
+    fetch();
+    window.addEventListener("focus", fetch);
+    document.addEventListener("visibilitychange", fetch);
+    return () => {
+      window.removeEventListener("focus", fetch);
+      document.removeEventListener("visibilitychange", fetch);
+    };
+  }, [historyActive, demo, changes.workspace.id, changes.workspace.trusted]);
   useEffect(() => {
     if (demo) return;
     let cancelled = false;

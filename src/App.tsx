@@ -445,11 +445,14 @@ export default function App({
     async () => true,
   );
   const [syncing, setSyncing] = useState(false);
+  const pendingRead = useRef<{ intent: string; quiet: boolean } | null>(null);
+  const [refreshError, setRefreshError] = useState<ProofError | null>(null);
   const pollRef = useRef<() => void>(() => {});
   useEffect(() => {
     if (!isDesktop || demo || !changes || (diffWindow && initialComparison))
       return;
     let cancelled = false;
+    setRefreshError(null);
     const workspaceId = changes.workspace.id;
     const poll = async (): Promise<RefreshResult> => {
       const active = current.current;
@@ -486,11 +489,14 @@ export default function App({
             cancelledRead.current !==
               `${fileKey(selectedFile)}:${cache.current.version(next, selectedFile)}`)
         ) {
-          return (await acceptChangesRef.current(next)) ? "done" : "failed";
+          const accepted = await acceptChangesRef.current(next);
+          if (accepted) setRefreshError(null);
+          return accepted ? "done" : "failed";
         }
+        setRefreshError(null);
       } catch (e) {
         if (!cancelled && epoch === workspaceEpoch.current)
-          setError(asError(e));
+          setRefreshError(asError(e));
         return "failed";
       } finally {
         polling.current = false;
@@ -498,7 +504,7 @@ export default function App({
       return "done";
     };
     const refreshing = new WorkspaceRefresh(poll, (error) => {
-      if (!cancelled) setError(asError(error));
+      if (!cancelled) setRefreshError(asError(error));
     });
     refreshing.setVisible(document.visibilityState !== "hidden");
     const requestNow = () => refreshing.request(true);
@@ -506,7 +512,7 @@ export default function App({
     const stop = watchWorkspace(
       workspaceId,
       () => refreshing.request(),
-      (error) => setError(asError(error)),
+      () => {}, // The polling fallback reconciles watcher failures quietly.
       (ready) => refreshing.setWatching(ready),
     );
     const focus = () => {
@@ -524,6 +530,9 @@ export default function App({
       document.removeEventListener("visibilitychange", focus);
     };
   }, [changes?.workspace.id, demo]);
+  useEffect(() => {
+    if (tab === "changes" || tab === "commit") pollRef.current();
+  }, [tab, changes?.workspace.id]);
 
   // False means the current selection still needs a read. Cancellation and
   // superseded requests are complete, so background refresh cannot revive them.
@@ -532,6 +541,7 @@ export default function App({
     workspace = current.current?.workspace,
     force = false,
     loadLarge = false,
+    background = false,
   ): Promise<boolean> {
     const active = current.current;
     if (!workspace || !active || active.workspace.id !== workspace.id)
@@ -547,16 +557,25 @@ export default function App({
         ? saved
         : undefined;
     const intent = `${fileKey(file)}:${cache.current.version(active, file)}:${loadLarge}`;
+    // Background reconciliation can join an explicit large-file read. Keep
+    // that user's loading/cancel controls until the same request completes.
+    const quiet =
+      background &&
+      !(pendingRead.current?.intent === intent && !pendingRead.current.quiet);
+    setSyncing(quiet);
     if (cached || readIntent.current !== intent) {
       fileReader.cancel();
       cache.current.cancelPending();
     }
     readIntent.current = intent;
     if (cached) {
+      pendingRead.current = null;
       showReading(cached);
       setLoadingDiff(false);
+      setSyncing(false);
       return true;
     }
+    pendingRead.current = { intent, quiet };
     // Keep the same file readable within this Git base during a refresh.
     // A different file or Branch must wait for its own capture.
     setDiff((d) =>
@@ -604,7 +623,6 @@ export default function App({
         cache.current.clear();
         setLoaded({});
         if (seq === sequence.current) showReading(null);
-        setNotification(t("仓库已更新，正在刷新…"));
         pollRef.current();
         return false;
       }
@@ -620,8 +638,9 @@ export default function App({
           failure.code !== "CHANGE_MISSING" &&
           failure.code !== "READ_CANCELLED"
         )
-          setError(failure);
-        showReading(null);
+          if (quiet) setRefreshError(failure);
+          else setError(failure);
+        if (!quiet) showReading(null);
         if (failure.code !== "READ_CANCELLED") {
           cache.current.remove(file);
           setLoaded(cache.current.values());
@@ -631,11 +650,18 @@ export default function App({
       }
       return true;
     } finally {
-      if (seq === sequence.current && epoch === workspaceEpoch.current)
+      if (seq === sequence.current && epoch === workspaceEpoch.current) {
+        pendingRead.current = null;
         setLoadingDiff(false);
+        setSyncing(false);
+      }
     }
   }
-  async function acceptChanges(next: Changes, force = false): Promise<boolean> {
+  async function acceptChanges(
+    next: Changes,
+    force = false,
+    background = false,
+  ): Promise<boolean> {
     current.current = next;
     setChanges(next);
     if (force) cache.current.clear();
@@ -651,25 +677,22 @@ export default function App({
           `${fileKey(file)}:${cache.current.version(next, file)}`
       )
         return true;
-      setSyncing(true);
-      try {
-        const loadLarge =
-          readIntent.current ===
-          `${fileKey(file)}:${cache.current.version(next, file)}:true`;
-        return await loadFile(file, next.workspace, force, loadLarge);
-      } finally {
-        setSyncing(false);
-      }
+      const loadLarge =
+        readIntent.current ===
+        `${fileKey(file)}:${cache.current.version(next, file)}:true`;
+      return await loadFile(file, next.workspace, force, loadLarge, background);
     } else {
       ++sequence.current;
+      pendingRead.current = null;
       setSelected(null);
       selectedRef.current = null;
       showReading(null);
       setLoadingDiff(false);
+      setSyncing(false);
       return true;
     }
   }
-  acceptChangesRef.current = acceptChanges;
+  acceptChangesRef.current = (next) => acceptChanges(next, false, true);
 
   async function openWorkspace(repositoryPath: string) {
     if (!repositoryPath.trim()) return;
@@ -1891,6 +1914,7 @@ export default function App({
           >
             {(repositoryVisited || tab === "repository") && (
               <RepositoryView
+                active={tab === "repository"}
                 key={changes.workspace.id}
                 onOpenLocalFile={(path) => {
                   const file = changes.files.find((file) => file.path === path);
@@ -2194,7 +2218,7 @@ export default function App({
                     )}
                   </div>
                 )}
-                {loadingDiff && (
+                {loadingDiff && !syncing && (
                   <DiffLoading
                     updating={!!diff || !!summary}
                     path={
@@ -2669,12 +2693,15 @@ export default function App({
             <GitBranch size={12} />
             {changes.branch ?? "Detached HEAD"}
           </span>
-          <span className="live-status">
-            <span className={`status-dot ${syncing ? "neutral" : ""}`} />
+          <span
+            className="live-status"
+            title={refreshError ? uiMessage(refreshError.message) : undefined}
+          >
+            <span className={`status-dot ${refreshError ? "neutral" : ""}`} />
             {diffWindow && initialComparison
               ? t("Snapshot")
-              : syncing
-                ? t("更新中")
+              : refreshError
+                ? t("正在重试刷新")
                 : t("Live")}
           </span>
         </div>

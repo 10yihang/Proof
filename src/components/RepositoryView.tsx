@@ -25,6 +25,7 @@ import {
 export type RepositorySection = "history" | "branches" | "worktrees";
 
 export function RepositoryView({
+  active,
   section,
   onSection,
   changes,
@@ -35,6 +36,7 @@ export function RepositoryView({
   onOpenDiff,
   onOpenLocalFile,
 }: {
+  active: boolean;
   section: RepositorySection;
   onSection: (section: RepositorySection) => void;
   changes: Changes;
@@ -46,7 +48,13 @@ export function RepositoryView({
   onOpenLocalFile: (path: string) => void;
 }) {
   const request = useRequest();
-  const actions = useHistoryActions(changes, demo, onChanged, onOpenLocalFile);
+  const actions = useHistoryActions(
+    changes,
+    demo,
+    onChanged,
+    onOpenLocalFile,
+    active && section === "history",
+  );
   const [comparison, setComparison] = useState<HistoryComparison | null>(null);
   const [branchAnchor, setBranchAnchor] = useState<BranchEntry | null>(null);
   const [branchMenu, setBranchMenu] = useState<{

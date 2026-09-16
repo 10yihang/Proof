@@ -38,6 +38,7 @@ mod diff_windows;
 mod observer;
 mod read_requests;
 mod review_export;
+mod updater;
 mod watcher;
 #[cfg(target_os = "macos")]
 mod window_menu;
@@ -275,6 +276,16 @@ fn dispatch_with_progress(
             "Missing renderer data generation",
         )
     })?;
+    if command == "history_auto_fetch" {
+        let job =
+            session(core, data_epoch)?.prepare_history_fetch(string(&args, "workspaceId")?)?;
+        if let Some(job) = job {
+            job.execute()?;
+            drop(session(core, data_epoch)?);
+            return Ok(serde_json::json!(true));
+        }
+        return Ok(serde_json::json!(false));
+    }
     if command == "agent_providers" {
         return serde_json::to_value(session(core, data_epoch)?.agent_providers()?)
             .map_err(Error::from);
@@ -559,9 +570,10 @@ fn dispatch_with_progress(
             args["search"].as_str().unwrap_or(""),
             serde_json::from_value(args["before"].clone())?,
         )?),
-        "context_session_events" => serde_json::to_value(proof.context_session_events(
+        "context_session_events" => serde_json::to_value(proof.context_session_events_for_file(
             string(&args, "workspaceId")?,
             string(&args, "sessionId")?,
+            args["path"].as_str(),
             serde_json::from_value(args["before"].clone())?,
         )?),
         "context_history" => serde_json::to_value(proof.context_history(
@@ -623,7 +635,10 @@ fn dispatch_with_progress(
 }
 
 pub fn run() {
-    let builder = tauri::Builder::default().plugin(tauri_plugin_dialog::init());
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(updater::UpdateState::default());
     #[cfg(target_os = "macos")]
     let builder = builder
         .menu(window_menu::create)
@@ -702,7 +717,10 @@ pub fn run() {
             prepare_read_request,
             cancel_read_request,
             watch_workspace,
-            diagnostics::application_diagnostic
+            diagnostics::application_diagnostic,
+            updater::check_app_update,
+            updater::download_app_update,
+            updater::install_app_update
         ])
         .run(tauri::generate_context!())
         .expect("Proof could not start");

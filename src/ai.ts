@@ -10,7 +10,9 @@ import { useEffect, useRef, useState } from "react";
 import { asError, useReadRequest, useRequest } from "./api";
 import type { Changes, ChangedFile, FileDiff, Side, ProofError } from "./types";
 
-export type AgentKind = "codex" | "claude_code";
+export type AgentKind = "codex" | "claude_code" | "codewiz";
+export const agentName = (kind: AgentKind) =>
+  ({ codex: "Codex", claude_code: "Claude Code", codewiz: "Codewiz" })[kind];
 export type AiRisk = "low" | "medium" | "high" | "critical" | "unknown";
 export interface AiGroup {
   title: string;

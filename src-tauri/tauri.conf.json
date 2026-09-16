@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Proof",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "dev.proof.desktop",
   "build": {
     "beforeDevCommand": "npm run prepare:observer:dev && npm run dev",
@@ -33,13 +33,30 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg"],
+    "targets": [
+      "app",
+      "dmg"
+    ],
     "shortDescription": "看清变化，认真审查。",
     "category": "DeveloperTool",
-    "icon": ["icons/icon.png", "icons/icon.icns"],
+    "icon": [
+      "icons/icon.png",
+      "icons/icon.icns"
+    ],
     "macOS": {
       "signingIdentity": "-"
     },
-    "externalBin": ["binaries/proof-observer"]
+    "externalBin": [
+      "binaries/proof-observer"
+    ],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDcwMTRDNUI0M0Y4NkM3RTYKUldUbXg0WS90TVVVY0twNHRrbFMxdm95NWpyeWJpZ3YxZDFTNElMZ0FyRUNjbGNqbUtSK1pQcTcK",
+      "endpoints": [
+        "https://github.com/10yihang/Proof/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

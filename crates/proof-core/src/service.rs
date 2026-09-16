@@ -26,6 +26,7 @@ pub struct Proof {
     previews: HashMap<String, CommitPreview>,
     pub(crate) graphs: VecDeque<crate::graph::GraphSnapshot>,
     pub(crate) history_actions: VecDeque<crate::history_actions::PreparedAction>,
+    pub(crate) history_fetches: HashMap<String, crate::history_fetch::HistoryFetchGate>,
     pub(crate) data_previews: VecDeque<crate::local_data::DataDeletionPreview>,
     pub(crate) cached_data_epoch: u64,
     pub(crate) diagnostic_previews:
@@ -47,6 +48,7 @@ impl Proof {
             previews: HashMap::new(),
             graphs: VecDeque::new(),
             history_actions: VecDeque::new(),
+            history_fetches: HashMap::new(),
             data_previews: VecDeque::new(),
             cached_data_epoch: 0,
             diagnostic_previews: std::cell::RefCell::new(VecDeque::new()),

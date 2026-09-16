@@ -665,6 +665,15 @@ impl Proof {
             .env("GIT_EDITOR", "true")
             .env("GIT_SEQUENCE_EDITOR", "true")
             .env("GIT_MERGE_AUTOEDIT", "no");
+        if matches!(
+            prepared.preview.request.kind,
+            HistoryActionKind::Fetch | HistoryActionKind::Pull
+        ) {
+            self.history_fetches
+                .entry(workspace.repository_id.clone())
+                .or_default()
+                .note_manual_fetch();
+        }
         let output = process::run(command, None, Duration::from_secs(180));
         self.clear_reading_cache();
         let after = git.changes(&workspace)?;

@@ -1,6 +1,6 @@
 {
   "name": "proof",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -18,7 +18,8 @@
     "check": "npm run typecheck && npm test && cargo test -p proof-core",
     "prepare:observer": "node scripts/prepare-observer.mjs",
     "prepare:observer:dev": "node scripts/prepare-observer.mjs --dev",
-    "lint": "prettier --check src vite.config.ts"
+    "lint": "prettier --check src vite.config.ts",
+    "release:build": "node scripts/build-release.mjs"
   },
   "dependencies": {
     "@base-ui/react": "1.8.0",

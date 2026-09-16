@@ -6,6 +6,7 @@ import {
   Link,
   Plug,
   Terminal,
+  PencilLine,
 } from "@phosphor-icons/react";
 import { asError, useRequest } from "../api";
 import type { FileDiff } from "../types";
@@ -32,7 +33,9 @@ export function RealContext({
   onError: (error: unknown) => void;
 }) {
   const request = useRequest();
-  const [overview, setOverview] = useState<ContextOverview | null>(null),
+  const [receivedOverview, setOverview] = useState<ContextOverview | null>(
+      null,
+    ),
     [error, setError] = useState("");
   const [revision, setRevision] = useState(0);
   const [manager, setManager] = useState<{
@@ -40,7 +43,14 @@ export function RealContext({
     history?: boolean;
   } | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [showMore, setShowMore] = useState(false);
   const generation = useRef(0);
+  useEffect(() => {
+    setExpanded({});
+    setManager(null);
+    setShowMore(false);
+    setError("");
+  }, [demo, diff?.workspaceId, diff?.path]);
   useEffect(() => {
     if (demo || !diff) return;
     const n = ++generation.current;
@@ -67,6 +77,11 @@ export function RealContext({
       clearTimeout(timer);
     };
   }, [demo, diff?.workspaceId, diff?.path, revision]);
+  const overview =
+    receivedOverview?.workspaceId === diff?.workspaceId &&
+    receivedOverview?.path === diff?.path
+      ? receivedOverview
+      : null;
   const links = overview?.links ?? [];
   return (
     <>
@@ -75,16 +90,12 @@ export function RealContext({
           {error}
         </p>
       )}
-      <section className="context-section">
+      <section className="context-section context-session-heading">
         <div className="section-title">
           <Terminal size={16} />
           <h3>{t("相关会话")}</h3>
         </div>
-        {links.length ? (
-          <p className="inline-help">
-            {t("文件级线索；当前 Diff 的逐行归属未确定。")}
-          </p>
-        ) : (
+        {!links.length && (
           <div className="observer-empty">
             <Terminal size={26} />
             <strong>
@@ -99,17 +110,21 @@ export function RealContext({
         )}
         {diff && !demo && (
           <div className="context-link-actions">
-            <Button className="button compact" onClick={() => setManager({})}>
+            <Button
+              className="icon-button"
+              title={t("关联会话")}
+              aria-label={t("关联会话")}
+              onClick={() => setManager({})}
+            >
               <Link size={14} />
-              {t("关联会话")}
             </Button>
             <Button
-              className="button compact"
+              className="icon-button"
+              title={t("修改记录")}
+              aria-label={t("修改记录")}
               onClick={() => setManager({ history: true })}
             >
               <ClockCounterClockwise size={14} />
-              {t("修改记录")}
-              {overview?.historyCount ? ` · ${overview.historyCount}` : ""}
             </Button>
           </div>
         )}
@@ -120,7 +135,7 @@ export function RealContext({
           </p>
         )}
       </section>
-      {links.map((link) => (
+      {(showMore ? links : links.slice(0, 3)).map((link) => (
         <section
           className="context-section context-linked-session"
           key={link.session.id}
@@ -133,30 +148,29 @@ export function RealContext({
             >
               {link.userOverride ? t("用户指定") : t("相关会话")}
             </span>
+            <Button
+              className="icon-button context-edit-link"
+              title={t("编辑关联")}
+              aria-label={t("编辑关联")}
+              onClick={() => setManager({ link })}
+            >
+              <PencilLine size={14} />
+            </Button>
           </div>
-          <code
-            className="context-path"
-            title={link.session.nativeSessionId ?? link.session.id}
-          >
-            {link.session.nativeSessionId ? "Session" : t("Proof 本地 ID")} ·{" "}
-            {(link.session.nativeSessionId ?? link.session.id).slice(0, 24)}
-          </code>
-          {link.session.nativeAgentId && (
-            <p className="context-path">
-              {t("Subagent · ")}
-              {link.session.nativeAgentId}
-            </p>
-          )}
-          <strong className="context-field-label">
-            {t("任务原文 · 摘要")}
-          </strong>
-          {link.session.promptExcerpt ? (
-            <p className="context-task">{link.session.promptExcerpt}</p>
-          ) : (
-            <p className="inline-help">
-              {t("Prompt · ")}
-              {fieldState(link.session.promptStatus)}
-            </p>
+          {!expanded[link.session.id] && (
+            <>
+              <strong className="context-field-label">
+                {t("任务原文 · 摘要")}
+              </strong>
+              {link.session.promptExcerpt ? (
+                <p className="context-task">{link.session.promptExcerpt}</p>
+              ) : (
+                <p className="inline-help">
+                  {t("Prompt · ")}
+                  {fieldState(link.session.promptStatus)}
+                </p>
+              )}
+            </>
           )}
           {link.userOverride?.note && (
             <div className="context-local-note">
@@ -165,7 +179,21 @@ export function RealContext({
             </div>
           )}
           <details className="context-reason">
-            <summary>{t("关联依据")}</summary>
+            <summary>{t("会话信息与关联依据")}</summary>
+            <code
+              className="context-path"
+              title={link.session.nativeSessionId ?? link.session.id}
+            >
+              {link.session.nativeSessionId ? "Session" : t("Proof 本地 ID")} ·{" "}
+              {(link.session.nativeSessionId ?? link.session.id).slice(0, 24)}
+            </code>
+            {link.session.nativeAgentId && (
+              <p className="context-path">
+                {t("Subagent · ")}
+                {link.session.nativeAgentId}
+              </p>
+            )}
+
             <p>
               {associationReason(link.originalEvidence)}
               {link.userOverride && t("此关联由用户指定。")}{" "}
@@ -188,24 +216,33 @@ export function RealContext({
               }
             >
               {expanded[link.session.id]
-                ? t("收起原始记录")
-                : t("查看会话 · {v0} events", { v0: link.session.eventCount })}
+                ? t("收起文件活动")
+                : t("查看文件活动 · {v0}", {
+                    v0: link.originalEvidence.pathEventCount,
+                  })}
             </Button>
           )}
-          <Button
-            className="button compact"
-            onClick={() => setManager({ link })}
-          >
-            {t("编辑关联")}
-          </Button>
           {diff && expanded[link.session.id] && !link.session.cleared && (
             <ContextSessionEvents
+              key={`${diff.workspaceId}:${diff.path}:${link.session.id}`}
+              path={diff.path}
+              onSettings={onSettings}
               workspaceId={diff.workspaceId}
               session={link.session}
             />
           )}
         </section>
       ))}
+      {links.length > 3 && (
+        <Button
+          className="text-button context-more-sessions"
+          onClick={() => setShowMore(!showMore)}
+        >
+          {showMore
+            ? t("收起较早会话")
+            : t("更多相关会话 · {v0}", { v0: links.length - 3 })}
+        </Button>
+      )}
       {overview?.hasMore && (
         <p className="inline-help">
           {t("仅显示最近 30 个关联会话；在“关联会话”中搜索或加载更多。")}

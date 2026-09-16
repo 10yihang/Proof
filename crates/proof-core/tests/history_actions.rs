@@ -49,6 +49,115 @@ struct Fixture {
     proof: Proof,
     workspace: Workspace,
 }
+
+#[test]
+fn automatic_fetch_updates_only_remote_refs_and_throttles_linked_worktrees() {
+    let mut f = Fixture::new();
+    let peer = f.remote();
+    let old_head = f.head();
+    fs::write(peer.join("remote.txt"), "remote change\n").unwrap();
+    git(&peer, &["add", "."]);
+    git(&peer, &["commit", "-m", "Remote update"]);
+    git(&peer, &["push", "origin", "main"]);
+    let remote_head = git(&peer, &["rev-parse", "HEAD"]);
+    fs::write(f.repo.join("staged.txt"), "staged\n").unwrap();
+    git(&f.repo, &["add", "."]);
+    fs::write(f.repo.join("code.txt"), "local work\n").unwrap();
+    let index = fs::read(f.repo.join(".git/index")).unwrap();
+    fs::write(f.repo.join(".git/FETCH_HEAD"), "preserve manual fetch\n").unwrap();
+    // Even a configured refspec that targets local refs must not be used by
+    // automatic fetch. It owns remote-tracking refs only.
+    git(
+        &f.repo,
+        &[
+            "config",
+            "remote.origin.fetch",
+            "+refs/heads/*:refs/heads/*",
+        ],
+    );
+    let job = f
+        .proof
+        .prepare_history_fetch(&f.workspace.id)
+        .unwrap()
+        .unwrap();
+    assert!(f
+        .proof
+        .prepare_history_fetch(&f.workspace.id)
+        .unwrap()
+        .is_none());
+    // Having a prepared network job must not retain mutable access to Proof.
+    assert_eq!(
+        f.proof.changes(&f.workspace.id).unwrap().head.as_deref(),
+        Some(old_head.as_str())
+    );
+    job.execute().unwrap();
+    assert_eq!(
+        git(&f.repo, &["rev-parse", "refs/remotes/origin/main"]),
+        remote_head
+    );
+    assert_eq!(f.head(), old_head);
+    assert_eq!(fs::read(f.repo.join(".git/index")).unwrap(), index);
+    assert_eq!(
+        fs::read_to_string(f.repo.join("code.txt")).unwrap(),
+        "local work\n"
+    );
+    assert_eq!(
+        fs::read_to_string(f.repo.join(".git/FETCH_HEAD")).unwrap(),
+        "preserve manual fetch\n"
+    );
+    assert!(f
+        .proof
+        .prepare_history_fetch(&f.workspace.id)
+        .unwrap()
+        .is_none());
+    let tree = f.temp.path().join("linked");
+    git(
+        &f.repo,
+        &["worktree", "add", "-b", "linked", tree.to_str().unwrap()],
+    );
+    let linked = f.proof.open_workspace(tree.to_str().unwrap()).unwrap();
+    f.proof.set_trust(&linked.id, true).unwrap();
+    assert_eq!(linked.repository_id, f.workspace.repository_id);
+    assert!(f.proof.prepare_history_fetch(&linked.id).unwrap().is_none());
+}
+
+#[test]
+fn automatic_fetch_skips_untrusted_and_remote_less_repositories_and_limits_failures() {
+    let mut f = Fixture::new();
+    assert!(f
+        .proof
+        .prepare_history_fetch(&f.workspace.id)
+        .unwrap()
+        .is_none());
+    f.remote();
+    f.proof.set_trust(&f.workspace.id, false).unwrap();
+    assert!(f
+        .proof
+        .prepare_history_fetch(&f.workspace.id)
+        .unwrap()
+        .is_none());
+    f.proof.set_trust(&f.workspace.id, true).unwrap();
+    git(
+        &f.repo,
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            f.temp.path().join("missing.git").to_str().unwrap(),
+        ],
+    );
+    let job = f
+        .proof
+        .prepare_history_fetch(&f.workspace.id)
+        .unwrap()
+        .unwrap();
+    assert!(job.execute().is_err());
+    assert!(f
+        .proof
+        .prepare_history_fetch(&f.workspace.id)
+        .unwrap()
+        .is_none());
+}
 impl Fixture {
     fn new() -> Self {
         let temp = tempfile::tempdir().unwrap();

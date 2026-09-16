@@ -12,6 +12,89 @@ fn now() -> u64 {
         .unwrap()
         .as_millis() as u64
 }
+
+#[test]
+fn file_activity_filters_long_sessions_and_joins_only_the_matching_turn() {
+    let f = Fixture::new();
+    fs::write(Path::new(&f.workspace.path).join("other.txt"), "other").unwrap();
+    f.ingest(
+        &f.workspace,
+        Some("long-session"),
+        "selected-edit",
+        "file.txt",
+    );
+    for i in 0..220 {
+        f.ingest(
+            &f.workspace,
+            Some("long-session"),
+            &format!("other-{i}"),
+            "other.txt",
+        );
+    }
+    let link = f.candidate("long-session");
+    f.db().execute("UPDATE observer_events SET payload=json_set(payload,'$.turnId','unrelated','$.prompt','Other file task')", []).unwrap();
+    f.db().execute("UPDATE observer_events SET payload=json_set(payload,'$.turnId','selected-turn','$.prompt','Selected file task') WHERE json_extract(payload,'$.toolRef')='selected-edit'", []).unwrap();
+    let payload = json!({"hook_event_name":"Stop", "cwd":f.workspace.path,"session_id":"long-session","turn_id":"selected-turn","last_assistant_message":"Selected task response"});
+    f.proof
+        .ingest_observer_event(ObserverInput {
+            installation_id: &f.installation.installation.id,
+            token: &f.installation.token,
+            agent: ObserverAgent::Claude,
+            agent_version: "2.1.236",
+            payload: &serde_json::to_vec(&payload).unwrap(),
+            bridge_started_at: now(),
+            foreground_lease_until: Some(now() + 5000),
+            received_policy_revision: f.proof.observer_policy_revision().unwrap(),
+            received_at: now(),
+        })
+        .unwrap();
+    let before = f.original_payloads();
+    let page = f
+        .proof
+        .context_session_events_for_file(&f.workspace.id, &link.session.id, Some("file.txt"), None)
+        .unwrap();
+    assert_eq!(page.events.len(), 1);
+    assert_eq!(page.file_event_count, Some(1));
+    assert!(page.next.is_none());
+    assert_eq!(page.task_context.len(), 1);
+    assert_eq!(
+        page.task_context[0].reply.as_deref(),
+        Some("Selected task response")
+    );
+    assert_eq!(
+        f.proof
+            .context_overview(&f.workspace.id, "file.txt")
+            .unwrap()
+            .links[0]
+            .session
+            .prompt_excerpt
+            .as_deref(),
+        Some("Selected file task")
+    );
+    assert_eq!(
+        f.proof
+            .context_session_events(&f.workspace.id, &link.session.id, None)
+            .unwrap()
+            .events
+            .len(),
+        20
+    );
+    let empty = f
+        .proof
+        .context_session_events_for_file(
+            &f.workspace.id,
+            &link.session.id,
+            Some("missing.txt"),
+            None,
+        )
+        .unwrap();
+    assert!(empty.events.is_empty() && !empty.cleared);
+    assert!(f
+        .proof
+        .context_session_events_for_file(&f.workspace.id, &link.session.id, Some("../escape"), None)
+        .is_err());
+    assert_eq!(before, f.original_payloads());
+}
 fn git(repo: &Path, args: &[&str]) {
     let output = Command::new("git")
         .arg("-C")

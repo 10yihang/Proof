@@ -148,9 +148,10 @@ fn dispatch(proof: &mut Proof, command: &str, a: &Value) -> Result<Value, Error>
             s("search"),
             serde_json::from_value(a["before"].clone())?
         )?),
-        "context_session_events" => json!(proof.context_session_events(
+        "context_session_events" => json!(proof.context_session_events_for_file(
             s("workspaceId"),
             s("sessionId"),
+            a["path"].as_str(),
             serde_json::from_value(a["before"].clone())?
         )?),
         "context_history" => json!(proof.context_history(
@@ -227,6 +228,14 @@ fn dispatch(proof: &mut Proof, command: &str, a: &Value) -> Result<Value, Error>
         )?),
         "commit" => json!(proof.commit(s("previewId"), s("message"))?),
         "history_repository_state" => json!(proof.history_repository_state(s("workspaceId"))?),
+        "history_auto_fetch" => {
+            if let Some(job) = proof.prepare_history_fetch(s("workspaceId"))? {
+                job.execute()?;
+                json!(true)
+            } else {
+                json!(false)
+            }
+        }
         "history_commit_message" => {
             json!(proof.history_commit_message(s("workspaceId"), s("oid"))?)
         }

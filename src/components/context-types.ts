@@ -94,6 +94,8 @@ export interface ContextEvents {
   expiry: Record<string, { contentExpiresAt: number; expiresAt: number }>;
   next: ContextEventCursor | null;
   cleared: boolean;
+  taskContext?: ContextEvent[];
+  fileEventCount?: number | null;
 }
 export function agentName(session: ContextSession) {
   return session.agent === "codex"

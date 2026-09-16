@@ -8,9 +8,11 @@
 
 - Local changes、文件树、Stage、Commit / Amend、History graph 与独立 Diff tabs。
 - 使用只读 Monaco 查看统一或并排 Diff，支持上下文展开、全文、搜索和独立窗口。
-- 通过本机 Codex CLI / Claude Code 主动发起 AI 分组与 Review，使用 CLI 的现有登录和额度，不要求配置 API Key。
+- 通过本机 Codex CLI / Claude Code（安装后也可使用 Codewiz）主动发起 AI 分组与 Review，使用 CLI 的现有登录和额度，不要求配置 API Key。
 - Review 评论支持行范围、采纳 / 不采纳、本地持久化，以及导出修改说明交给 Agent。
 - Passive Agent Observer 与主动 AI 调用分离；普通 Git 功能不依赖 Agent。
+
+软件更新位于「设置 → 软件更新」，支持手动检查、下载签名更新包、安装并重启。发布流程见 [RELEASING.md](docs/RELEASING.md)。
 
 ## 运行
 
@@ -29,10 +31,10 @@ npm run desktop
 npm run typecheck
 npm test
 cargo test -p proof-core
-npm run tauri -- build --debug --bundles app
+npm run tauri -- build --debug --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
 ```
 
-完整构建：`npm run bundle`。版本与发布说明见 [0.1.0](docs/releases/v0.1.0.md)。
+发布构建：`npm run release:build`，使用本机已有的 updater 签名密钥。普通开发构建可按上面的命令关闭更新包生成，不需要签名私钥。版本与发布说明见 [0.1.1](docs/releases/0.1.1.md)。
 
 当前 macOS 包使用 ad-hoc 签名，尚未进行 Developer ID 签名与 Apple 公证。签名方式依据 [Tauri 官方说明](https://v2.tauri.app/distribute/sign/macos/#ad-hoc-signing)。
 

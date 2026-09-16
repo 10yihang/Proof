@@ -1,4 +1,5 @@
 //! Active, user-requested analysis of immutable Git patches. No Observer calls.
+mod codewiz;
 mod groups;
 mod progress;
 mod snapshot;
@@ -12,7 +13,7 @@ use crate::{
 pub use groups::*;
 pub use provider::{
     agent_providers, AgentProgram, AgentProvider, AgentProviderInfo, ClaudeCodeProvider,
-    CodexProvider,
+    CodewizProvider, CodexProvider,
 };
 pub use reports::*;
 use serde::{Deserialize, Serialize};
@@ -32,6 +33,7 @@ const MAX_INPUT: usize = 128 * 1024 * 1024;
 pub enum AgentKind {
     Codex,
     ClaudeCode,
+    Codewiz,
 }
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -180,6 +182,9 @@ impl Drop for PreparedAiTask {
 impl Proof {
     pub fn prepare_ai_task(&mut self, request: AiRequest) -> Result<PreparedAiTask> {
         self.prepare_ai_task_with_progress(request, &|_| {})
+    }
+    pub fn has_active_ai_task(&self) -> bool {
+        self.ai_busy.load(Ordering::Acquire)
     }
     pub fn prepare_ai_task_with_progress(
         &mut self,
@@ -375,6 +380,7 @@ impl PreparedAiTask {
             let provider: Box<dyn AgentProvider> = match self.request.provider {
                 AgentKind::Codex => Box::new(CodexProvider),
                 AgentKind::ClaudeCode => Box::new(ClaudeCodeProvider),
+                AgentKind::Codewiz => Box::new(CodewizProvider),
             };
             let program = provider::AgentProgram::configured(
                 self.request.provider,

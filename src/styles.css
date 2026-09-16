@@ -2236,3 +2236,35 @@ kbd {
     display: block;
   }
 }
+
+.update-actions,
+.update-current {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.update-actions {
+  margin: 20px 0;
+}
+.update-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0;
+}
+.update-progress progress {
+  flex: 1;
+  height: 6px;
+  accent-color: var(--accent);
+}
+.update-release-notes {
+  margin-top: 24px;
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+.update-release-notes pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  line-height: 1.6;
+}

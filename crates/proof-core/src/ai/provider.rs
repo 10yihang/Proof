@@ -1,4 +1,4 @@
-use super::{invalid, AgentKind, AgentOptions, AgentProbeResult, AgentSettings};
+use super::{codewiz, invalid, AgentKind, AgentOptions, AgentProbeResult, AgentSettings};
 use crate::{process, program, Error, Result};
 use serde::Serialize;
 use serde_json::Value;
@@ -9,6 +9,9 @@ use std::{
     time::Duration,
 };
 
+#[cfg(all(test, target_os = "macos"))]
+#[path = "native_codewiz_tests.rs"]
+mod native_codewiz_tests;
 #[cfg(all(test, target_os = "macos"))]
 #[path = "native_codex_tests.rs"]
 mod native_codex_tests;
@@ -34,7 +37,6 @@ pub trait AgentProvider: Send + Sync {
             &program.executable,
             prompt,
             schema,
-            Duration::from_secs(600),
             program.model.as_deref(),
             || program.validate(),
             Some((workspace, paths, emit)),
@@ -49,7 +51,6 @@ pub trait AgentProvider: Send + Sync {
             &program.executable,
             prompt,
             schema,
-            Duration::from_secs(600),
             program.model.as_deref(),
             || program.validate(),
         )
@@ -112,8 +113,7 @@ impl AgentProgram {
             data.join("proof.sqlite3"),
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
-        let (executable, _) = program::resolve_program_path(source)?;
-        let identity = program::program_identity(&executable)?;
+        let (executable, _, identity) = resolve_executable(kind, source)?;
         let code_mode_host = if kind == AgentKind::Codex {
             companion_host(&executable)?
                 .map(|path| program::program_identity(&path).map(|identity| (path, identity)))
@@ -164,8 +164,8 @@ impl AgentProgram {
                 "Workspace trust revoked",
             ));
         }
-        let (path, mut origins) = program::resolve_program_path(&self.source)?;
-        if path != self.executable || program::program_identity(&path)? != self.identity {
+        let (path, mut origins, identity) = resolve_executable(self.kind, &self.source)?;
+        if path != self.executable || identity != self.identity {
             return Err(unsupported("CLI 已变化，请重新开始分析。"));
         }
         if self.kind == AgentKind::Codex {
@@ -190,6 +190,12 @@ impl AgentProgram {
 }
 pub struct CodexProvider;
 pub struct ClaudeCodeProvider;
+pub struct CodewizProvider;
+impl AgentProvider for CodewizProvider {
+    fn kind(&self) -> AgentKind {
+        AgentKind::Codewiz
+    }
+}
 impl AgentProvider for CodexProvider {
     fn kind(&self) -> AgentKind {
         AgentKind::Codex
@@ -215,8 +221,17 @@ pub fn agent_providers() -> Vec<AgentProviderInfo> {
     provider_information(&AgentSettings::default())
 }
 pub(super) fn provider_information(settings: &AgentSettings) -> Vec<AgentProviderInfo> {
-    [AgentKind::Codex, AgentKind::ClaudeCode]
+    [AgentKind::Codex, AgentKind::ClaudeCode, AgentKind::Codewiz]
         .into_iter()
+        .filter(|id| {
+            *id != AgentKind::Codewiz
+                || locate(*id).is_some()
+                || settings
+                    .options(*id)
+                    .executable_path
+                    .as_ref()
+                    .is_some_and(|p| resolve_executable(*id, Path::new(p)).is_ok())
+        })
         .map(|id| {
             let options = settings.options(id);
             let path = options
@@ -228,21 +243,17 @@ pub(super) fn provider_information(settings: &AgentSettings) -> Vec<AgentProvide
                 Some("此平台尚无经过验证的只读 Agent 沙箱。".into())
             } else if managed_configuration(id) {
                 Some("检测到受管理的 Agent 配置，暂不支持隔离调用。".into())
-            } else if path.as_ref().is_none_or(|path| {
-                crate::program::resolve_program_path(path)
-                    .and_then(|(path, _)| std::fs::metadata(path))
-                    .is_err()
-            }) {
+            } else if path
+                .as_ref()
+                .is_none_or(|path| resolve_executable(id, path).is_err())
+            {
                 Some("未找到本机 CLI。".into())
             } else {
                 None
             };
             AgentProviderInfo {
                 id,
-                name: match id {
-                    AgentKind::Codex => "Codex",
-                    AgentKind::ClaudeCode => "Claude Code",
-                },
+                name: provider_name(id),
                 available: reason.is_none(),
                 path: path.map(|p| p.to_string_lossy().into_owned()),
                 reason,
@@ -256,6 +267,7 @@ fn locate(kind: AgentKind) -> Option<PathBuf> {
     let name = match kind {
         AgentKind::Codex => "codex",
         AgentKind::ClaudeCode => "claude",
+        AgentKind::Codewiz => "codewiz",
     };
     let mut roots = vec![
         PathBuf::from("/opt/homebrew/bin"),
@@ -265,15 +277,42 @@ fn locate(kind: AgentKind) -> Option<PathBuf> {
         for suffix in [".local/bin", ".cargo/bin", ".npm-global/bin"] {
             roots.push(PathBuf::from(&user_directory).join(suffix));
         }
+        if kind == AgentKind::Codewiz {
+            roots.extend(codewiz::installation_roots(Path::new(&user_directory)));
+        }
+    }
+    if kind == AgentKind::Codewiz {
+        if let Some(path) = std::env::var_os("PATH") {
+            // Only absolute, non-project PATH entries; final launch still uses
+            // the shared executable-identity and repository-trust checks.
+            let cwd = std::env::current_dir().ok();
+            let mut inherited: Vec<_> = std::env::split_paths(&path)
+                .filter(|p| {
+                    p.is_absolute()
+                        && !cwd.as_ref().is_some_and(|cwd| p.starts_with(cwd))
+                        && !p.components().any(|c| c.as_os_str() == "node_modules")
+                })
+                .collect();
+            inherited.extend(roots);
+            roots = inherited;
+        }
     }
     // Do not execute repository-local PATH entries, shell aliases or functions.
     roots.into_iter().find_map(|root| {
-        let (path, _) = program::resolve_program_path(&root.join(name)).ok()?;
-        program::program_identity(&path).ok()?;
+        resolve_executable(kind, &root.join(name)).ok()?;
         Some(root.join(name))
     })
 }
 fn managed_configuration(kind: AgentKind) -> bool {
+    if kind == AgentKind::Codewiz
+        && fs::read_dir("/Library/Managed Preferences")
+            .into_iter()
+            .flatten()
+            .flatten()
+            .any(|entry| entry.path().join("ai.opencode.managed.plist").exists())
+    {
+        return true;
+    }
     let paths: &[&str] = match kind {
         AgentKind::Codex => &[
             "/etc/codex/config.toml",
@@ -285,15 +324,41 @@ fn managed_configuration(kind: AgentKind) -> bool {
             "/etc/claude-code/managed-settings.json",
             "/Library/Managed Preferences/com.anthropic.claudecode.plist",
         ],
+        AgentKind::Codewiz => &[
+            "/Library/Application Support/opencode/codewiz.json",
+            "/Library/Application Support/opencode/codewiz.jsonc",
+            "/Library/Managed Preferences/ai.opencode.managed.plist",
+            "/etc/opencode/codewiz.json",
+            "/etc/opencode/codewiz.jsonc",
+        ],
     };
     paths.iter().any(|path| fs::symlink_metadata(path).is_ok())
 }
-fn unsupported(message: &str) -> Error {
+pub(super) fn unsupported(message: &str) -> Error {
     Error::new(
         "AI_ISOLATION_UNAVAILABLE",
         message,
         "Required read-only CLI capabilities unavailable; no model task started",
     )
+}
+
+fn resolve_executable(kind: AgentKind, source: &Path) -> Result<(PathBuf, Vec<PathBuf>, String)> {
+    let (mut path, mut origins) = program::resolve_program_path(source)?;
+    let mut identity = program::program_identity(&path)?;
+    if kind == AgentKind::Codewiz {
+        if let Some(native) = codewiz::native_program(&path)? {
+            origins.push(
+                path.parent()
+                    .ok_or_else(|| unsupported("CLI 路径无效。"))?
+                    .into(),
+            );
+            let (resolved, links) = program::resolve_program_path(&native)?;
+            identity.push_str(&program::program_identity(&resolved)?);
+            origins.extend(links);
+            path = resolved;
+        }
+    }
+    Ok((path, origins, identity))
 }
 
 /// Only the installed CLI's sibling executable is eligible. Never discover a
@@ -399,6 +464,10 @@ fn isolated_command_options(
     if kind == AgentKind::ClaudeCode {
         profile.push_str("(allow process-exec (literal \"/usr/bin/security\"))");
     }
+    // Codewiz cleanup sees only the empty, Proof-owned MCP inventory.
+    if kind == AgentKind::Codewiz {
+        profile.push_str(&codewiz::startup_profile(directory)?);
+    }
     if let Some(workspace) = workspace {
         if workspace.starts_with(directory) {
             return Err(unsupported("分析快照不能位于可写运行目录内。"));
@@ -485,6 +554,9 @@ fn isolated_command_options(
         // user's CLI configuration are untouched.
         command.env("CODEX_HOME", codex_runtime(directory, login_directory)?);
     }
+    if kind == AgentKind::Codewiz {
+        codewiz::configure(&mut command, directory, workspace.is_some())?;
+    }
     Ok(command)
 }
 #[cfg(not(target_os = "macos"))]
@@ -497,13 +569,54 @@ fn run(
     executable: &Path,
     prompt: &str,
     schema: &Value,
-    timeout: Duration,
     model: Option<&str>,
     validate: impl Fn() -> Result<()>,
 ) -> Result<Value> {
-    run_workspace(
-        kind, executable, prompt, schema, timeout, model, validate, None,
-    )
+    run_workspace(kind, executable, prompt, schema, model, validate, None)
+}
+
+fn help_output(kind: AgentKind, executable: &Path, root: &Path) -> Result<process::Output> {
+    let mut command = isolated_command(kind, executable, root)?;
+    if kind == AgentKind::Codewiz {
+        // Bun/yargs may exit before its long stderr help has flushed to a pipe.
+        // A private regular file makes the capability probe deterministic.
+        let setup = command;
+        let args: Vec<_> = setup.get_args().collect();
+        command = Command::new(setup.get_program());
+        command
+            .args(&args[..args.len() - 1])
+            .arg("/bin/sh")
+            .args([
+                "-c",
+                "exec \"$@\" > \"$PROOF_HELP_OUTPUT\" 2>&1",
+                "proof-cli-help",
+            ])
+            .arg(executable)
+            .args(["run", "--help"])
+            .env_clear()
+            .envs(setup.get_envs().filter_map(|(k, v)| v.map(|v| (k, v))))
+            .env("PROOF_HELP_OUTPUT", root.join("codewiz-help.txt"))
+            .current_dir(root);
+        let mut output = process::run_diff(command, None, Duration::from_secs(10), 256 * 1024)?;
+        if output.code == 0 {
+            use std::io::Read;
+            let mut bytes = Vec::new();
+            fs::File::open(root.join("codewiz-help.txt"))?
+                .take(256 * 1024 + 1)
+                .read_to_end(&mut bytes)?;
+            if bytes.len() > 256 * 1024 {
+                return Err(unsupported("CLI 帮助输出超出限制。"));
+            }
+            output.stdout = bytes;
+        }
+        Ok(output)
+    } else {
+        if kind == AgentKind::Codex {
+            command.arg("exec");
+        }
+        command.arg("--help");
+        process::run_diff(command, None, Duration::from_secs(10), 256 * 1024)
+    }
 }
 type ReadingWorkspace<'a> = (&'a Path, &'a [String], &'a dyn Fn(super::AiProgress));
 
@@ -513,7 +626,6 @@ fn run_workspace(
     executable: &Path,
     prompt: &str,
     schema: &Value,
-    timeout: Duration,
     model: Option<&str>,
     validate: impl Fn() -> Result<()>,
     workspace: Option<ReadingWorkspace<'_>>,
@@ -525,16 +637,15 @@ fn run_workspace(
     let identity = program::program_identity(executable)?;
     let directory = tempfile::Builder::new().prefix("proof-ai-").tempdir()?;
     let root = fs::canonicalize(directory.path())?;
-    let mut probe = isolated_command(kind, executable, &root)?;
-    if kind == AgentKind::Codex {
-        probe.arg("exec");
-    }
-    probe.arg("--help");
-    let output = process::run_diff(probe, None, Duration::from_secs(10), 256 * 1024)?;
+    let output = help_output(kind, executable, &root)?;
     if output.code != 0 {
         return Err(agent_failure(kind, "capability check", &output));
     }
-    let help = String::from_utf8_lossy(&output.stdout);
+    let help = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     let missing = missing_capabilities(kind, &help);
     if !missing.is_empty() {
         return Err(Error::new(
@@ -559,21 +670,24 @@ fn run_workspace(
     if let Some(model) = model {
         command.args(["--model", model]);
     }
+    let input = if kind == AgentKind::Codewiz {
+        codewiz::prompt(prompt, schema)
+    } else {
+        prompt.to_owned()
+    };
     validate()?;
     let output = (if let Some((_, paths, emit)) = workspace {
         let mut activity = super::progress::ActivityStream::new(paths, emit);
-        process::run_observed(command, Some(prompt.as_bytes()), timeout, &mut |bytes| {
-            activity.feed(bytes)
-        })
+        process::run_until_cancelled(
+            command,
+            Some(input.as_bytes()),
+            32 * 1024 * 1024,
+            Some(&mut |bytes| activity.feed(bytes)),
+        )
     } else {
-        process::run_diff(command, Some(prompt.as_bytes()), timeout, 2 * 1024 * 1024)
+        process::run_until_cancelled(command, Some(input.as_bytes()), 2 * 1024 * 1024, None)
     })
     .map_err(|error| match error.code.as_str() {
-        "PROCESS_TIMEOUT" => Error::new(
-            "AI_TIMEOUT",
-            "Agent 分析超时，可缩小范围后重试。",
-            "Owned AI process exceeded 10 minute deadline",
-        ),
         "READ_CANCELLED" => Error::new(
             "AI_CANCELLED",
             "AI 分析已取消。",
@@ -590,6 +704,7 @@ fn run_workspace(
 }
 fn arguments(kind: AgentKind, root: &Path, schema: &Value) -> Result<Vec<String>> {
     let args: Vec<String> = match kind {
+        AgentKind::Codewiz => codewiz::arguments(),
         AgentKind::Codex => {
             let mut args: Vec<String> = [
                 "exec",
@@ -706,6 +821,9 @@ fn externally_sandboxed_arguments(
 }
 
 fn decode(kind: AgentKind, bytes: &[u8]) -> Result<Value> {
+    if kind == AgentKind::Codewiz {
+        return codewiz::decode(bytes);
+    }
     if kind == AgentKind::ClaudeCode {
         let envelope: Value = match serde_json::from_slice(bytes) {
             Ok(value) => value,
@@ -773,6 +891,9 @@ fn decode(kind: AgentKind, bytes: &[u8]) -> Result<Value> {
 
 fn missing_capabilities(kind: AgentKind, help: &str) -> Vec<&'static str> {
     let flags: &[&str] = match kind {
+        AgentKind::Codewiz => &[
+            "--format", "--pure", "--mcp", "--agent", "--model", "--title",
+        ],
         AgentKind::Codex => &[
             "--ignore-user-config",
             "--ignore-rules",
@@ -797,6 +918,7 @@ fn provider_name(kind: AgentKind) -> &'static str {
     match kind {
         AgentKind::Codex => "Codex",
         AgentKind::ClaudeCode => "Claude Code",
+        AgentKind::Codewiz => "Codewiz",
     }
 }
 fn safe_failure_text(output: &process::Output) -> String {
@@ -808,7 +930,10 @@ fn safe_failure_text(output: &process::Output) -> String {
             } else if value["type"] == "turn.failed" {
                 value["error"]["message"].as_str()
             } else if value["type"] == "error" {
-                value["message"].as_str()
+                value["message"]
+                    .as_str()
+                    .or_else(|| value["error"]["data"]["message"].as_str())
+                    .or_else(|| value["error"]["message"].as_str())
             } else {
                 None
             };
@@ -868,6 +993,8 @@ fn agent_failure(kind: AgentKind, phase: &str, output: &process::Output) -> Erro
         || lower.contains("401")
         || lower.contains("token expired")
         || lower.contains("invalid api key")
+        || lower.contains("尚未登录")
+        || lower.contains("登录已过期")
     {
         (
             "AI_AUTH_REQUIRED",
@@ -955,20 +1082,28 @@ pub(super) fn probe_program(program: &AgentProgram) -> Result<AgentProbeResult> 
     let expected = match kind {
         AgentKind::Codex => version.starts_with("codex-cli "),
         AgentKind::ClaudeCode => version.contains("Claude Code"),
+        AgentKind::Codewiz => {
+            version.chars().next().is_some_and(|c| c.is_ascii_digit()) && version.contains('.')
+        }
     };
     if !expected {
         return Err(unsupported(
             "所选程序没有返回预期的 Coding Agent 版本，请核对路径。",
         ));
     }
-    let help = execute(match kind {
-        AgentKind::Codex => &["exec", "--help"],
-        AgentKind::ClaudeCode => &["--help"],
-    })?;
+    program.validate()?;
+    let help = help_output(kind, &program.executable, &root)?;
     if help.code != 0 {
         return Err(agent_failure(kind, "capability check", &help));
     }
-    let missing = missing_capabilities(kind, &String::from_utf8_lossy(&help.stdout));
+    let missing = missing_capabilities(
+        kind,
+        &format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&help.stdout),
+            String::from_utf8_lossy(&help.stderr)
+        ),
+    );
     let compatible = missing.is_empty();
     if !compatible {
         return Ok(AgentProbeResult {
@@ -984,9 +1119,19 @@ pub(super) fn probe_program(program: &AgentProgram) -> Result<AgentProbeResult> 
             ),
         });
     }
+    if kind == AgentKind::Codewiz {
+        program.validate()?;
+        return Ok(AgentProbeResult {
+            provider: kind, executable_path: program.executable.clone(), version, compatible,
+            authenticated: codewiz::authenticated(&root),
+            message: "Codewiz CLI 已找到。".into(),
+            detail: "已检查 CLI 参数和本地登录文件。使用 ~/.config/codewiz 的模型配置；未调用模型或验证登录有效期。".into(),
+        });
+    }
     let login = execute(match kind {
         AgentKind::Codex => &["login", "status"],
         AgentKind::ClaudeCode => &["auth", "status", "--json"],
+        AgentKind::Codewiz => unreachable!(),
     })?;
     let authenticated = match kind {
         AgentKind::Codex => {
@@ -1007,6 +1152,7 @@ pub(super) fn probe_program(program: &AgentProgram) -> Result<AgentProbeResult> 
         AgentKind::ClaudeCode => serde_json::from_slice::<Value>(&login.stdout)
             .ok()
             .and_then(|v| v["loggedIn"].as_bool()),
+        AgentKind::Codewiz => unreachable!(),
     };
     let (message, detail) = match authenticated {
         Some(true) => (
@@ -1327,23 +1473,13 @@ int main(int argc, char **argv) {
                     &binary,
                     "read-only fixture request",
                     &schema,
-                    Duration::from_secs(3),
                     None,
                     || Ok(())
                 )
                 .unwrap()["ok"],
                 true
             );
-            let error = run(
-                kind,
-                &binary,
-                "failure",
-                &schema,
-                Duration::from_secs(3),
-                None,
-                || Ok(()),
-            )
-            .unwrap_err();
+            let error = run(kind, &binary, "failure", &schema, None, || Ok(())).unwrap_err();
             assert_eq!(error.code, "AI_AGENT_FAILED");
             assert!(!format!("{error:?}").contains("sk-test-private-token"));
         }
