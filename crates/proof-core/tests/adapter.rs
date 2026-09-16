@@ -72,6 +72,7 @@ fn every_registered_agent_exposes_active_and_passive_capabilities_from_one_adapt
     let f = Fixture::new("#!/bin/sh\nprintf '0.1.99\\n'\n");
     f.proof
         .set_agent_settings(proof_core::AgentSettingsUpdate {
+            prompts: None,
             expected_revision: 0,
             default_provider: proof_core::AgentKind::Codewiz,
             codex: Default::default(),

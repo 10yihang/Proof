@@ -1838,6 +1838,7 @@ async function openFixture(
                 codex: args.update.codex,
                 claudeCode: args.update.claudeCode,
                 codewiz: args.update.codewiz ?? state.agentSettings.codewiz,
+                prompts: args.update.prompts ?? state.agentSettings.prompts,
               };
               return structuredClone(state.agentSettings);
             }
@@ -2062,6 +2063,7 @@ async function openFixture(
                         reviewPriority: [first.path],
                       }
                     : null,
+                commitMessage: input.task === "commit" ? "fix(api): validate request boundaries\n\nHandle invalid input before dispatch." : null,
                 limitations: ["Fixture Agent; no model was called."],
               };
               if (state.aiHold)
@@ -6326,4 +6328,96 @@ test("blocked Agent analysis is an error in Grouping and Review, never an empty 
   await expect(panel.locator(".ai-report-meta")).toHaveCount(0);
   await expect(panel.getByText("此次分析未提出 Findings，仍需人工 Review。", { exact: true })).toHaveCount(0);
   await expect(panel.getByRole("combobox", { name: "Review 记录", exact: true })).toHaveCount(0);
+});
+
+test("task prompts persist separately and reset only the selected task", async ({ page }) => {
+  await openFixture(page, false, true);
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("tab", { name: "AI Agent", exact: true }).click();
+  await page.getByLabel("Grouping Prompt", { exact: true }).fill("按业务行为分组，不要按目录分组");
+  const tabs = page.getByRole("tablist", { name: "Prompt 类型" });
+  await tabs.getByRole("tab", { name: "AI Review", exact: true }).click();
+  await page.getByLabel("Review Prompt", { exact: true }).fill("重点检查并发和兼容性");
+  await tabs.getByRole("tab", { name: "AI Commit", exact: true }).click();
+  await page.getByLabel("Commit Prompt", { exact: true }).fill("Use Conventional Commits");
+  await page.getByRole("button", { name: "保存 Agent 设置", exact: true }).click();
+  await expect(page.locator(".agent-settings-footer").getByRole("status")).toContainText("已保存");
+  await page.getByRole("tab", { name: "外观与阅读", exact: true }).click();
+  await page.getByRole("tab", { name: "AI Agent", exact: true }).click();
+  await expect(page.getByLabel("Grouping Prompt", { exact: true })).toHaveValue("按业务行为分组，不要按目录分组");
+  await tabs.getByRole("tab", { name: "AI Commit", exact: true }).click();
+  await expect(page.getByLabel("Commit Prompt", { exact: true })).toHaveValue("Use Conventional Commits");
+  await page.getByRole("button", { name: "恢复默认", exact: true }).click();
+  await expect(page.getByLabel("Commit Prompt", { exact: true })).toHaveValue("");
+  await tabs.getByRole("tab", { name: "AI Review", exact: true }).click();
+  await expect(page.getByLabel("Review Prompt", { exact: true })).toHaveValue("重点检查并发和兼容性");
+  expect(await page.evaluate(() => (window as any).fixture.actions.filter((a: any) => a.command === "run_ai_task"))).toHaveLength(0);
+  await page.screenshot({ path: ".artifacts/ai-customization/prompts.png" });
+});
+
+test("AI Commit fills an empty draft without staging, committing or marking Review", async ({ page }) => {
+  await openFixture(page, false, true);
+  await openCommit(page);
+  await page.getByLabel("Commit message", { exact: true }).fill("");
+  await page.getByRole("button", { name: "AI Commit", exact: true }).click();
+  await expect(page.getByLabel("Commit message", { exact: true })).toHaveValue(/fix\(api\): validate request boundaries/);
+  const actions = await page.evaluate(() => (window as any).fixture.actions);
+  expect(actions.filter((a: any) => a.command === "run_ai_task")).toHaveLength(1);
+  expect(actions.find((a: any) => a.command === "run_ai_task").args.request).toMatchObject({ task: "commit", amend: false, scope: { kind: "local", files: null } });
+  expect(actions.filter((a: any) => ["stage", "stage_files", "commit", "mark_reviewed"].includes(a.command))).toHaveLength(0);
+  await page.screenshot({ path: ".artifacts/ai-customization/commit.png" });
+});
+
+test("AI Commit preserves edits made while generating and applies only on request", async ({ page }) => {
+  await openFixture(page, false, true);
+  await openCommit(page);
+  await page.getByLabel("Commit message", { exact: true }).fill("");
+  await page.evaluate(() => { (window as any).fixture.aiHold = true; });
+  await page.getByRole("button", { name: "AI Commit", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Agent 活动" })).toBeVisible();
+  await page.getByLabel("Commit message", { exact: true }).fill("My draft typed during generation");
+  await expect.poll(() => page.evaluate(() => !!(window as any).fixture.aiRelease)).toBe(true);
+  await page.evaluate(() => { (window as any).fixture.aiRelease(); });
+  await expect(page.getByRole("button", { name: "使用此说明", exact: true })).toBeVisible();
+  await expect(page.getByLabel("Commit message", { exact: true })).toHaveValue("My draft typed during generation");
+  await page.getByRole("button", { name: "使用此说明", exact: true }).click();
+  await expect(page.getByLabel("Commit message", { exact: true })).toHaveValue(/fix\(api\):/);
+});
+
+test("AI Commit cancellation preserves the draft and Amend uses its own scope", async ({ page }) => {
+  await openFixture(page, false, true);
+  await openCommit(page);
+  await page.getByRole("checkbox", { name: /Amend/ }).check();
+  const message = page.getByLabel("Commit message", { exact: true });
+  await message.fill("Keep amend draft");
+  await page.evaluate(() => { (window as any).fixture.aiHold = true; });
+  await page.getByRole("button", { name: "AI Commit", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => !!(window as any).fixture.aiReject)).toBe(true);
+  await page.getByRole("region", { name: "Agent 活动" }).getByRole("button", { name: "取消", exact: true }).click();
+  await expect(page.locator(".composer-ai-error")).toContainText("已取消");
+  await expect(message).toHaveValue("Keep amend draft");
+  const action = await page.evaluate(() => (window as any).fixture.actions.find((a: any) => a.command === "run_ai_task"));
+  expect(action.args.request.amend).toBe(true);
+});
+
+test("AI Commit drops a late result after the Git scope changes", async ({ page }) => {
+  await openFixture(page, false, true);
+  await openCommit(page);
+  const message = page.getByLabel("Commit message", { exact: true });
+  await message.fill("Keep the current draft");
+  await page.evaluate(() => { (window as any).fixture.aiHold = true; });
+  await page.getByRole("button", { name: "AI Commit", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => !!(window as any).fixture.aiRelease)).toBe(true);
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    fixture.aiReject = null; // Model completion can race with native cancellation.
+    fixture.changes.token = "different-index-generation";
+  });
+  await page.getByRole("button", { name: "打开命令面板", exact: true }).click();
+  await page.getByRole("dialog", { name: "命令面板", exact: true }).getByRole("option", { name: "刷新 Worktree", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Agent 活动" })).toHaveCount(0);
+  await page.evaluate(() => { (window as any).fixture.aiRelease(); });
+  await expect(message).toHaveValue("Keep the current draft");
+  await expect(page.locator(".composer-ai-suggestion")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "AI Commit", exact: true })).toBeEnabled();
 });

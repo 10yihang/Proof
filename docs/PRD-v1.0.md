@@ -343,6 +343,10 @@ Monaco 等组件只负责展示和文本交互；Git patch 与 Hunk 身份由独
 Settings → AI Agents 提供默认 Provider、CLI 路径、可选模型和 Test CLI。自动发现仅检查程序位置；用户点击 Test CLI 后检查版本、只读参数和本地登录状态，不启动模型。设置仅保存在 Proof，不修改 CLI 全局配置；实际运行前检查隔离参数支持，不限制固定 CLI 版本，缺失能力时列出具体参数。新任务不 resume / continue / attach 用户原 Session，不改变任何全局 CLI 配置。取消只结束 Proof 所拥有的进程组。
 **验收：** CLI 缺失、未登录、额度不足、版本不兼容、超时及用户取消均不影响 Git、Diff、Stage、Commit 和人工 Review。主动 AI 与 Passive Agent Observer 的安装、授权、生命周期、存储完全独立。
 
+Settings 还提供 Grouping、Review、Commit 三类独立自定义 Prompt，支持恢复默认、跨重启保存。Prompt 控制语言、风格和任务重点，不能改变只读边界和结构化数据校验。保存设置不启动模型。
+
+主动任务每次新建会话，并保留到对应 Agent 的原生会话存储。关闭或完成任务不再主动禁止原生会话持久化；不接续或覆盖用户已有 Session。结果可复制 CLI 恢复命令；不同 CLI 的非交互会话遵循各自列表 / Session ID 恢复规则。清除 Proof 本地数据不删除 Agent 管理的原生会话。
+
 ## AI-04｜只读执行与数据边界 · P0
 代码、注释、路径和 Patch 均为不可信数据，不能改变只读任务权限。Review 与 Grouping 的 CLI 工作目录直接指向当前真实项目目录，Agent 可以按需搜索完整实现、调用方、测试、文档与配置；不复制项目，不因 ignored、大文件或上下文数量而裁剪可读目录。任务范围决定哪些变更需要分析，不限制为理解它们而读取项目内其他文件。被动 Observer 会话不作为主动分析输入。
 Proof 通过 stdin 提供任务说明、范围和输出 Schema，并在独立临时目录保存范围清单与 canonical Git patches，作为定位和校验结果的辅助证据。这些 Patch 冻结本次选定 Diff，不替代完整项目上下文。Local 区分 HEAD / Index / Worktree；Agent 可以使用只读 git show / diff / log 查询对应版本。历史比较固定 base / target OID（支持根 Commit 的 empty base），不能将当前 Worktree 当成历史版本。项目文件实时可见，结果注明实时上下文可能变化；Diff 版本不匹配时沿用过期标记和定位保护。
@@ -355,8 +359,15 @@ macOS 使用进程级只读沙箱，CLI 及所有子进程仅能写本次私有�
 Git Diff 永远是 Source of Truth；AI 分组、风险与解释仅为辅助，最终 Review 由人完成。AI Commit、生成代码或 Agent 自称完成均不构成人工 Reviewed。
 
 ## AI-06｜主动任务活动与取消 · P0
-Grouping、Review、独立 Diff tab 共用活动面板，显示准备变更 / 快照、启动 Agent、读取文件、搜索代码、Git 查询、执行命令和校验结果等实际阶段。仅在已知文件路径匹配时显示路径，不显示内部推理、原始命令参数、工具输出和凭据。捕获阶段可显示真实文件计数；Agent 探索期间不伪造百分比。
+Grouping、Review、AI Commit、独立 Diff tab 共用活动面板，显示准备变更 / 快照、启动 Agent、读取文件、搜索代码、Git 查询、执行命令和校验结果等实际阶段。仅在已知文件路径匹配时显示路径，不显示内部推理、原始命令参数、工具输出和凭据。捕获阶段可显示真实文件计数；Agent 探索期间不伪造百分比。
 始终显示运行时长。连续 15 秒没有新事件时提示等待新活动，不能将无事件直接判为卡死或失败。最近 40 条活动有界保留，重复准备事件合并；活动可展开查看。取消后显示正在取消，终止本任务所拥有的进程组，完成或失败后结束运行状态。事件按窗口和一次性读取 ticket 隔离，监听先于任务注册，结束后解除监听；旧任务和其他窗口事件不能更新当前任务。
+
+
+## AI-07｜AI Commit message · P0
+
+Commit 页显式触发 AI Commit，仅根据当前 Staged 变更生成可编辑的提交说明。Amend 时结合上一条 Commit 和 Staged 增量；普通模式未 Stage 时提示先选择提交内容。支持本机 Codex、Claude Code、已安装 Codewiz、活动提示、取消与错误详情。已有草稿保持原样，用户选择采纳后替换；生成期间 Index / HEAD 改变则拒绝应用旧结果。AI 不执行 Stage、Commit、Amend、Push 或人工 Reviewed 操作。
+
+**验收：** 生成操作不改变 HEAD / Index；不会把 Unstaged 内容当成 Staged；不会覆盖生成期间输入的草稿；缺少 CLI 时普通 Commit 不受影响；三类 Prompt 各自保存和生效，设置更改不消耗 Token。
 
 
 # 15｜Repository 页面与传统 Git 能力

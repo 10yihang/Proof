@@ -2,8 +2,7 @@ import { useEffect, useState } from "react";
 import { CircleNotch, Circle, CaretDown } from "@phosphor-icons/react";
 import { Button } from "./ui/controls";
 import { t } from "../i18n";
-import type { AiController } from "../ai";
-import type { AiActivity } from "../ai-progress";
+import type { AiActivity, AiRunProgress } from "../ai-progress";
 
 function label(event: AiActivity) {
   const labels = {
@@ -24,7 +23,15 @@ function duration(ms: number) {
   const seconds = Math.max(0, Math.floor(ms / 1000));
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
-export function AiTaskProgress({ ai }: { ai: AiController }) {
+export function AiTaskProgress({
+  ai,
+}: {
+  ai: {
+    pending: "grouping" | "review" | "commit" | null;
+    progress: AiRunProgress | null;
+    cancel: () => void;
+  };
+}) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     if (!ai.pending) return;
@@ -43,9 +50,11 @@ export function AiTaskProgress({ ai }: { ai: AiController }) {
       <header>
         <CircleNotch size={15} className="ai-task-spinner" aria-hidden="true" />
         <strong>
-          {ai.pending === "grouping"
-            ? t("Grouping changes…")
-            : t("Reviewing diff…")}
+          {ai.pending === "commit"
+            ? t("正在生成 Commit message…")
+            : ai.pending === "grouping"
+              ? t("Grouping changes…")
+              : t("Reviewing diff…")}
         </strong>
         <time aria-label={t("运行时长")}>
           {duration(now - state.startedAt)}

@@ -68,7 +68,7 @@ impl<'a> ActivityStream<'a> {
             }
             if part.last() == Some(&b'\n') {
                 if !self.oversized {
-                    if let Ok(event) = serde_json::from_slice::<Value>(&self.pending) {
+                    if let Ok(Some(event)) = super::events::parse_line(&self.pending) {
                         self.event(&event);
                     }
                 }
@@ -176,6 +176,26 @@ impl<'a> ActivityStream<'a> {
 mod tests {
     use super::*;
     use std::cell::RefCell;
+    #[test]
+    fn codewiz_activity_uses_the_same_framing_as_final_results() {
+        let events = RefCell::new(Vec::new());
+        let paths = vec!["src/auth.rs".into()];
+        let emit = |event| events.borrow_mut().push(event);
+        let mut stream = ActivityStream::new(&paths, &emit);
+        let text = b"\xef\xbb\xbf[INFO] private-token\r\n\x1b[36m{\"type\":\"step_start\"}\x1b[0m\r\n \t\r\n[INFO] {\"type\":\"step_start\"}\n\x1b[2K{\"type\":\"tool_use\",\"part\":{\"tool\":\"read\",\"state\":{\"status\":\"completed\",\"input\":{\"filePath\":\"/repo/src/auth.rs\"},\"output\":\"private-token\"}}}\x1b[0m\r\n";
+        for chunk in text.chunks(5) {
+            stream.feed(chunk);
+        }
+        let events = events.borrow();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].phase, "analyzing");
+        assert_eq!(events[1].phase, "reading");
+        assert_eq!(events[1].path.as_deref(), Some("src/auth.rs"));
+        assert!(!serde_json::to_string(&*events)
+            .unwrap()
+            .contains("private-token"));
+    }
+
     #[test]
     fn project_context_progress_includes_related_files_but_not_outside_paths_or_raw_commands() {
         let events = RefCell::new(Vec::new());

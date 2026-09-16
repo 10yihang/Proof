@@ -32,6 +32,11 @@ impl PreparedAiTask {
         self.cancellation.run(|| {
             let tx = Transaction::new_unchecked(&proof.store.connection, TransactionBehavior::Immediate)?;
             proof.check_data_epoch(self.data_epoch)?;
+            if self.request.task == AiTask::Commit {
+                if let AiScope::Local { workspace_id, expected_token, .. } = &self.request.scope {
+                    if proof.changes(workspace_id)?.token != *expected_token { return Err(Error::stale()); }
+                }
+            }
             if !proof.store.workspace(self.request.scope.workspace_id())?.trusted {
                 return Err(Error::new("TRUST_REQUIRED", "仓库信任已撤销，未保存分析结果。", "AI report completion requires trust"));
             }

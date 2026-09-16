@@ -390,15 +390,7 @@ fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
 
 pub(super) fn arguments() -> Vec<String> {
     [
-        "run",
-        "--format",
-        "json",
-        "--pure",
-        "--no-mcp",
-        "--agent",
-        "proof",
-        "--title",
-        "Proof analysis",
+        "run", "--format", "json", "--pure", "--no-mcp", "--agent", "proof",
     ]
     .into_iter()
     .map(str::to_owned)
@@ -418,9 +410,19 @@ pub(super) fn prompt(prompt: &str, schema: &Value) -> String {
 pub(super) fn decode(bytes: &[u8]) -> Result<Value> {
     let mut text = None;
     let mut finished = false;
-    for line in bytes.split(|b| *b == b'\n').filter(|line| !line.is_empty()) {
-        let event: Value =
-            serde_json::from_slice(line).map_err(|_| invalid("Invalid Codewiz event"))?;
+    for (index, line) in bytes.split(|b| *b == b'\n').enumerate() {
+        let Some(event) = super::events::parse_line(line).map_err(|error| {
+            // Locate a broken event without echoing tool output or credentials.
+            invalid(format!(
+                "Invalid Codewiz event at output line {} (JSON {:?}, column {})",
+                index + 1,
+                error.classify(),
+                error.column()
+            ))
+        })?
+        else {
+            continue;
+        };
         match event["type"].as_str() {
             Some("error") => return Err(invalid("Codewiz analysis failed")),
             Some("step_start") => {
@@ -467,6 +469,64 @@ pub(super) fn authenticated(runtime: &Path) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn grouping_result_survives_cli_diagnostics_between_json_events() {
+        let result = json!({
+            "analysisStatus": "completed", "blockers": [],
+            "groups": [{"title": "Authentication", "summary": "Update token validation",
+                "files": ["auth.go", "token.go"], "risk": "medium", "reviewPriority": 1}]
+        });
+        let text = json!({"type": "text", "part": {"text": result.to_string()}});
+        let stream = format!(
+            "Loading from local path: /fixture/context.txt\n\
+             {{\"type\":\"step_start\"}}\n\
+             [INFO] Model initialized\n\
+             {text}\n\
+             {{\"type\":\"step_finish\",\"part\":{{\"reason\":\"stop\"}}}}\n\
+             [INFO] Session closed\n"
+        );
+        assert_eq!(decode(stream.as_bytes()).unwrap(), result);
+    }
+
+    #[test]
+    fn accepts_blank_crlf_and_terminal_decorated_event_lines() {
+        let stream = b"\xef\xbb\xbf \r\n\x1b[?25l\x1b[36m{\"type\":\"step_start\"}\x1b[0m\r\n \t\r\n{\"type\":\"text\",\"part\":{\"text\":\"{\\\"ok\\\":true}\"}}\r\n\x1b[2K{\"type\":\"step_finish\",\"part\":{\"reason\":\"stop\"}}\x1b[0m\n\x1b[?25h";
+        assert_eq!(decode(stream).unwrap()["ok"], true);
+    }
+
+    #[test]
+    fn diagnostics_cannot_supply_a_result_or_hide_a_failed_step() {
+        let result = json!({"type": "text", "part": {"text": "{\"ok\":true}"}});
+        let start = "{\"type\":\"step_start\"}\n";
+        let stop = "{\"type\":\"step_finish\",\"part\":{\"reason\":\"stop\"}}\n";
+        for stream in [
+            format!("[INFO] {result}\n[INFO] {stop}"),
+            format!("{start}[INFO] {result}\n{stop}"),
+            format!("[INFO] starting\n{start}{result}\n[INFO] completed\n"),
+            format!("{start}{result}\n{stop}[INFO] retrying\n{start}"),
+            format!("{start}{result}\n{stop}[INFO] shutdown\n{{\"type\":\"error\"}}"),
+            format!("{start}{result}\n{stop}[INFO] shutdown\n{{\"type\":\"step_finish\",\"part\":{{\"reason\":\"length\"}}}}"),
+        ] {
+            assert_eq!(decode(stream.as_bytes()).unwrap_err().code, "AI_INVALID_OUTPUT");
+        }
+    }
+
+    #[test]
+    fn malformed_events_still_fail_without_disclosing_their_payload() {
+        for event in [
+            "{\"type\":\"text\",\"secret\":\"private-token\"",
+            "{\"type\":\"text\",\"secret\":\"private-token\", invalid}",
+            "{\"type\":\"text\",\"part\":{\"text\":\"private-token\x1b[31m\"}}",
+        ] {
+            let stream = format!("[INFO] initialized\n\x1b[36m{event}\x1b[0m\n");
+            let error = decode(stream.as_bytes()).unwrap_err();
+            assert_eq!(error.code, "AI_INVALID_OUTPUT");
+            assert!(error.detail.contains("output line 2 (JSON"));
+            assert!(!error.detail.contains("private-token"));
+        }
+    }
+
     #[test]
     fn copies_only_model_configuration_and_isolates_login_and_session_state() {
         let root = tempfile::tempdir().unwrap();

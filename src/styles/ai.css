@@ -826,3 +826,91 @@
   flex-shrink: 0;
   color: var(--muted);
 }
+
+.agent-prompt-settings {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.agent-prompt-settings > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.agent-prompt-settings h4 {
+  margin: 0;
+  font-size: 13px;
+}
+.agent-prompt-settings textarea {
+  width: 100%;
+  min-height: 120px;
+  resize: vertical;
+  margin-top: 10px;
+  line-height: 1.6;
+}
+.agent-prompt-settings [role="tab"][aria-selected="true"] {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.composer-ai-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.composer-ai-toolbar > .button {
+  flex-shrink: 0;
+  font-size: 12px;
+}
+.composer-ai-toolbar > [role="combobox"] {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+}
+.composer-ai-suggestion {
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+.composer-ai-suggestion pre,
+.composer-ai-error pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  max-height: 180px;
+  overflow: auto;
+}
+.composer-ai-suggestion > div {
+  display: flex;
+  gap: 8px;
+}
+.composer-ai-error {
+  color: var(--del);
+  font-size: 11px;
+  margin-top: 8px;
+}
+.composer-ai-error details {
+  margin-top: 4px;
+  color: var(--muted);
+}
+.ai-session-link {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 6px 0;
+}
+.ai-session-link summary {
+  cursor: pointer;
+}
+.ai-session-link code {
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 6px 0;
+  padding: 6px;
+  background: var(--surface);
+  border-radius: 4px;
+  user-select: all;
+}

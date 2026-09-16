@@ -1,4 +1,5 @@
-import { Button, Select, Input } from "./ui/controls";
+import { Tabs } from "@base-ui/react/tabs";
+import { Button, Select, Input, Textarea } from "./ui/controls";
 import { t, uiMessage } from "../i18n";
 import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -21,6 +22,7 @@ export interface AgentSettingsValue {
   codex: AgentOptions;
   claudeCode: AgentOptions;
   codewiz: AgentOptions;
+  prompts: { grouping: string; review: string; commit: string };
 }
 interface ProbeResult {
   provider: AgentKind;
@@ -37,8 +39,12 @@ const defaults = (): AgentSettingsValue => ({
   codex: { executablePath: null, model: null },
   claudeCode: { executablePath: null, model: null },
   codewiz: { executablePath: null, model: null },
+  prompts: { grouping: "", review: "", commit: "" },
 });
 export function AgentSettings({ demo }: { demo: boolean }) {
+  const [promptTab, setPromptTab] = useState<"grouping" | "review" | "commit">(
+    "grouping",
+  );
   const request = useRequest(),
     reader = useReadRequest();
   const [draft, setDraft] = useState(defaults),
@@ -120,10 +126,11 @@ export function AgentSettings({ demo }: { demo: boolean }) {
           codex: draft.codex,
           claudeCode: draft.claudeCode,
           codewiz: draft.codewiz,
+          prompts: draft.prompts,
         },
       });
       if (mounted.current) {
-        setDraft(value);
+        setDraft({ ...defaults(), ...value });
         setSaved(true);
         window.dispatchEvent(new Event("proof:agent-settings-changed"));
       }
@@ -158,7 +165,7 @@ export function AgentSettings({ demo }: { demo: boolean }) {
           <h3>{t("AI Agents")}</h3>
           <p className="muted">
             {t(
-              "通过本机 Coding Agent 执行 Grouping 和 Review，使用 CLI 的现有登录。",
+              "通过本机 Coding Agent 执行 Grouping、Review 和 AI Commit，使用 CLI 的现有登录。",
             )}
           </p>
         </div>
@@ -175,6 +182,12 @@ export function AgentSettings({ demo }: { demo: boolean }) {
         {t(
           "这些设置只保存在 Proof，不修改 CLI 配置。Agent 观察在单独的设置页。",
         )}
+      </p>
+      <p className="muted">
+        {t("每次运行新建会话并保留到对应 Agent。已有终端会话不会被接续。")}
+      </p>
+      <p className="muted">
+        {t("会话由对应 Agent 管理，清除 Proof 本地数据不会删除这些会话。")}
       </p>
       {demo && (
         <p className="inline-notice">{t("演示模式不检测或保存本机 Agent。")}</p>
@@ -212,6 +225,82 @@ export function AgentSettings({ demo }: { demo: boolean }) {
           </option>
         ))}
       </Select>
+      <section
+        className="agent-prompt-settings"
+        aria-label={t("自定义 Prompt")}
+      >
+        <header>
+          <h4>{t("自定义 Prompt")}</h4>
+          <Button
+            className="text-button"
+            disabled={loading || saving || demo || !draft.prompts[promptTab]}
+            onClick={() => {
+              setDraft((value) => ({
+                ...value,
+                prompts: { ...value.prompts, [promptTab]: "" },
+              }));
+              setSaved(false);
+            }}
+          >
+            {t("恢复默认")}
+          </Button>
+        </header>
+        <Tabs.Root
+          value={promptTab}
+          onValueChange={(value) => setPromptTab(value as typeof promptTab)}
+        >
+          <Tabs.List className="segmented" aria-label={t("Prompt 类型")}>
+            {(["grouping", "review", "commit"] as const).map((task) => (
+              <Tabs.Tab key={task} value={task} render={<Button />}>
+                {
+                  {
+                    grouping: t("AI Group Changes"),
+                    review: "AI Review",
+                    commit: "AI Commit",
+                  }[task]
+                }
+              </Tabs.Tab>
+            ))}
+          </Tabs.List>
+          <Tabs.Panel value={promptTab}>
+            <Textarea
+              aria-label={`${{ grouping: "Grouping", review: "Review", commit: "Commit" }[promptTab]} Prompt`}
+              rows={5}
+              spellCheck={false}
+              value={draft.prompts[promptTab]}
+              disabled={loading || saving || demo}
+              placeholder={
+                promptTab === "grouping"
+                  ? t(
+                      "例如：按业务行为分组，将实现与测试放在同一组，组名保持简短。",
+                    )
+                  : promptTab === "review"
+                    ? t(
+                        "例如：重点检查并发、错误处理和兼容性，指出缺少的边界测试。",
+                      )
+                    : t(
+                        "例如：使用 Conventional Commits，标题用英文，正文用中文说明原因。",
+                      )
+              }
+              onChange={(event) => {
+                setDraft((value) => ({
+                  ...value,
+                  prompts: {
+                    ...value.prompts,
+                    [promptTab]: event.target.value,
+                  },
+                }));
+                setSaved(false);
+              }}
+            />
+          </Tabs.Panel>
+        </Tabs.Root>
+        <p className="muted">
+          {t(
+            "留空使用默认规则。自定义 Prompt 应用于所有 Agent，保存后在下次手动运行时生效。",
+          )}
+        </p>
+      </section>
       {providers.map((found) => {
         const kind = found.id;
         const options = draft[kind === "claude_code" ? "claudeCode" : kind],

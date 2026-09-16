@@ -4,11 +4,12 @@
 
 面向 AI 编码场景、以人工 Diff / Code Review 为核心的本地 Git 客户端。
 
-**当前版本：0.1.4。** [下载 macOS Apple Silicon 版本](https://github.com/10yihang/Proof/releases/tag/v0.1.4)。其他平台和完整性能验收仍在推进。
+**当前版本：0.1.5。** [下载 macOS Apple Silicon 版本](https://github.com/10yihang/Proof/releases/tag/v0.1.5)。其他平台和完整性能验收仍在推进。
 
 - Local changes、文件树、Stage、Commit / Amend、History graph 与独立 Diff tabs。
 - 使用只读 Monaco 查看统一或并排 Diff，支持上下文展开、全文、搜索和独立窗口。
-- 通过本机 Codex CLI / Claude Code（安装后也可使用 Codewiz）主动发起 AI 分组与 Review，使用 CLI 的现有登录和额度，不要求配置 API Key。
+- 通过本机 Codex CLI / Claude Code（安装后也可使用 Codewiz）主动发起 AI 分组、Review 与 Commit message 生成，使用 CLI 的现有登录和额度，不要求配置 API Key。
+- 分组、Review 和 AI Commit 可分别设置自定义 Prompt；分析会话保留在对应 Agent 中，支持复制命令在 CLI 继续。
 - Review 评论支持行范围、采纳 / 不采纳、本地持久化，以及导出修改说明交给 Agent。
 - Passive Agent Observer 与主动 AI 调用分离；普通 Git 功能不依赖 Agent。
 
@@ -34,7 +35,7 @@ cargo test -p proof-core
 npm run tauri -- build --debug --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
 ```
 
-发布构建：`npm run release:build`，使用本机已有的 updater 签名密钥。普通开发构建可按上面的命令关闭更新包生成，不需要签名私钥。版本与发布说明见 [0.1.4](docs/releases/0.1.4.md)。
+发布构建：`npm run release:build`，使用本机已有的 updater 签名密钥。普通开发构建可按上面的命令关闭更新包生成，不需要签名私钥。版本与发布说明见 [0.1.5](docs/releases/0.1.5.md)。
 
 当前 macOS 包使用 ad-hoc 签名，尚未进行 Developer ID 签名与 Apple 公证。签名方式依据 [Tauri 官方说明](https://v2.tauri.app/distribute/sign/macos/#ad-hoc-signing)。
 

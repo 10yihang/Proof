@@ -7,6 +7,40 @@ use std::path::{Path, PathBuf};
 const KEY: &str = "ai:settings";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields, default)]
+pub struct AgentPrompts {
+    pub grouping: String,
+    pub review: String,
+    pub commit: String,
+}
+impl AgentPrompts {
+    pub(super) fn for_task(&self, task: super::AiTask) -> &str {
+        match task {
+            super::AiTask::Grouping => &self.grouping,
+            super::AiTask::Review => &self.review,
+            super::AiTask::Commit => &self.commit,
+        }
+    }
+    fn clean(&mut self) -> Result<()> {
+        for value in [&mut self.grouping, &mut self.review, &mut self.commit] {
+            *value = value.trim().to_owned();
+            if value.len() > 16_000
+                || value
+                    .chars()
+                    .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
+            {
+                return Err(Error::new(
+                    "AI_PROMPT_INVALID",
+                    "自定义 Prompt 过长或包含无效字符。",
+                    "Prompts support up to 16,000 UTF-8 bytes per task",
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentOptions {
     pub executable_path: Option<String>,
@@ -21,6 +55,8 @@ pub struct AgentSettings {
     pub claude_code: AgentOptions,
     #[serde(default)]
     pub codewiz: AgentOptions,
+    #[serde(default)]
+    pub prompts: AgentPrompts,
 }
 impl Default for AgentSettings {
     fn default() -> Self {
@@ -30,6 +66,7 @@ impl Default for AgentSettings {
             codex: AgentOptions::default(),
             claude_code: AgentOptions::default(),
             codewiz: AgentOptions::default(),
+            prompts: AgentPrompts::default(),
         }
     }
 }
@@ -51,6 +88,8 @@ pub struct AgentSettingsUpdate {
     pub claude_code: AgentOptions,
     #[serde(default)]
     pub codewiz: Option<AgentOptions>,
+    #[serde(default)]
+    pub prompts: Option<AgentPrompts>,
 }
 pub(super) fn read(store: &crate::store::Store) -> Result<AgentSettings> {
     read_connection(&store.connection)
@@ -105,6 +144,9 @@ impl Proof {
         Ok(provider::provider_information(&settings))
     }
     pub fn set_agent_settings(&self, mut update: AgentSettingsUpdate) -> Result<AgentSettings> {
+        if let Some(prompts) = &mut update.prompts {
+            prompts.clean()?;
+        }
         clean(&mut update.codex)?;
         clean(&mut update.claude_code)?;
         if let Some(options) = &mut update.codewiz {
@@ -147,6 +189,7 @@ impl Proof {
             codex: update.codex,
             claude_code: update.claude_code,
             codewiz: update.codewiz.unwrap_or(previous.codewiz),
+            prompts: update.prompts.unwrap_or(previous.prompts),
         };
         tx.execute("INSERT INTO settings(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[KEY,&serde_json::to_string(&value)?])?;
         tx.commit()?;

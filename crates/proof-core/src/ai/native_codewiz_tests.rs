@@ -119,7 +119,7 @@ fn installed_codewiz_reads_project_and_external_evidence_without_modifying_eithe
                 || content.to_lowercase().contains("read-only file system")
                 || content.to_lowercase().contains("permission denied");
             let delta = if saw_read && saw_protection && saw_evidence {
-                serde_json::json!({"content":"{\"ok\":true}"})
+                serde_json::json!({"content":serde_json::json!({"ok":true,"padding":"x".repeat(32_000)}).to_string()})
             } else if !saw_evidence {
                 serde_json::json!({"tool_calls":[{"index":0,"id":"call_evidence","type":"function","function":{"name":"read","arguments":serde_json::json!({"filePath":evidence_file}).to_string()}}]})
             } else {
@@ -186,9 +186,13 @@ fn installed_codewiz_reads_project_and_external_evidence_without_modifying_eithe
     let paths = vec!["contract.txt".into()];
     let emit = |event| events.borrow_mut().push(event);
     let mut activity = super::super::progress::ActivityStream::new(&paths, &emit);
-    let output = process::run_observed(command, Some(codewiz::prompt("Read the task evidence and project contract; report JSON.", &serde_json::json!({"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"]})).as_bytes()), Duration::from_secs(40), &mut |bytes| activity.feed(bytes));
-    done.store(true, Ordering::Relaxed);
-    let (read, protection) = server.join().unwrap();
+    let mut session_template = Command::new(command.get_program());
+    session_template
+        .args(command.get_args())
+        .env_clear()
+        .envs(command.get_envs().filter_map(|(k, v)| v.map(|v| (k, v))))
+        .current_dir(&snapshot);
+    let output = process::run_file_observed(command, Some(codewiz::prompt("Read the task evidence and project contract; report JSON.", &serde_json::json!({"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"]})).as_bytes()), Some(Duration::from_secs(40)), 32 * 1024 * 1024, Some(&mut |bytes| activity.feed(bytes)), &runtime.join("events.jsonl"));
     let output = output.unwrap();
     assert_eq!(
         output.code,
@@ -198,9 +202,12 @@ fn installed_codewiz_reads_project_and_external_evidence_without_modifying_eithe
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(codewiz::decode(&output.stdout).unwrap()["ok"], true);
-    assert!(
-        read && protection,
-        "Native read and write-denial evidence required"
+    assert_eq!(
+        codewiz::decode(&output.stdout).unwrap()["padding"]
+            .as_str()
+            .unwrap()
+            .len(),
+        32_000
     );
     assert_eq!(
         fs::read_to_string(snapshot.join("contract.txt")).unwrap(),
@@ -215,4 +222,102 @@ fn installed_codewiz_reads_project_and_external_evidence_without_modifying_eithe
         "Project plugins must not run during active analysis"
     );
     assert!(!events.borrow().is_empty());
+    let id = output
+        .stdout
+        .split(|b| *b == b'\n')
+        .filter_map(|line| serde_json::from_slice::<Value>(line).ok())
+        .find_map(|value| value["sessionID"].as_str().map(str::to_owned))
+        .unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    let data = fs::canonicalize(destination.path()).unwrap();
+    super::super::sessions::publish_codewiz(&runtime, &executable, &session_template, &data, &id)
+        .unwrap();
+    let db = rusqlite::Connection::open(data.join("codewiz/opencode.db")).unwrap();
+    assert!(db
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM session WHERE id=?)",
+            [&id],
+            |r| r.get::<_, bool>(0)
+        )
+        .unwrap());
+    // Continue from the native database with the normal built-in Agent, not
+    // the temporary Proof agent definition used by the original read-only run.
+    let config_path = runtime.join("config/codewiz/codewiz.json");
+    let mut config: Value = serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
+    config["agent"] = serde_json::json!({});
+    config["default_agent"] = "build".into();
+    fs::write(&config_path, config.to_string()).unwrap();
+    let import_data = fs::read_dir(&runtime)
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| {
+            p.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("session-import-")
+        })
+        .unwrap();
+    let args = session_template.get_args().collect::<Vec<_>>();
+    let mut profile = args[1].to_string_lossy().into_owned();
+    profile.push_str("(allow file-write*");
+    for name in [
+        "opencode.db",
+        "opencode.db-wal",
+        "opencode.db-shm",
+        "opencode.db-journal",
+    ] {
+        profile.push_str(&format!(
+            " (literal {})",
+            serde_json::to_string(&data.join("codewiz").join(name)).unwrap()
+        ));
+    }
+    profile.push(')');
+    let mut resume = Command::new("/usr/bin/sandbox-exec");
+    resume
+        .args(["-p", &profile])
+        .arg(&executable)
+        .args([
+            "run",
+            "--format",
+            "json",
+            "--pure",
+            "--no-mcp",
+            "--session",
+            &id,
+        ])
+        .env_clear()
+        .envs(
+            session_template
+                .get_envs()
+                .filter_map(|(k, v)| v.map(|v| (k, v))),
+        )
+        .env("XDG_DATA_HOME", &import_data)
+        .current_dir(&snapshot);
+    let resumed = process::run_file_observed(
+        resume,
+        Some(b"Continue this session and return the same JSON result."),
+        Some(Duration::from_secs(15)),
+        32 * 1024 * 1024,
+        None,
+        &runtime.join("resumed.jsonl"),
+    );
+    done.store(true, Ordering::Relaxed);
+    let (read, protection) = server.join().unwrap();
+    let resumed = resumed.unwrap();
+    assert_eq!(resumed.code, 0, "{}", safe_failure_text(&resumed));
+    assert_eq!(codewiz::decode(&resumed.stdout).unwrap()["ok"], true);
+    assert!(
+        read && protection,
+        "Native read and write-denial evidence required"
+    );
+    // A retry cannot rewrite a session once it belongs to the user's CLI.
+    assert!(super::super::sessions::publish_codewiz(
+        &runtime,
+        &executable,
+        &session_template,
+        &data,
+        &id
+    )
+    .is_err());
 }

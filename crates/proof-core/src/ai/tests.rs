@@ -44,6 +44,7 @@ fn fixture() -> (tempfile::TempDir, Proof, crate::Workspace) {
 }
 fn request(proof: &Proof, workspace: &crate::Workspace, task: AiTask) -> AiRequest {
     AiRequest {
+        amend: false,
         provider: AgentKind::Codex,
         task,
         scope: AiScope::Local {
@@ -64,6 +65,45 @@ fn group() -> AiGroup {
 }
 fn review() -> serde_json::Value {
     json!({"analysisStatus":"completed","blockers":[],"summary":"Check access control", "overallRisk":"high", "findings":[{"severity":"high","title":"Unconditional access","description":"This grants access without validation.","file":"auth.rs","side":"unstaged","line":1,"lineSide":"new","suggestion":"Keep validation."}],"behaviorChanges":["Access granted"],"missingTests":["Unauthenticated access"],"reviewPriority":["auth.rs"]})
+}
+
+#[test]
+fn codewiz_noisy_streams_preserve_grouping_and_review_validation() {
+    let (_temp, mut proof, workspace) = fixture();
+    let decode = |value: serde_json::Value| {
+        let text = json!({"type": "text", "part": {"text": value.to_string()}});
+        codewiz::decode(format!(
+            "[INFO] Starting\n{{\"type\":\"step_start\"}}\n\x1b[36m{text}\x1b[0m\r\n[INFO] Finishing\n{{\"type\":\"step_finish\",\"part\":{{\"reason\":\"stop\"}}}}\n"
+        ).as_bytes()).unwrap()
+    };
+    let job = proof
+        .prepare_ai_task(request(&proof, &workspace, AiTask::Grouping))
+        .unwrap();
+    let mut value = json!({"analysisStatus":"completed", "blockers":[], "groups":[group()]});
+    assert!(job.validate(decode(value.clone())).is_ok());
+    value["groups"][0]["files"] = json!(["auth.rs"]);
+    assert_eq!(
+        job.validate(decode(value.clone())).unwrap_err().code,
+        "AI_INVALID_OUTPUT"
+    );
+    value["analysisStatus"] = json!("blocked");
+    value["blockers"] = json!(["Unable to read a patch"]);
+    value["groups"] = json!([]);
+    assert_eq!(
+        job.validate(decode(value)).unwrap_err().code,
+        "AI_ANALYSIS_BLOCKED"
+    );
+    drop(job);
+    let job = proof
+        .prepare_ai_task(request(&proof, &workspace, AiTask::Review))
+        .unwrap();
+    assert!(job.validate(decode(review())).is_ok());
+    let mut invalid = review();
+    invalid["findings"][0]["file"] = json!("outside-scope.rs");
+    assert_eq!(
+        job.validate(decode(invalid)).unwrap_err().code,
+        "AI_INVALID_OUTPUT"
+    );
 }
 
 #[test]
@@ -243,6 +283,7 @@ fn historical_review_uses_the_diff_tabs_frozen_commits() {
     git(repo, &["commit", "-m", "target"]);
     let target = git(repo, &["rev-parse", "HEAD"]);
     let input = AiRequest {
+        amend: false,
         provider: AgentKind::ClaudeCode,
         task: AiTask::Review,
         scope: AiScope::Comparison {
@@ -274,6 +315,7 @@ fn current_review_accepts_unchanged_content_across_new_snapshot_ids() {
     let token = proof.changes(&workspace.id).unwrap().token;
     let job = proof
         .prepare_ai_task(AiRequest {
+            amend: false,
             provider: AgentKind::Codex,
             task: AiTask::Review,
             scope: AiScope::Local {
@@ -438,6 +480,7 @@ fn agent_settings_persist_defaults_paths_models_and_use_revision_cas() {
     let initial = proof.agent_settings().unwrap();
     assert_eq!(initial.revision, 0);
     let update = || AgentSettingsUpdate {
+        prompts: None,
         expected_revision: 0,
         default_provider: AgentKind::ClaudeCode,
         codex: AgentOptions {
@@ -519,6 +562,7 @@ fn legacy_agent_settings_migrate_and_older_clients_preserve_codewiz_options() {
 fn invalid_agent_paths_models_and_untrusted_sources_do_not_replace_settings() {
     let (_temp, proof, workspace) = fixture();
     let mut update = AgentSettingsUpdate {
+        prompts: None,
         expected_revision: 0,
         default_provider: AgentKind::Codex,
         codex: AgentOptions {
@@ -569,6 +613,7 @@ fn comparison_grouping_is_frozen_editable_and_separate_from_local_groups() {
     fs::write(repo.join("local-only.rs"), "fn only_local() {}\n").unwrap();
     let job = proof
         .prepare_ai_task(AiRequest {
+            amend: false,
             provider: AgentKind::Codex,
             task: AiTask::Grouping,
             scope: AiScope::Comparison {
@@ -633,6 +678,7 @@ fn comparison_grouping_is_frozen_editable_and_separate_from_local_groups() {
     );
     let job = proof
         .prepare_ai_task(AiRequest {
+            amend: false,
             provider: AgentKind::Codex,
             task: AiTask::Review,
             scope: AiScope::Comparison {
@@ -837,6 +883,7 @@ fn review_history_scopes_and_retention_keep_frozen_comparisons_separate() {
     let target = git(repo, &["rev-parse", "HEAD"]);
     let job = proof
         .prepare_ai_task(AiRequest {
+            amend: false,
             provider: AgentKind::Codex,
             task: AiTask::Review,
             scope: AiScope::Comparison {
@@ -979,6 +1026,7 @@ fn historical_root_commit_and_unselected_context_are_available_without_checkout(
     let head = git(repo, &["rev-parse", "HEAD"]);
     let job = proof
         .prepare_ai_task(AiRequest {
+            amend: false,
             provider: AgentKind::Codex,
             task: AiTask::Review,
             scope: AiScope::Comparison {
@@ -1003,4 +1051,118 @@ fn historical_root_commit_and_unselected_context_are_available_without_checkout(
         .unwrap()
         .contains("allow(true)"));
     assert_eq!(git(repo, &["rev-parse", "HEAD"]), head);
+}
+
+#[test]
+fn task_prompts_persist_migrate_and_are_captured_independently() {
+    let (temp, mut proof, workspace) = fixture();
+    let update = |revision, prompts| AgentSettingsUpdate {
+        expected_revision: revision,
+        default_provider: AgentKind::Codex,
+        codex: Default::default(),
+        claude_code: Default::default(),
+        codewiz: None,
+        prompts,
+    };
+    let prompts = AgentPrompts {
+        grouping: "Group by business behavior".into(),
+        review: "Focus on concurrency\nDo not invent tests".into(),
+        commit: "Use Conventional Commits".into(),
+    };
+    proof
+        .set_agent_settings(update(0, Some(prompts.clone())))
+        .unwrap();
+    let job = proof
+        .prepare_ai_task(request(&proof, &workspace, AiTask::Grouping))
+        .unwrap();
+    assert!(job.prompt().unwrap().contains(&prompts.grouping));
+    assert!(!job.prompt().unwrap().contains(&prompts.review));
+    proof
+        .set_agent_settings(update(1, Some(AgentPrompts::default())))
+        .unwrap();
+    assert!(job.prompt().unwrap().contains(&prompts.grouping));
+    drop(job);
+    proof
+        .set_agent_settings(update(2, Some(prompts.clone())))
+        .unwrap();
+    // An older settings client must not erase the new preferences.
+    proof.set_agent_settings(update(3, None)).unwrap();
+    for invalid in ["x".repeat(16_001), "private\0prompt".into()] {
+        let mut value = prompts.clone();
+        value.commit = invalid;
+        assert_eq!(
+            proof
+                .set_agent_settings(update(4, Some(value)))
+                .unwrap_err()
+                .code,
+            "AI_PROMPT_INVALID"
+        );
+    }
+    drop(proof);
+    let proof = Proof::open(temp.path().join("data")).unwrap();
+    assert_eq!(proof.agent_settings().unwrap().prompts, prompts);
+    assert_eq!(proof.agent_settings().unwrap().revision, 4);
+}
+
+#[test]
+fn ai_commit_uses_only_index_supports_amend_and_never_changes_git() {
+    let (_temp, mut proof, workspace) = fixture();
+    let repo = Path::new(&workspace.path);
+    assert_eq!(
+        proof
+            .prepare_ai_task(request(&proof, &workspace, AiTask::Commit))
+            .err()
+            .unwrap()
+            .code,
+        "AI_COMMIT_EMPTY"
+    );
+    git(repo, &["add", "auth.rs"]);
+    fs::write(
+        repo.join("auth.rs"),
+        "fn auth() { different_unstaged_behavior(); }\n",
+    )
+    .unwrap();
+    let index = fs::read(repo.join(".git/index")).unwrap();
+    let head = git(repo, &["rev-parse", "HEAD"]);
+    let job = proof
+        .prepare_ai_task(request(&proof, &workspace, AiTask::Commit))
+        .unwrap();
+    assert_eq!(job.diffs.len(), 1);
+    assert_eq!(job.diffs[0].path, "auth.rs");
+    assert_eq!(job.diffs[0].side, Side::Staged);
+    assert!(job.diffs[0].patch.contains("allow(true)"));
+    assert!(!job.diffs[0].patch.contains("different_unstaged_behavior"));
+    let value =
+        json!({"analysisStatus":"completed","blockers":[],"message":"fix(auth): validate access"});
+    let report = job.validate(value.clone()).unwrap();
+    assert_eq!(
+        report.commit_message.as_deref(),
+        Some("fix(auth): validate access")
+    );
+    assert!(job.finish(&proof, report).is_ok());
+    assert!(proof
+        .ai_review_reports(&workspace.id, "local")
+        .unwrap()
+        .is_empty());
+    assert_eq!(fs::read(repo.join(".git/index")).unwrap(), index);
+    assert_eq!(git(repo, &["rev-parse", "HEAD"]), head);
+    // A late message must not be applied to a different index.
+    git(repo, &["add", "pool.rs"]);
+    assert_eq!(
+        job.finish(&proof, job.validate(value).unwrap())
+            .unwrap_err()
+            .code,
+        "STALE_CONTENT"
+    );
+    drop(job);
+    git(repo, &["reset", "--mixed", "HEAD"]);
+    let mut amend = request(&proof, &workspace, AiTask::Commit);
+    amend.amend = true;
+    let job = proof.prepare_ai_task(amend).unwrap();
+    assert!(job.diffs.is_empty());
+    assert_eq!(job.amend_head.as_deref(), Some(head.as_str()));
+    assert!(job
+        .prompt()
+        .unwrap()
+        .contains(&format!("AMEND message for commit {head}")));
 }

@@ -17,14 +17,14 @@
 
 `crates/proof-core/src/ai` 独立于 `observer`、`adapter`、Hook transport 和会话关联。`agents.rs` 的 `AgentAdapter` 统一登记主动 Provider、程序发现与 Hook 能力，设置页不维护另一份 Agent 列表。`AgentProvider` 的实现是 `CodexProvider` / `ClaudeCodeProvider` / `CodewizProvider`；`PreparedAiTask` 捕获输入，`AgentProgram` 封装来源、身份、信任和 data epoch 校验。Native `run_ai_task` 复用窗口拥有的一次性取消 ticket，在释放 Git 核心 mutex 后运行。
 
-输入是任务说明、Scope、结构化结果要求、真实项目目录和辅助范围清单，通过 stdin 传入。CLI 的 cwd 直接使用真实项目目录，可按需读取项目全部上下文。`input.rs` 只保存 manifest.json 与选定 Diff 的 canonical patches，不复制、过滤或截断项目目录。Agent 使用 git show 查询 HEAD / Index / 固定历史 OID，避免把工作区文件误当成对应版本。Observer Session 不作为输入；CLI 的临时日志可能包含本次输入，因此目录权限为 0700，结束后清理。临时目录保存输出 schema 和 CLI 本次运行的临时文件、状态库、日志，任务返回 / 失败 / 取消时回收。Codex 子进程的运行时目录、`sqlite_home` / `log_dir` 显式指向此处；Claude 使用 `CLAUDE_CODE_TMPDIR`，不会使用其他 Session 的 `/tmp/claude-{uid}`。
+输入是任务说明、Scope、结构化结果要求、真实项目目录和辅助范围清单，通过 stdin 传入。CLI 的 cwd 直接使用真实项目目录，可按需读取项目全部上下文。`input.rs` 只保存 manifest.json 与选定 Diff 的 canonical patches，不复制、过滤或截断项目目录。Agent 使用 git show 查询 HEAD / Index / 固定历史 OID，避免把工作区文件误当成对应版本。Observer Session 不作为输入；CLI 的临时日志可能包含本次输入，因此目录权限为 0700，结束后清理。临时目录保存输出 schema 和 CLI 本次运行的临时文件、状态库、日志；CLI 退出后先将本次新建会话保留到对应 Agent，再回收运行目录。Codex 子进程的运行时目录、`sqlite_home` / `log_dir` 显式指向此处；Claude 使用 `CLAUDE_CODE_TMPDIR`，不会使用其他 Session 的 `/tmp/claude-{uid}`。
 
 本机 CLI 参数依据安装版本 Codex **0.153.4** / Claude Code **2.1.236** 的 `--help` 核对。Proof 不直接调用模型 API，不读取或保存 API Key，也不安装 CLI。沿用本机 CLI 的正常登录；不传 `resume`、`continue`、Session ID，也不修改全局配置。
 
 Codex 调用结构：
 
 ```text
-codex exec --ignore-user-config --ignore-rules --ephemeral
+codex exec --ignore-user-config --ignore-rules
   --skip-git-repo-check --sandbox danger-full-access --json --color never
   --output-schema <owned-job>/schema.json
   -c features.shell_snapshot=false -c features.hooks=false
@@ -37,7 +37,7 @@ codex exec --ignore-user-config --ignore-rules --ephemeral
   -c features.workspace_dependencies=false -c features.skill_mcp_dependency_install=false
   -c features.skill_search=false -c analytics.enabled=false
   -c approval_policy="never" -c web_search="disabled" -c mcp_servers={}
-  -c project_doc_max_bytes=0 -c history.persistence="none" -c notify=[]
+  -c project_doc_max_bytes=0 -c notify=[]
   -c sqlite_home="<owned-job>/state" -c log_dir="<owned-job>/logs" -
 ```
 
@@ -48,7 +48,7 @@ codex exec --ignore-user-config --ignore-rules --ephemeral
 Claude Code 调用结构：
 
 ```text
-claude --print --safe-mode --output-format stream-json --verbose --no-session-persistence
+claude --print --safe-mode --output-format stream-json --verbose
   --tools "Read,Grep,Glob,Bash" --allowedTools "Read,Grep,Glob,Bash"
   --permission-mode plan --disable-slash-commands
   --strict-mcp-config --mcp-config '{"mcpServers":{}}'
@@ -72,6 +72,7 @@ claude --print --safe-mode --output-format stream-json --verbose --no-session-pe
 
 - 不再把全部 Patch 塞进提示词，不再使用 500 文件 / 1 MiB 输入门槛。范围证据资源上限见上文；现有单文件 Diff 读取上限继续适用。流式 stdout 最多 32 MiB，没有固定推理时限。stderr 有界，不保存原始日志；Failure details 只展示限长、经过凭据脱敏的错误摘要，包含 Provider、执行阶段和退出码。Bun 的大段源码栈不会进入界面。
 - Grouping 输出 `title / summary / files / risk / reviewPriority`。原始结果要求所有 changed path 恰好出现一次；未知路径、重复、遗漏、非法枚举、过长文本拒绝。用户编辑可以留下 Ungrouped 文件。
+- Codewiz 的 JSONL 事件流允许夹杂普通 CLI 日志、空白行、CRLF，以及事件行外层的 BOM / ANSI 控制符；分组、Review 和进度展示共用事件行解析。只识别行首 JSON 对象，不从日志正文中提取 JSON；损坏的事件仍拒绝，并仅报告输出行号、JSON 错误类别与列号，不回显原始内容。仍须收到最终 `step_finish(reason=stop)`，随后执行完整的分析状态、分组覆盖和 Finding 校验。
 - 分组保存在 SQLite `change_groups`，schema 7；每个 workspace 一份，使用 revision CAS，删除 workspace 后级联删除。无 CLI 仍可编辑分组。过期风险不作为新版本结论，手动保存过期分组时风险改为 unknown。
 - Review 输出 `summary / overallRisk / findings / behaviorChanges / missingTests / reviewPriority`。每个 Finding 的 file、Staged / Unstaged 侧、old / new 侧及闭区间 `line..endLine` 的每一行必须在此次原始 Hunk 中验证；不允许跨越未捕获的行。单行可以 start=end，兼容旧结果缺省 endLine 时回退为 line。priority 中的文件也必须属于输入。
 - Local 每次读取的 UUID 会改变，比较版本使用 `FileDiff.token`（原始 Patch 与 Git guard 指纹），不能比较新旧 UUID。定位要求 token、path、file side 相同。历史比较额外使用冻结 OID 产生的稳定 comparison ID，避免换 base 后误定位。
@@ -134,3 +135,20 @@ UI 覆盖显式触发、改名 / 移动 / 新建 / 取消分组、已有分组�
 主动 Grouping / Review 的最终结构化输出必须包含 analysisStatus（completed / blocked）和 blockers。无法读取 manifest 或 canonical patches 时必须返回 blocked；后端返回 AI_ANALYSIS_BLOCKED，不保存为空的成功 Review、不应用分组。缺少状态或 completed 携带 blockers 都视为无效输出。CLI 流中已明确报告 Code Mode 不可用时，即使后续 turn.completed 也返回 AI_TOOL_UNAVAILABLE。历史报告结构不变。
 
 `AgentReadContext` 明确区分真实项目目录、不可写的任务证据目录与选定路径。Claude 仅为本次任务传入 `--add-dir`，Codewiz 仅允许该证据路径的 external_directory 读取；其他目录保持默认拒绝，macOS 沙箱对项目和证据的写入拒绝不变。真实 Codewiz 回归使用 Read 工具读取项目外的辅助清单、Bash 读取项目文件并尝试写入，同时在项目内放置可观察的插件，确认主动分析不会加载它。
+
+
+## 2026-09-16：个性化 Prompt、AI Commit 与原生会话
+
+Settings → AI Agents 为 Grouping、Review、Commit 各提供独立 Prompt。三项共用现有设置 revision CAS，旧配置默认空字符串、旧客户端保存时不清空新字段。留空使用内置规则；可单独恢复默认。每项最多 16,000 UTF-8 bytes，支持多行，拒绝无效控制字符。保存和切换任务不会运行模型；任务准备时捕获已保存的 Prompt，不受生成期间再次修改设置影响。自定义语言、风格和重点可覆盖默认表达方式，但不改变只读权限、Git 范围和输出 schema。
+
+Commit 页的 **AI Commit** 仅生成 message：正常模式仅使用完整 Index 的 Staged Diff，未 Stage 时提示先选择提交内容；Amend 则结合固定 HEAD 的原始 Commit 与 Staged 增量，允许仅重写已有 Commit 的说明。返回 `{analysisStatus, blockers, message}`，不 Stage、不 Commit、不改变 Review 状态。空且未改动的草稿直接填入；已有草稿或生成期间手动输入的内容保留，点击“使用此说明”才替换。支持活动、取消、失败详情与模型选择。原生返回时重新核对 Git token；前端范围切换或刷新也取消并丢弃迟到结果。
+
+每次模型调用仍新建独立会话，但不再传 Codex `--ephemeral`、`history.persistence=none` 或 Claude `--no-session-persistence`。Agent 推理过程仍在同一个只读沙箱内，其他终端的 Session 不可写。退出后由宿主将本次原生会话交付给对应 CLI：
+
+- Codex：原子、不覆盖地保存自己的 rollout JSONL，并将自己的 thread row 添加到原生 SQLite 索引，不复制私有库的 Project / Sidebar ID。保存的后续执行策略规范为 `read-only` / `on-request`，防止外层沙箱使用的内部 bypass 参数在普通 CLI resume 时泄漏成权限。
+- Claude Code：为本次运行使用私有 `CLAUDE_CONFIG_DIR`；本地凭据文件只读链接，并通过原有 `CLAUDE_SECURESTORAGE_CONFIG_DIR` 命名空间保持 Keychain 登录，避免私有 `CLAUDE_CONFIG_DIR` 改变凭据服务名。结束后仅复制这次 Session 的 JSONL，不复制凭据。可使用明确 Session ID 继续。
+- Codewiz：调用原生 `export <sessionID>` / `import <file>`。导入过程断网，日志、配置和缓存仍私有，只允许其原生 SQLite 与 journal / WAL 文件写入；已有 ID 拒绝覆盖，导入后读取数据库确认；不把依赖外层沙箱的临时 Bash 权限带入后续普通 CLI 会话。不是直接拼接用户的 Session 数据库。
+
+结果提供复制 CLI 恢复命令的入口。原生 CLI 管理这些会话；清除 Proof 数据不会删除它们。Codex 默认 picker 可能需 `--include-non-interactive`；Claude 的 print 会话按原生规则通过 `--resume <session-id>` 继续，而不一定出现在默认 picker，见 [Codex CLI reference](https://learn.chatgpt.com/docs/developer-commands?surface=cli) 和 [Claude sessions](https://code.claude.com/docs/en/sessions)。
+
+本机 Codewiz 0.1.99 的原生 export 曾在退出前只向管道写出 1024 bytes。主动分析和 export 现在使用权限 0600 的专用文件作为 stdout，由同一个受限进程循环持续读取；保留实时活动、输出上限与取消，退出后读完最后一个事件。真实回环测试覆盖 32 KB 最终结果、完整会话导入以及已有 ID 防覆盖，不使用公司模型或额度。

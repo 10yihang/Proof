@@ -10,6 +10,9 @@ use std::{
 };
 
 #[cfg(all(test, target_os = "macos"))]
+#[path = "native_claude_tests.rs"]
+mod native_claude_tests;
+#[cfg(all(test, target_os = "macos"))]
 #[path = "native_codewiz_tests.rs"]
 mod native_codewiz_tests;
 #[cfg(all(test, target_os = "macos"))]
@@ -22,6 +25,11 @@ pub struct AgentReadContext<'a> {
     pub project: &'a Path,
     pub evidence: &'a Path,
     pub paths: &'a [String],
+    pub task: super::AiTask,
+}
+pub struct AgentAnalysis {
+    pub value: Value,
+    pub session: Option<super::AgentSession>,
 }
 
 /// Active inference only. Passive Observer consent and sessions are separate.
@@ -34,7 +42,7 @@ pub trait AgentProvider: Send + Sync {
         schema: &Value,
         context: AgentReadContext<'_>,
         emit: &dyn Fn(super::AiProgress),
-    ) -> Result<Value> {
+    ) -> Result<AgentAnalysis> {
         if program.kind != self.kind() {
             return Err(unsupported("Agent 类型不匹配。"));
         }
@@ -573,6 +581,31 @@ fn isolated_command_options(
     if kind == AgentKind::Codewiz {
         codewiz::configure(&mut command, directory, workspace.is_some())?;
     }
+    if kind == AgentKind::ClaudeCode {
+        let config = directory.join("claude");
+        fs::create_dir_all(&config)?;
+        // Claude hashes CLAUDE_CONFIG_DIR into its Keychain service name.
+        // Keep the original secure-storage namespace while moving transcripts;
+        // the empty override means the normal default (unhashed) login.
+        command.env(
+            "CLAUDE_SECURESTORAGE_CONFIG_DIR",
+            std::env::var_os("CLAUDE_SECURESTORAGE_CONFIG_DIR")
+                .or_else(|| std::env::var_os("CLAUDE_CONFIG_DIR"))
+                .unwrap_or_default(),
+        );
+        let shared = std::env::var_os("CLAUDE_CONFIG_DIR")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".claude")));
+        if let Some(shared) = shared {
+            // Login is readable, but the outer sandbox still protects the
+            // shared credential file and every other terminal's session.
+            let source = shared.join(".credentials.json");
+            if source.is_file() && !config.join(".credentials.json").exists() {
+                std::os::unix::fs::symlink(source, config.join(".credentials.json"))?;
+            }
+        }
+        command.env("CLAUDE_CONFIG_DIR", &config);
+    }
     Ok(command)
 }
 #[cfg(not(target_os = "macos"))]
@@ -589,6 +622,7 @@ fn run(
     validate: impl Fn() -> Result<()>,
 ) -> Result<Value> {
     run_workspace(kind, executable, prompt, schema, model, validate, None)
+        .map(|output| output.value)
 }
 
 fn help_output(kind: AgentKind, executable: &Path, root: &Path) -> Result<process::Output> {
@@ -645,7 +679,7 @@ fn run_workspace(
     model: Option<&str>,
     validate: impl Fn() -> Result<()>,
     workspace: Option<ReadingWorkspace<'_>>,
-) -> Result<Value> {
+) -> Result<AgentAnalysis> {
     if managed_configuration(kind) {
         return Err(unsupported("受管理的 Agent 配置暂不支持隔离调用。"));
     }
@@ -691,42 +725,111 @@ fn run_workspace(
             }
             AgentKind::Codex => (),
         }
+        let title = match context.task {
+            super::AiTask::Grouping => "Proof · AI Grouping",
+            super::AiTask::Review => "Proof · AI Review",
+            super::AiTask::Commit => "Proof · AI Commit",
+        };
+        if kind == AgentKind::Codewiz {
+            command.args(["--title", title]);
+        }
+        if kind == AgentKind::ClaudeCode && help.contains("--name") {
+            command.args(["--name", title]);
+        }
     }
     if let Some(model) = model {
         command.args(["--model", model]);
     }
+    // Preserve the exact private execution environment for native session
+    // export/import. No model is called by those commands.
+    let session_command = if workspace.is_some() {
+        let mut copy = Command::new(command.get_program());
+        copy.args(command.get_args())
+            .env_clear()
+            .envs(command.get_envs().filter_map(|(k, v)| v.map(|v| (k, v))));
+        if let Some(cwd) = command.get_current_dir() {
+            copy.current_dir(cwd);
+        }
+        Some(copy)
+    } else {
+        None
+    };
     let input = if kind == AgentKind::Codewiz {
         codewiz::prompt(prompt, schema)
     } else {
         prompt.to_owned()
     };
     validate()?;
-    let output = (if let Some((context, emit)) = workspace {
-        let mut activity =
-            super::progress::ActivityStream::in_project(context.paths, context.project, emit);
-        process::run_until_cancelled(
+    let mut streamed = Vec::new();
+    let mut activity = workspace.map(|(context, emit)| {
+        super::progress::ActivityStream::in_project(context.paths, context.project, emit)
+    });
+    let mut observe = |bytes: &[u8]| {
+        streamed.extend_from_slice(bytes);
+        if let Some(activity) = &mut activity {
+            activity.feed(bytes);
+        }
+    };
+    let limit = if workspace.is_some() {
+        32 * 1024 * 1024
+    } else {
+        2 * 1024 * 1024
+    };
+    let output = if kind == AgentKind::Codewiz {
+        process::run_file_observed(
             command,
             Some(input.as_bytes()),
-            32 * 1024 * 1024,
-            Some(&mut |bytes| activity.feed(bytes)),
+            None,
+            limit,
+            Some(&mut observe),
+            &root.join("events.jsonl"),
         )
     } else {
-        process::run_until_cancelled(command, Some(input.as_bytes()), 2 * 1024 * 1024, None)
-    })
-    .map_err(|error| match error.code.as_str() {
+        process::run_until_cancelled(command, Some(input.as_bytes()), limit, Some(&mut observe))
+    };
+    validate()?;
+    // A cancelled run can still have a useful native session. Publication is a
+    // bounded local copy/import, not another model call or continuation.
+    let session = match (workspace, session_command.as_ref()) {
+        (Some((context, _)), Some(command)) => crate::ReadCancellation::default()
+            .run(|| {
+                super::sessions::publish(
+                    kind,
+                    &root,
+                    executable,
+                    context.project,
+                    command,
+                    &streamed,
+                )
+            })
+            .map_err(|error| {
+                Error::new(
+                    "AI_SESSION_SAVE",
+                    "Agent 会话未能保存，请查看失败详情。",
+                    error.detail,
+                )
+            })?,
+        _ => None,
+    };
+    let output = output.map_err(|error| match error.code.as_str() {
         "READ_CANCELLED" => Error::new(
             "AI_CANCELLED",
             "AI 分析已取消。",
             "Only the owned process group was cancelled",
         ),
-        "DIFF_OUTPUT_LIMIT" | "OUTPUT_LIMIT" => invalid("Agent output exceeded 2 MiB"),
+        "DIFF_OUTPUT_LIMIT" | "OUTPUT_LIMIT" => {
+            invalid("Agent output exceeded the configured read limit")
+        }
         _ => Error::new("AI_PROCESS", "无法启动只读 Agent 分析。", error.code),
     })?;
     if output.code != 0 {
         return Err(agent_failure(kind, "analysis", &output));
     }
     validate()?;
-    decode(kind, &output.stdout)
+    Ok(AgentAnalysis {
+        value: decode(kind, &output.stdout)?,
+        session,
+    })
 }
 fn arguments(kind: AgentKind, root: &Path, schema: &Value) -> Result<Vec<String>> {
     let args: Vec<String> = match kind {
@@ -736,7 +839,6 @@ fn arguments(kind: AgentKind, root: &Path, schema: &Value) -> Result<Vec<String>
                 "exec",
                 "--ignore-user-config",
                 "--ignore-rules",
-                "--ephemeral",
                 "--skip-git-repo-check",
                 "--sandbox",
                 "read-only",
@@ -777,7 +879,6 @@ fn arguments(kind: AgentKind, root: &Path, schema: &Value) -> Result<Vec<String>
                 "web_search=\"disabled\"",
                 "mcp_servers={}",
                 "project_doc_max_bytes=0",
-                "history.persistence=\"none\"",
                 "notify=[]",
                 "analytics.enabled=false",
             ] {
@@ -801,7 +902,6 @@ fn arguments(kind: AgentKind, root: &Path, schema: &Value) -> Result<Vec<String>
             "--output-format",
             "stream-json",
             "--verbose",
-            "--no-session-persistence",
             "--tools",
             "Read,Grep,Glob,Bash",
             "--allowedTools",
@@ -920,17 +1020,11 @@ fn missing_capabilities(kind: AgentKind, help: &str) -> Vec<&'static str> {
         AgentKind::Codewiz => &[
             "--format", "--pure", "--mcp", "--agent", "--model", "--title",
         ],
-        AgentKind::Codex => &[
-            "--ignore-user-config",
-            "--ignore-rules",
-            "--ephemeral",
-            "--output-schema",
-        ],
+        AgentKind::Codex => &["--ignore-user-config", "--ignore-rules", "--output-schema"],
         AgentKind::ClaudeCode => &[
             "--safe-mode",
             "--tools",
             "--strict-mcp-config",
-            "--no-session-persistence",
             "--json-schema",
         ],
     };
@@ -1358,7 +1452,8 @@ mod tests {
             .iter()
             .any(|p| p == "features.code_mode=false" || p == "features.code_mode_host=false"));
         assert!(claude.contains(&"--safe-mode".into()));
-        assert!(claude.contains(&"--no-session-persistence".into()));
+        assert!(!claude.contains(&"--no-session-persistence".into()));
+        assert!(!codex.contains(&"--ephemeral".into()));
         for arg in codex.iter().chain(&claude) {
             assert!(![
                 "resume",

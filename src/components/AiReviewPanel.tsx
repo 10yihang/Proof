@@ -1,5 +1,6 @@
 import { agentName } from "../ai";
 import { AiTaskProgress } from "./AiTaskProgress";
+import { AiSessionLink } from "./AiSessionLink";
 import { useState } from "react";
 import { ReviewExport } from "./ReviewExport";
 import { Select, Button } from "./ui/controls";
@@ -147,6 +148,7 @@ export function AiReviewPanel({
       )}
       {review && (
         <>
+          <AiSessionLink session={ai.report?.session} />
           <div className="ai-report-meta">
             <span className={`ai-risk ${review.overallRisk}`}>
               {riskLabel(review.overallRisk)}

@@ -71,11 +71,12 @@ export type AiScope =
       paths?: string[] | null;
     };
 export interface AiReport {
+  session?: { id: string; resumeCommand: string } | null;
   revision: number;
   decisions: FindingDecision[];
   id: string;
   provider: AgentKind;
-  task: "grouping" | "review";
+  task: "grouping" | "review" | "commit";
   scope: AiScope;
   fingerprint: string;
   capturedAt: number;
@@ -87,6 +88,7 @@ export interface AiReport {
   }[];
   groups: AiGroup[];
   review: AiReview | null;
+  commitMessage?: string | null;
   limitations: string[];
 }
 export interface DiffJump {

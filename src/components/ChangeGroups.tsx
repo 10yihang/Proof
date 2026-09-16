@@ -1,4 +1,5 @@
 import { AiTaskProgress } from "./AiTaskProgress";
+import { AiSessionLink } from "./AiSessionLink";
 import { Segmented } from "./ui/segmented";
 import { DragDropProvider, DragOverlay } from "@dnd-kit/react";
 import { useReducedMotion } from "motion/react";
@@ -207,6 +208,7 @@ export function ChangeGroups({
     >
       <div className="change-groups">
         {ai.pending === "grouping" && <AiTaskProgress ai={ai} />}
+        <AiSessionLink session={ai.suggestion?.session} />
         {ai.suggestion && (
           <div className="ai-group-suggestion">
             <p>{t("新的 AI 分组已准备好。")}</p>

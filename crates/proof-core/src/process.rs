@@ -221,11 +221,60 @@ fn run_inner(
 
 #[cfg(unix)]
 fn run_inner(
+    command: Command,
+    input: Option<&[u8]>,
+    timeout: Option<Duration>,
+    diff_limit: Option<usize>,
+    observer: Option<StdoutObserver<'_>>,
+) -> Result<Output> {
+    run_with_stdout(command, input, timeout, diff_limit, observer, None)
+}
+
+/// Some native CLIs exit before asynchronous pipe writes drain. A regular file
+/// is synchronous for those runtimes; tail it with the same bounded, cancellable
+/// process loop so progress remains live and final output is never truncated.
+#[cfg(unix)]
+pub(crate) fn run_file_observed(
+    command: Command,
+    input: Option<&[u8]>,
+    timeout: Option<Duration>,
+    limit: usize,
+    observer: Option<StdoutObserver<'_>>,
+    path: &Path,
+) -> Result<Output> {
+    run_with_stdout(
+        command,
+        input,
+        timeout,
+        Some(limit.min(OUTPUT_LIMIT)),
+        observer,
+        Some(path),
+    )
+}
+#[cfg(not(unix))]
+pub(crate) fn run_file_observed(
+    _: Command,
+    _: Option<&[u8]>,
+    _: Option<Duration>,
+    _: usize,
+    _: Option<StdoutObserver<'_>>,
+    _: &Path,
+) -> Result<Output> {
+    Err(Error::new(
+        "AI_ISOLATION_UNAVAILABLE",
+        "此平台尚无经过验证的只读 Agent 沙箱。",
+        "Native file streaming requires Unix",
+    ))
+}
+
+#[cfg(unix)]
+fn run_with_stdout(
     mut command: Command,
     input: Option<&[u8]>,
     timeout: Option<Duration>,
     diff_limit: Option<usize>,
     mut observer: Option<StdoutObserver<'_>>,
+    stdout_path: Option<&Path>,
 ) -> Result<Output> {
     use std::{
         os::{fd::AsRawFd, unix::process::CommandExt},
@@ -244,6 +293,16 @@ fn run_inner(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .process_group(0);
+    if let Some(path) = stdout_path {
+        use std::os::unix::fs::OpenOptionsExt;
+        command.stdout(
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(path)?,
+        );
+    }
     let child = command.spawn().map_err(|e| {
         Error::new(
             "PROCESS_START",
@@ -271,7 +330,10 @@ fn run_inner(
         complete: false,
     };
     let mut stdin = owned.child.stdin.take();
-    let stdout = owned.child.stdout.take().unwrap();
+    let stdout: Box<dyn AsRawFd> = match stdout_path {
+        Some(path) => Box::new(std::fs::File::open(path)?),
+        None => Box::new(owned.child.stdout.take().unwrap()),
+    };
     let stderr = owned.child.stderr.take().unwrap();
     for fd in [
         stdin.as_ref().unwrap().as_raw_fd(),
@@ -310,6 +372,19 @@ fn run_inner(
                 "Process or inherited output pipe exceeded deadline",
             ));
         }
+        let file_pending = if stdout_path.is_some() {
+            let mut metadata: libc::stat = unsafe { std::mem::zeroed() };
+            if unsafe { libc::fstat(stdout.as_raw_fd(), &mut metadata) } < 0 {
+                return Err(std::io::Error::last_os_error().into());
+            }
+            let limit = diff_limit.unwrap_or(OUTPUT_LIMIT);
+            if metadata.st_size > limit as i64 {
+                return Err(diff_limit_error(limit));
+            }
+            metadata.st_size > out.len() as i64
+        } else {
+            false
+        };
         let mut polls = [
             libc::pollfd {
                 fd: stdin.as_ref().map_or(-1, |s| s.as_raw_fd()),
@@ -317,7 +392,11 @@ fn run_inner(
                 revents: 0,
             },
             libc::pollfd {
-                fd: if out_eof { -1 } else { stdout.as_raw_fd() },
+                fd: if out_eof || stdout_path.is_some() {
+                    -1
+                } else {
+                    stdout.as_raw_fd()
+                },
                 events: libc::POLLIN,
                 revents: 0,
             },
@@ -334,12 +413,16 @@ fn run_inner(
         } else {
             10
         };
-        let wait = deadline.map_or(interval, |deadline| {
-            deadline
-                .saturating_duration_since(Instant::now())
-                .as_millis()
-                .clamp(1, interval)
-        }) as i32;
+        let wait = if file_pending {
+            0
+        } else {
+            deadline.map_or(interval, |deadline| {
+                deadline
+                    .saturating_duration_since(Instant::now())
+                    .as_millis()
+                    .clamp(1, interval)
+            }) as i32
+        };
         if unsafe { libc::poll(polls.as_mut_ptr(), polls.len() as libc::nfds_t, wait) } < 0
             && std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted
         {
@@ -363,6 +446,10 @@ fn run_inner(
                 stdin.take();
             }
         }
+        if stdout_path.is_some() && !out_eof {
+            polls[1].fd = stdout.as_raw_fd();
+            polls[1].revents = libc::POLLIN;
+        }
         for (poll, bytes, eof, is_stdout) in [
             (&polls[1], &mut out, &mut out_eof, true),
             (&polls[2], &mut err, &mut err_eof, false),
@@ -373,7 +460,8 @@ fn run_inner(
             let mut buffer = [0u8; 16384];
             let count = unsafe { libc::read(poll.fd, buffer.as_mut_ptr().cast(), buffer.len()) };
             if count == 0 {
-                *eof = true;
+                // Reaching the current end of a live file is not stream EOF.
+                *eof = !is_stdout || stdout_path.is_none() || status.is_some();
             } else if count > 0 {
                 if is_stdout {
                     if let Some(observer) = observer.as_mut() {
@@ -405,6 +493,13 @@ fn run_inner(
             }
         }
     };
+    // File-backed stdout cannot keep a pipe open for orphaned descendants.
+    // They belong to this analysis/export invocation and must not outlive it.
+    if stdout_path.is_some() {
+        unsafe {
+            libc::kill(-(owned.child.id() as i32), libc::SIGKILL);
+        }
+    }
     owned.complete = true;
     if exceeded {
         return Err(Error::new(
@@ -423,6 +518,64 @@ fn run_inner(
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    #[test]
+    fn regular_file_stdout_streams_live_and_preserves_large_final_results() {
+        let temp = tempfile::tempdir().unwrap();
+        let ack = temp.path().join("observed");
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "printf started; while [ ! -f \"$1\" ]; do sleep .01; done; /usr/bin/awk 'BEGIN { for(i=0;i<100000;i++) printf \"x\" }'; printf done", "proof-fixture"]).arg(&ack);
+        let mut seen = Vec::new();
+        let output = run_file_observed(
+            command,
+            None,
+            Some(Duration::from_secs(3)),
+            200_000,
+            Some(&mut |bytes| {
+                seen.extend_from_slice(bytes);
+                std::fs::write(&ack, "observed before process exit").unwrap();
+            }),
+            &temp.path().join("events"),
+        )
+        .unwrap();
+        assert_eq!(seen, output.stdout);
+        assert_eq!(output.stdout.len(), 100011);
+        assert!(output.stdout.ends_with(b"done"));
+    }
+    #[test]
+    fn regular_file_stdout_keeps_cancellation_and_output_limits() {
+        let temp = tempfile::tempdir().unwrap();
+        let cancellation = crate::ReadCancellation::default();
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "printf started; sleep 30"]);
+        let result = cancellation.run(|| {
+            run_file_observed(
+                command,
+                None,
+                None,
+                1024,
+                Some(&mut |_| cancellation.cancel()),
+                &temp.path().join("cancelled"),
+            )
+        });
+        assert_eq!(result.err().unwrap().code, "READ_CANCELLED");
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "while :; do printf 0123456789; done"]);
+        assert_eq!(
+            run_file_observed(
+                command,
+                None,
+                Some(Duration::from_secs(3)),
+                1024,
+                None,
+                &temp.path().join("large")
+            )
+            .err()
+            .unwrap()
+            .code,
+            "DIFF_OUTPUT_LIMIT"
+        );
+    }
+
     #[test]
     fn analysis_without_a_deadline_keeps_streaming_until_exit() {
         let mut command = Command::new("/bin/sh");

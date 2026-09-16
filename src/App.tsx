@@ -2109,6 +2109,9 @@ export default function App({
                         onSelect={(file) => void loadFile(file)}
                       >
                         <CommitComposer
+                          changes={changes}
+                          ai={ai}
+                          onAgentSettings={() => openSettings("agents")}
                           message={draft}
                           onMessage={editDraft}
                           amend={!!amendTarget}

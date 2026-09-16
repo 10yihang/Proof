@@ -341,6 +341,66 @@ fn installed_codex_completes_after_private_runtime_initialization() {
     let after = results.remove(0).unwrap();
     assert_eq!(after.code, 0, "{}", safe_failure_text(&after));
     assert_eq!(decode(AgentKind::Codex, &after.stdout).unwrap()["ok"], true);
+    let id = after
+        .stdout
+        .split(|b| *b == b'\n')
+        .filter_map(|line| serde_json::from_slice::<Value>(line).ok())
+        .find_map(|v| v["thread_id"].as_str().map(str::to_owned))
+        .unwrap();
+    let state = root.join("fixed-job/state");
+    let source_db = fs::read_dir(&state)
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| {
+            p.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("state_")
+                && p.extension().is_some_and(|e| e == "sqlite")
+        })
+        .unwrap();
+    let source = rusqlite::Connection::open(&source_db).unwrap();
+    let sql: String = source
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='threads'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let destination =
+        rusqlite::Connection::open(shared.join(source_db.file_name().unwrap())).unwrap();
+    for name in ["projects", "thread_sections"] {
+        if let Ok(sql) = source.query_row(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+            [name],
+            |r| r.get::<_, String>(0),
+        ) {
+            destination.execute_batch(&sql).unwrap();
+        }
+    }
+    destination.execute_batch(&sql).unwrap();
+    super::super::sessions::publish_transcripts(
+        AgentKind::Codex,
+        &root.join("fixed-job"),
+        &root.join("fixed-job/codex/sessions"),
+        &shared.join("sessions"),
+        &id,
+    )
+    .unwrap();
+    let (rollout, policy): (String, String) = destination
+        .query_row(
+            "SELECT rollout_path,sandbox_policy FROM threads WHERE id=?",
+            [&id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert!(Path::new(&rollout).is_file());
+    assert!(Path::new(&rollout).starts_with(shared.join("sessions")));
+    assert_eq!(
+        serde_json::from_str::<Value>(&policy).unwrap()["type"],
+        "read-only"
+    );
     assert_eq!(request.unwrap()["model"], "proof-fixture");
     assert!(root.join("fixed-job/codex/installation_id").is_file());
     assert_eq!(
