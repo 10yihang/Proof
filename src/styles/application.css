@@ -3,3 +3,4 @@
 @import "./chrome.css" layer(legacy);
 
 @import "./ui.css";
+@import "./git-actions.css";

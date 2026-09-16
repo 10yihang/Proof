@@ -6,6 +6,7 @@ import {
   mkdirSync,
   writeFileSync,
   readFileSync,
+  existsSync,
   rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -41,6 +42,8 @@ async function fixture(page: Page) {
     { stdio: ["pipe", "pipe", "pipe"] },
   );
   const pending: { resolve: (v: any) => void; reject: (e: any) => void }[] = [];
+  let closed = false;
+  child.stdin.on("error", (error) => { for (const p of pending.splice(0)) p.reject(error); });
   createInterface({ input: child.stdout }).on("line", (line) => {
     const r = JSON.parse(line),
       p = pending.shift();
@@ -54,12 +57,14 @@ async function fixture(page: Page) {
   let queue = Promise.resolve<unknown>(null);
   const calls: string[] = [];
   const invoke = (command: string, args: Record<string, unknown> = {}) => {
+    if (closed) return Promise.reject(new Error("Fixture closed"));
     calls.push(command);
     const value = queue
       .catch(() => {})
       .then(
         () =>
           new Promise<any>((resolve, reject) => {
+            if (closed) { reject(new Error("Fixture closed")); return; }
             pending.push({ resolve, reject });
             child.stdin.write(JSON.stringify({ command, args }) + "\n");
           }),
@@ -92,11 +97,13 @@ async function fixture(page: Page) {
       },
     }),
   );
-  const open = async () => {
+  const open = async (history = true) => {
     await page.goto("/");
     await page.locator(".recent-projects button").first().click();
-    await page.getByRole("tab", { name: "History", exact: true }).click();
-    await expect(page.locator(".graph-row").first()).toBeVisible();
+    if (history) {
+      await page.getByRole("tab", { name: "History", exact: true }).click();
+      await expect(page.locator(".graph-row").first()).toBeVisible();
+    }
   };
   return {
     repo,
@@ -107,6 +114,7 @@ async function fixture(page: Page) {
     workspace,
     open,
     close: () => {
+      closed = true;
       child.kill();
       rmSync(directory, { recursive: true, force: true });
     },
@@ -118,6 +126,139 @@ test.beforeEach(() =>
     "Build ui-fixture-driver for native Git tests.",
   ),
 );
+
+test("Git basics: Local changes exposes sync controls, branch copy and Push for a different branch", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  const f = await fixture(page);
+  try {
+    await f.invoke("set_ui_language", { language: "en" });
+    f.git("switch", "feature/ui");
+    writeFileSync(join(f.repo, "feature.txt"), "feature content\n");
+    f.git("add", "feature.txt"); f.git("commit", "-m", "Feature to publish");
+    const feature = f.git("rev-parse", "HEAD");
+    f.git("switch", "main");
+    await f.open(false);
+    const toolbar = page.getByLabel("Git actions", { exact: true });
+    for (const name of ["Fetch", "Pull", "Push", "Stash"]) await expect(toolbar.getByRole("button", { name, exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Current Branch actions", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Copy Branch name", exact: true }).click();
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("main");
+    await page.getByRole("combobox", { name: "Switch Branch, current main", exact: true }).click();
+    await page.getByRole("button", { name: "Branch actions for feature/ui", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Push", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Push", exact: true });
+    await expect(dialog.getByLabel("Remote Branch", { exact: true })).toHaveValue("feature/ui");
+    await dialog.getByLabel("Remote Branch", { exact: true }).fill("review/ui");
+    await expect(dialog.locator(".history-action-direction")).toContainText("feature/ui");
+    await dialog.getByRole("button", { name: "Run Push", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    expect(f.git("branch", "--show-current")).toBe("main");
+    expect(execFileSync("git", ["-C", f.remote, "rev-parse", "refs/heads/review/ui"], { encoding: "utf8" }).trim()).toBe(feature);
+    await page.setViewportSize({ width: 760, height: 820 });
+    for (const name of ["Fetch", "Pull", "Push", "Stash"]) await expect(toolbar.getByRole("button", { name, exact: true })).toBeInViewport();
+  } finally { f.close(); }
+});
+
+test("Git basics: file menus copy paths and batch Discard is confirmed, cancellable and recoverable", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  const f = await fixture(page);
+  try {
+    await f.invoke("set_ui_language", { language: "en" });
+    writeFileSync(join(f.repo, "code.txt"), "keep my local edit\n");
+    writeFileSync(join(f.repo, "new.txt"), "keep my new file\n");
+    await f.open(false);
+    await page.getByRole("button", { name: "File actions for code.txt", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Copy relative path", exact: true }).click();
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("code.txt");
+    await page.getByRole("checkbox", { name: "Select code.txt (unstaged)", exact: true }).check();
+    await page.getByRole("checkbox", { name: "Select new.txt (unstaged)", exact: true }).check();
+    const discard = page.getByRole("button", { name: "Discard…", exact: true });
+    await discard.click();
+    const dialog = page.getByRole("dialog", { name: "Confirm discarding unstaged changes", exact: true });
+    await expect(dialog.locator(".discard-scope")).toContainText("2 files");
+    expect(readFileSync(join(f.repo, "code.txt"), "utf8")).toBe("keep my local edit\n");
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    expect((await f.invoke("recovery_points", { workspaceId: f.workspace.id })).length).toBe(0);
+    await discard.click();
+    await dialog.getByRole("button", { name: "Discard selected changes", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    expect(readFileSync(join(f.repo, "code.txt"), "utf8")).toBe("initial\n");
+    expect(existsSync(join(f.repo, "new.txt"))).toBe(false);
+    expect(f.git("diff", "--cached", "--name-only")).toBe("");
+    await page.getByRole("button", { name: "Recover discarded changes…", exact: true }).click();
+    const recovery = page.getByRole("dialog", { name: "Discard recovery points", exact: true });
+    await recovery.locator("article").filter({ hasText: "new.txt" }).getByRole("button", { name: "Undo discard", exact: true }).click();
+    await recovery.getByRole("button", { name: "Confirm restore", exact: true }).click();
+    await expect.poll(() => existsSync(join(f.repo, "new.txt"))).toBe(true);
+    expect(readFileSync(join(f.repo, "new.txt"), "utf8")).toBe("keep my new file\n");
+  } finally { f.close(); }
+});
+
+test("Git basics: Stash saves untracked files, Apply keeps the entry and Drop needs confirmation", async ({ page }) => {
+  const f = await fixture(page);
+  try {
+    await f.invoke("set_ui_language", { language: "en" });
+    writeFileSync(join(f.repo, "code.txt"), "saved local work\n");
+    writeFileSync(join(f.repo, "new.txt"), "saved new file\n");
+    await f.open(false);
+    await page.getByRole("button", { name: "Stash", exact: true }).click();
+    const manager = page.getByRole("dialog", { name: "Stashes", exact: true });
+    await manager.getByRole("button", { name: "Stash changes…", exact: true }).click();
+    const save = page.getByRole("dialog", { name: "Stash changes…", exact: true });
+    await save.getByLabel("Stash message (optional)", { exact: true }).fill("Switching tasks");
+    await save.getByRole("checkbox", { name: "Include untracked files", exact: true }).check();
+    await save.getByRole("button", { name: "Run Stash", exact: true }).click();
+    await expect(save).toHaveCount(0);
+    expect(existsSync(join(f.repo, "new.txt"))).toBe(false);
+    expect(f.git("status", "--porcelain")).toBe("");
+    await page.getByRole("button", { name: "Stash", exact: true }).click();
+    await expect(manager).toContainText("Switching tasks");
+    await manager.getByRole("button", { name: "Apply", exact: true }).click();
+    const apply = page.getByRole("dialog", { name: "Apply Stash…", exact: true });
+    await apply.getByRole("button", { name: "Run Apply Stash", exact: true }).click();
+    await expect(apply).toHaveCount(0);
+    expect(readFileSync(join(f.repo, "code.txt"), "utf8")).toBe("saved local work\n");
+    expect(readFileSync(join(f.repo, "new.txt"), "utf8")).toBe("saved new file\n");
+    await page.getByRole("button", { name: "Stash", exact: true }).click();
+    await manager.getByRole("button", { name: "Drop…", exact: true }).click();
+    const drop = page.getByRole("dialog", { name: "Drop Stash…", exact: true });
+    await expect(drop.getByRole("button", { name: "Run Drop Stash", exact: true })).toBeDisabled();
+    await drop.getByRole("checkbox").check();
+    await drop.getByRole("button", { name: "Run Drop Stash", exact: true }).click();
+    await expect(drop).toHaveCount(0);
+    expect((await f.invoke("stashes", { workspaceId: f.workspace.id })).length).toBe(0);
+    expect(readFileSync(join(f.repo, "code.txt"), "utf8")).toBe("saved local work\n");
+  } finally { f.close(); }
+});
+
+test("Git basics: toolbar and file actions remain readable in light, dark and narrow layouts", async ({ page }) => {
+  const f = await fixture(page);
+  const shots = resolve(".artifacts/git-basics-0.1.2");
+  mkdirSync(shots, { recursive: true });
+  try {
+    await f.invoke("set_ui_language", { language: "en" });
+    mkdirSync(join(f.repo, "src"));
+    writeFileSync(join(f.repo, "src/auth.ts"), "export interface Session {\n  token: string;\n  expiresAt: number;\n}\n\nexport function isValid(session: Session) {\n  return session.expiresAt > Date.now();\n}\n");
+    writeFileSync(join(f.repo, "code.txt"), "local modification\n");
+    for (const theme of ["light", "dark"]) {
+      const preferences = await f.invoke("preferences");
+      await f.invoke("set_preferences", { preferences: { ...preferences, theme } });
+      await f.open(false);
+      await page.getByRole("button", { name: "auth.ts U", exact: true }).click();
+      await expect(page.locator(".diff-scroll")).toContainText("expiresAt");
+      await expect(page.locator(".error-banner")).toHaveCount(0);
+      await page.getByRole("button", { name: "File actions for src/auth.ts", exact: true }).click();
+      await expect(page.getByRole("menuitem", { name: "Discard file changes…", exact: true })).toBeVisible();
+      await page.screenshot({ path: join(shots, `git-actions-${theme}.png`) });
+      await page.keyboard.press("Escape");
+    }
+    await page.setViewportSize({ width: 760, height: 820 });
+    await expect(page.getByLabel("Git actions", { exact: true }).getByRole("button", { name: "Push", exact: true })).toBeInViewport();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await page.screenshot({ path: join(shots, "git-actions-narrow.png") });
+  } finally { f.close(); }
+});
 test("entering History fetches remote refs quietly and does not fetch again within a minute", async ({ page }) => {
   const f = await fixture(page);
   try {
@@ -254,7 +395,7 @@ test("History menus support keyboard, clipboard, real Branch switching and renam
       .click();
     await expect(modal).not.toBeVisible();
     expect(f.git("branch", "--show-current")).toBe("feature/ui");
-    await expect(page.locator(".history-current-branch")).toContainText(
+    await expect(page.locator(".branch-picker")).toContainText(
       "feature/ui",
     );
     await openBranch();

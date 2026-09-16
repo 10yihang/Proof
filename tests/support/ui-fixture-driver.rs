@@ -228,6 +228,27 @@ fn dispatch(proof: &mut Proof, command: &str, a: &Value) -> Result<Value, Error>
         )?),
         "commit" => json!(proof.commit(s("previewId"), s("message"))?),
         "history_repository_state" => json!(proof.history_repository_state(s("workspaceId"))?),
+        "recovery_points" => json!(proof.recovery_points(s("workspaceId"))?),
+        "recovery_content" => json!(proof.recovery_content(s("recoveryId"))?),
+        "cancel_discard_preview" => {
+            proof.cancel_discard_preview(s("recoveryId"))?;
+            json!(null)
+        }
+        "undo_discard" => json!(proof.undo_discard(s("recoveryId"))?),
+        "history_branch_state" => {
+            json!(proof.history_branch_state(s("workspaceId"), Some(s("branch")))?)
+        }
+        "stashes" => json!(proof.stashes(s("workspaceId"))?),
+        "discard_files_preview" => json!(proof.discard_files_preview(
+            s("workspaceId"),
+            &serde_json::from_value::<Vec<String>>(a["paths"].clone())?,
+            s("expectedToken")
+        )?),
+        "discard_files" => json!(proof.discard_files(
+            s("workspaceId"),
+            &serde_json::from_value::<Vec<String>>(a["recoveryIds"].clone())?,
+            s("expectedToken")
+        )?),
         "history_auto_fetch" => {
             if let Some(job) = proof.prepare_history_fetch(s("workspaceId"))? {
                 job.execute()?;

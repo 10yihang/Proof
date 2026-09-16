@@ -1,0 +1,167 @@
+.branch-control,
+.branch-choice-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.branch-control {
+  max-width: 260px;
+  flex-shrink: 1;
+}
+.branch-control .branch-picker {
+  display: flex;
+  min-width: 0;
+}
+.branch-control .history-more-button,
+.branch-choice-row .history-more-button {
+  flex-shrink: 0;
+  width: 25px;
+  height: 28px;
+  color: var(--muted);
+}
+.branch-choice-row .branch-option {
+  min-width: 0;
+  flex: 1;
+}
+.desktop-toolbar .history-git-toolbar {
+  gap: 4px;
+  padding: 0 7px;
+  min-height: 0;
+  border: 0;
+  border-left: 1px solid var(--border);
+}
+.desktop-toolbar .history-git-toolbar .button {
+  height: 29px;
+  padding: 0 8px;
+  gap: 5px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.history-git-toolbar small {
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+.file-tree-row > .history-more-button,
+.change-group-file > .history-more-button {
+  width: 25px;
+  height: 25px;
+  flex: 0 0 25px;
+  color: var(--muted);
+}
+.file-tree-row:hover > .history-more-button,
+.file-tree-row:focus-within > .history-more-button {
+  color: var(--text);
+}
+.file-selection-actions {
+  flex-wrap: wrap;
+}
+.danger-text {
+  color: var(--del);
+}
+.discard-scope ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 280px;
+  overflow: auto;
+}
+.discard-scope li {
+  display: grid;
+  gap: 4px;
+  padding: 8px 0;
+}
+.discard-scope li + li {
+  border-top: 1px solid var(--border);
+}
+.discard-scope small {
+  color: var(--muted);
+}
+.stash-dialog {
+  width: min(720px, calc(100vw - 32px));
+}
+.stash-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.stash-list {
+  max-height: min(480px, 60vh);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.stash-entry {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+}
+.stash-entry + .stash-entry {
+  border-top: 1px solid var(--border);
+}
+.stash-entry > svg {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.stash-description {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  flex: 1;
+}
+.stash-description strong {
+  font-size: 12px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.stash-description small {
+  color: var(--muted);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.stash-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+@media (max-width: 1180px) {
+  .desktop-toolbar .history-git-toolbar .git-action-label {
+    display: none;
+  }
+  .desktop-toolbar .history-git-toolbar .button {
+    min-width: 28px;
+    padding: 0 6px;
+  }
+  .desktop-toolbar .history-upstream {
+    display: none;
+  }
+  .branch-control {
+    max-width: 190px;
+  }
+}
+@media (max-width: 780px) {
+  .app.layout-enabled .desktop-toolbar {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: 48px;
+    row-gap: 4px;
+  }
+  .desktop-toolbar .history-git-toolbar {
+    order: 2;
+    width: 100%;
+    padding: 4px 0;
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
+  .desktop-toolbar .history-git-toolbar .git-action-label {
+    display: inline;
+  }
+  .stash-entry {
+    flex-wrap: wrap;
+  }
+  .stash-actions {
+    margin-left: 30px;
+  }
+}

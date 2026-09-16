@@ -13,6 +13,7 @@ interface Content {
   capturedOriginal: string | null;
   capturedWarning: string | null;
   directory: string;
+  binaryContent?: boolean;
 }
 const statusName: Record<string, string> = {
   get prepared() {
@@ -143,9 +144,11 @@ export function RecoveryDialog({
               ? t(
                   "这会在当前缺失的路径创建丢弃前保存的文件。如果该路径出现新文件，Proof 会停止，保留新文件。",
                 )
-              : t(
-                  "当前文件必须仍匹配丢弃后的版本；路径已被删除时不会自动重建。",
-                )}
+              : confirm.removesFile
+                ? t("当前路径必须仍为空，Proof 会恢复保存的 untracked 文件。")
+                : t(
+                    "当前文件必须仍匹配丢弃后的版本；路径已被删除时不会自动重建。",
+                  )}
             {t("恢复操作会保留现有 Git 索引。")}
           </p>
           {error?.code === "RECOVERY_MISSING_PATH" && !restoreMissing && (
@@ -255,45 +258,58 @@ export function RecoveryDialog({
           {content.capturedWarning && (
             <p role="status">{content.capturedWarning}</p>
           )}
-          {(
-            [
-              [t("丢弃前"), content.before],
-              [t("丢弃后"), content.after],
-              ...(content.capturedOriginal !== null &&
-              content.capturedOriginal !== content.before
-                ? [[t("捕获的原文件（含后续编辑）"), content.capturedOriginal]]
-                : []),
-            ] as [string, string | null][]
-          ).map(([label, value]) => (
-            <details key={label}>
-              <summary>
-                {label}
-                {value === null ? t(" · 文件不存在") : ""}
-              </summary>
-              {value !== null && (
-                <>
-                  <Button
-                    className="button compact"
-                    onClick={() =>
-                      void navigator.clipboard
-                        .writeText(value)
-                        .then(() => setMessage(t("已复制完整保存内容。")))
-                        .catch((e) => setError(asError(e)))
-                    }
-                  >
-                    <Copy size={14} />
-                    {t("复制完整内容")}
-                  </Button>
-                  {value.length > 200000 && (
-                    <p>
-                      {t("仅预览前 200,000 个字符；复制包含完整保存内容。")}
-                    </p>
-                  )}
-                  <pre>{value.slice(0, 200000)}</pre>
-                </>
+          {content.binaryContent ? (
+            <p>
+              {t(
+                "二进制内容已保存在恢复点，可恢复原文件；不提供文本预览或复制。",
               )}
-            </details>
-          ))}
+            </p>
+          ) : (
+            (
+              [
+                [t("丢弃前"), content.before],
+                [t("丢弃后"), content.after],
+                ...(content.capturedOriginal !== null &&
+                content.capturedOriginal !== content.before
+                  ? [
+                      [
+                        t("捕获的原文件（含后续编辑）"),
+                        content.capturedOriginal,
+                      ],
+                    ]
+                  : []),
+              ] as [string, string | null][]
+            ).map(([label, value]) => (
+              <details key={label}>
+                <summary>
+                  {label}
+                  {value === null ? t(" · 文件不存在") : ""}
+                </summary>
+                {value !== null && (
+                  <>
+                    <Button
+                      className="button compact"
+                      onClick={() =>
+                        void navigator.clipboard
+                          .writeText(value)
+                          .then(() => setMessage(t("已复制完整保存内容。")))
+                          .catch((e) => setError(asError(e)))
+                      }
+                    >
+                      <Copy size={14} />
+                      {t("复制完整内容")}
+                    </Button>
+                    {value.length > 200000 && (
+                      <p>
+                        {t("仅预览前 200,000 个字符；复制包含完整保存内容。")}
+                      </p>
+                    )}
+                    <pre>{value.slice(0, 200000)}</pre>
+                  </>
+                )}
+              </details>
+            ))
+          )}
         </div>
       )}
     </Modal>

@@ -122,6 +122,237 @@ fn automatic_fetch_updates_only_remote_refs_and_throttles_linked_worktrees() {
 }
 
 #[test]
+fn push_can_publish_a_selected_local_branch_without_switching_head() {
+    let mut f = Fixture::new();
+    f.remote();
+    let main = f.head();
+    git(&f.repo, &["switch", "-c", "feature/publish"]);
+    let feature = f.commit("feature.txt", "feature change\n");
+    git(&f.repo, &["switch", "main"]);
+    let mut request = action(Kind::Push, Some("refs/heads/feature/publish"));
+    request.remote = Some("origin".into());
+    request.name = Some("review/feature".into());
+    let preview = f.prepare(request).unwrap();
+    assert_eq!(preview.target_oid.as_deref(), Some(feature.as_str()));
+    assert!(preview
+        .arguments
+        .contains(&"refs/heads/feature/publish:refs/heads/review/feature".into()));
+    let result = f
+        .proof
+        .execute_history_action(&f.workspace.id, &preview.id)
+        .unwrap();
+    assert!(result.ok, "{}", result.detail);
+    assert_eq!(f.head(), main);
+    assert_eq!(git(&f.repo, &["branch", "--show-current"]), "main");
+    assert_eq!(
+        git(
+            &f.temp.path().join("remote.git"),
+            &["rev-parse", "refs/heads/review/feature"]
+        ),
+        feature
+    );
+    let state = f
+        .proof
+        .history_branch_state(&f.workspace.id, Some("feature/publish"))
+        .unwrap();
+    assert_eq!(state.upstream_remote.as_deref(), Some("origin"));
+    assert_eq!(state.upstream_branch.as_deref(), Some("review/feature"));
+    assert_eq!(
+        f.proof
+            .history_repository_state(&f.workspace.id)
+            .unwrap()
+            .upstream_branch
+            .as_deref(),
+        Some("main")
+    );
+}
+
+#[test]
+fn stash_preserves_staged_content_and_optionally_includes_untracked_files() {
+    let mut f = Fixture::new();
+    fs::write(f.repo.join("code.txt"), "staged version\n").unwrap();
+    git(&f.repo, &["add", "code.txt"]);
+    fs::write(f.repo.join("code.txt"), "worktree version\n").unwrap();
+    fs::write(f.repo.join("untracked.txt"), "new file\n").unwrap();
+    let mut save = action(Kind::Stash, None);
+    save.name = Some("work in progress".into());
+    assert!(f.run(save.clone()).ok);
+    assert_eq!(
+        fs::read_to_string(f.repo.join("code.txt")).unwrap(),
+        "initial\n"
+    );
+    assert!(f.repo.join("untracked.txt").exists());
+    let entries = f.proof.stashes(&f.workspace.id).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert!(entries[0].subject.contains("work in progress"));
+    let mut apply = action(Kind::StashApply, Some(&entries[0].selector));
+    apply.mode = Some("index".into());
+    assert!(f.run(apply).ok);
+    assert_eq!(git(&f.repo, &["show", ":code.txt"]), "staged version");
+    assert_eq!(
+        fs::read_to_string(f.repo.join("code.txt")).unwrap(),
+        "worktree version\n"
+    );
+    assert_eq!(f.proof.stashes(&f.workspace.id).unwrap().len(), 1);
+    save.mode = Some("include-untracked".into());
+    assert!(f.run(save).ok);
+    assert!(!f.repo.join("untracked.txt").exists());
+    assert!(f.proof.changes(&f.workspace.id).unwrap().files.is_empty());
+    assert!(f.run(action(Kind::StashPop, Some("stash@{0}"))).ok);
+    assert_eq!(
+        fs::read_to_string(f.repo.join("untracked.txt")).unwrap(),
+        "new file\n"
+    );
+    assert_eq!(f.proof.stashes(&f.workspace.id).unwrap().len(), 1);
+}
+
+#[test]
+fn stash_pop_conflicts_keep_the_saved_stash_and_report_conflicts() {
+    let mut f = Fixture::new();
+    fs::write(f.repo.join("code.txt"), "saved work\n").unwrap();
+    assert!(f.run(action(Kind::Stash, None)).ok);
+    let stash = f.proof.stashes(&f.workspace.id).unwrap()[0].oid.clone();
+    f.commit("code.txt", "new base\n");
+    let result = f.run(action(Kind::StashPop, Some("stash@{0}")));
+    assert!(!result.ok);
+    assert_eq!(result.conflicts, ["code.txt"]);
+    assert_eq!(f.proof.stashes(&f.workspace.id).unwrap()[0].oid, stash);
+}
+
+#[test]
+fn stash_preview_rejects_reflog_changes_even_when_its_tip_did_not_change() {
+    let mut f = Fixture::new();
+    for i in 0..3 {
+        fs::write(f.repo.join("code.txt"), format!("saved {i}\n")).unwrap();
+        assert!(f.run(action(Kind::Stash, None)).ok);
+    }
+    let preview = f
+        .prepare(action(Kind::StashDrop, Some("stash@{1}")))
+        .unwrap();
+    assert!(preview.destructive);
+    let tip = git(&f.repo, &["rev-parse", "refs/stash"]);
+    git(&f.repo, &["stash", "drop", "stash@{2}"]);
+    assert_eq!(git(&f.repo, &["rev-parse", "refs/stash"]), tip);
+    assert_eq!(
+        f.proof
+            .execute_history_action(&f.workspace.id, &preview.id)
+            .unwrap_err()
+            .code,
+        "STALE_CONTENT"
+    );
+    assert_eq!(f.proof.stashes(&f.workspace.id).unwrap().len(), 2);
+}
+
+#[test]
+fn multi_file_discard_is_previewed_and_recoverable_without_index_changes() {
+    let mut f = Fixture::new();
+    fs::write(f.repo.join("code.txt"), "local edit\n").unwrap();
+    fs::write(f.repo.join("new.txt"), "untracked edit\n").unwrap();
+    let index = fs::read(f.repo.join(".git/index")).unwrap();
+    let token = f.proof.changes(&f.workspace.id).unwrap().token;
+    let points = f
+        .proof
+        .discard_files_preview(
+            &f.workspace.id,
+            &["code.txt".into(), "new.txt".into()],
+            &token,
+        )
+        .unwrap();
+    assert_eq!(points.len(), 2);
+    assert_eq!(
+        fs::read_to_string(f.repo.join("code.txt")).unwrap(),
+        "local edit\n"
+    );
+    let ids: Vec<_> = points.iter().map(|p| p.id.clone()).collect();
+    let result = f
+        .proof
+        .discard_files(&f.workspace.id, &ids, &token)
+        .unwrap();
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.applied.len(), 2);
+    assert!(result.applied.iter().all(|action| action.result.ok));
+    assert_eq!(
+        fs::read_to_string(f.repo.join("code.txt")).unwrap(),
+        "initial\n"
+    );
+    assert!(!f.repo.join("new.txt").exists());
+    assert_eq!(fs::read(f.repo.join(".git/index")).unwrap(), index);
+    for id in &ids {
+        assert!(f.proof.undo_discard(id).unwrap().result.ok);
+    }
+    assert_eq!(
+        fs::read_to_string(f.repo.join("code.txt")).unwrap(),
+        "local edit\n"
+    );
+    assert_eq!(
+        fs::read_to_string(f.repo.join("new.txt")).unwrap(),
+        "untracked edit\n"
+    );
+}
+
+#[test]
+fn multi_file_discard_rejects_a_changed_selection_before_any_file_is_discarded() {
+    let mut f = Fixture::new();
+    fs::write(f.repo.join("code.txt"), "keep first\n").unwrap();
+    fs::write(f.repo.join("new.txt"), "keep second\n").unwrap();
+    let token = f.proof.changes(&f.workspace.id).unwrap().token;
+    let points = f
+        .proof
+        .discard_files_preview(
+            &f.workspace.id,
+            &["code.txt".into(), "new.txt".into()],
+            &token,
+        )
+        .unwrap();
+    fs::write(f.repo.join("new.txt"), "newer editor save\n").unwrap();
+    let ids: Vec<_> = points.iter().map(|p| p.id.clone()).collect();
+    assert_eq!(
+        f.proof
+            .discard_files(&f.workspace.id, &ids, &token)
+            .unwrap_err()
+            .code,
+        "STALE_CONTENT"
+    );
+    assert_eq!(
+        fs::read_to_string(f.repo.join("code.txt")).unwrap(),
+        "keep first\n"
+    );
+    assert_eq!(
+        fs::read_to_string(f.repo.join("new.txt")).unwrap(),
+        "newer editor save\n"
+    );
+    for id in &ids {
+        f.proof.cancel_discard_preview(id).unwrap();
+    }
+}
+
+#[test]
+fn untracked_binary_discard_preserves_exact_bytes_and_never_exposes_lossy_text() {
+    let mut f = Fixture::new();
+    let name = ":(glob)*literal.bin";
+    let bytes = b"\0\xff\x01binary data";
+    fs::write(f.repo.join(name), bytes).unwrap();
+    let token = f.proof.changes(&f.workspace.id).unwrap().token;
+    let points = f
+        .proof
+        .discard_files_preview(&f.workspace.id, &[name.into()], &token)
+        .unwrap();
+    assert!(points[0].removes_file);
+    let id = points[0].id.clone();
+    let content = f.proof.recovery_content(&id).unwrap();
+    assert_eq!(content["binaryContent"], true);
+    assert!(content["before"].is_null());
+    let result = f
+        .proof
+        .discard_files(&f.workspace.id, std::slice::from_ref(&id), &token)
+        .unwrap();
+    assert!(result.error.is_none());
+    assert!(!f.repo.join(name).exists());
+    assert!(f.proof.undo_discard(&id).unwrap().result.ok);
+    assert_eq!(fs::read(f.repo.join(name)).unwrap(), bytes);
+}
+
+#[test]
 fn automatic_fetch_skips_untrusted_and_remote_less_repositories_and_limits_failures() {
     let mut f = Fixture::new();
     assert!(f

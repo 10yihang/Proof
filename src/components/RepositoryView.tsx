@@ -16,45 +16,34 @@ import { CommitHistory } from "./CommitHistory";
 import { branchRef } from "../history-actions";
 import { demoGraphPage } from "../graph-demo";
 import {
-  useHistoryActions,
   HistoryTargetActions,
   GitContextMenu,
   HistoryMoreButton,
 } from "./HistoryActions";
+import type { HistoryActions } from "./HistoryActions";
 
 export type RepositorySection = "history" | "branches" | "worktrees";
 
 export function RepositoryView({
-  active,
+  actions,
   section,
   onSection,
   changes,
   demo,
   onOpen,
   onError,
-  onChanged,
   onOpenDiff,
-  onOpenLocalFile,
 }: {
-  active: boolean;
+  actions: HistoryActions;
   section: RepositorySection;
   onSection: (section: RepositorySection) => void;
   changes: Changes;
   demo: boolean;
   onOpen: (path: string) => Promise<void>;
   onError: (e: unknown) => void;
-  onChanged: () => Promise<void>;
   onOpenDiff: (value: HistoryComparison) => void;
-  onOpenLocalFile: (path: string) => void;
 }) {
   const request = useRequest();
-  const actions = useHistoryActions(
-    changes,
-    demo,
-    onChanged,
-    onOpenLocalFile,
-    active && section === "history",
-  );
   const [comparison, setComparison] = useState<HistoryComparison | null>(null);
   const [branchAnchor, setBranchAnchor] = useState<BranchEntry | null>(null);
   const [branchMenu, setBranchMenu] = useState<{
@@ -299,8 +288,6 @@ export function RepositoryView({
           </header>
         )}
         <div className="repository-page" hidden={section !== "history"}>
-          {actions.toolbar}
-          {actions.feedback}
           {(historyVisited || section === "history") && (
             <CommitHistory
               actions={actions}
@@ -448,7 +435,6 @@ export function RepositoryView({
           </MenuItem>
         </GitContextMenu>
       )}
-      {actions.dialog}
     </main>
   );
 }

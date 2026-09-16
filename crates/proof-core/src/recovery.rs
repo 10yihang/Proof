@@ -14,6 +14,12 @@ use std::{
 
 const RETENTION_MS: u64 = 7 * 24 * 60 * 60 * 1000;
 const CAPACITY: u64 = 256 * 1024 * 1024;
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscardBatchResult {
+    pub applied: Vec<RecoveryAction>,
+    pub error: Option<Error>,
+}
 type StoredRecovery = (String, Option<Vec<u8>>, Option<Vec<u8>>);
 
 #[derive(Serialize, Deserialize)]
@@ -28,6 +34,115 @@ struct Record {
 }
 
 impl Proof {
+    pub fn discard_files_preview(
+        &mut self,
+        workspace_id: &str,
+        paths: &[String],
+        expected_token: &str,
+    ) -> Result<Vec<RecoveryPoint>> {
+        let workspace = self.store.workspace(workspace_id)?;
+        self.require_write(&workspace)?;
+        let changes = self.changes(workspace_id)?;
+        if changes.token != expected_token {
+            return Err(Error::stale());
+        }
+        let unique: std::collections::HashSet<_> = paths.iter().collect();
+        if paths.is_empty()
+            || paths.len() != unique.len()
+            || paths.iter().any(|path| {
+                !changes.files.iter().any(|file| {
+                    &file.path == path && file.side == Side::Unstaged && !file.conflicted
+                })
+            })
+        {
+            return Err(Error::new(
+                "UNSUPPORTED_DISCARD",
+                "请选择未暂存且没有冲突的文件。",
+                "Discard paths must be unique current unstaged files",
+            ));
+        }
+        let mut points: Vec<RecoveryPoint> = Vec::new();
+        let prepare = (|| {
+            for path in paths {
+                let diff = self.file_diff(workspace_id, path, Side::Unstaged)?;
+                points.push(self.discard_preview(&diff.id, None)?);
+            }
+            if self.changes(workspace_id)?.token != expected_token {
+                return Err(Error::stale());
+            }
+            Ok(())
+        })();
+        if let Err(mut error) = prepare {
+            for point in &points {
+                if self.cancel_discard_preview(&point.id).is_err() {
+                    error.detail.push_str(
+                        "\nAn unused preview remains in Recovery; no project files were changed.",
+                    );
+                }
+            }
+            return Err(error);
+        }
+        Ok(points)
+    }
+
+    pub fn discard_files(
+        &mut self,
+        workspace_id: &str,
+        ids: &[String],
+        expected_token: &str,
+    ) -> Result<DiscardBatchResult> {
+        let workspace = self.store.workspace(workspace_id)?;
+        self.require_write(&workspace)?;
+        if self.changes(workspace_id)?.token != expected_token {
+            return Err(Error::stale());
+        }
+        let unique: std::collections::HashSet<_> = ids.iter().collect();
+        if ids.is_empty() || ids.len() != unique.len() {
+            return Err(Error::stale());
+        }
+        // Validate the complete selection before touching any file. Each
+        // recovery record then rechecks its own bytes/base under an Index lock.
+        let mut paths = std::collections::HashSet::new();
+        for id in ids {
+            let record = self.load_recovery(id)?;
+            if record.point.workspace_id != workspace_id || record.point.status != "prepared" {
+                return Err(Error::stale());
+            }
+            if !paths.insert(record.point.path) {
+                return Err(Error::stale());
+            }
+        }
+        let mut applied = Vec::new();
+        let mut failure = None;
+        for (index, id) in ids.iter().enumerate() {
+            match self.discard(id) {
+                Ok(action) => {
+                    let ok = action.result.ok;
+                    applied.push(action);
+                    if ok {
+                        continue;
+                    }
+                    failure = Some(Error::new(
+                        "DISCARD_PARTIAL",
+                        "部分文件未能 Discard，请检查恢复点和当前内容。",
+                        "Recovery reported an incomplete write",
+                    ));
+                }
+                Err(error) => failure = Some(error),
+            }
+            // No rollback over a concurrent editor write. Preserve completed
+            // recovery points and explicitly report the partial result.
+            for pending in &ids[index + 1..] {
+                let _ = self.cancel_discard_preview(pending);
+            }
+            break;
+        }
+        Ok(DiscardBatchResult {
+            applied,
+            error: failure,
+        })
+    }
+
     fn recovery_usage(&self) -> Result<u64> {
         let mut query = self.store.connection.prepare("SELECT id,reserved_bytes,COALESCE(length(before_data),0)+COALESCE(length(after_data),0) FROM recovery_points")?;
         let rows = query
@@ -182,9 +297,20 @@ impl Proof {
         let git = self.git()?;
         let _lock = IndexLock::acquire(Path::new(&workspace.git_dir))?;
         self.validate(&diff)?;
-        let file = BoundFile::open(Path::new(&workspace.path), &diff.path)?;
+        let untracked = git
+            .query(&workspace, &["ls-files", "-z", "--", &diff.path])?
+            .is_empty();
+        let file =
+            BoundFile::open(Path::new(&workspace.path), &diff.path)?.with_binary_content(untracked);
         let before = file.read()?;
-        let index_content = git.index_worktree_content(&workspace, &diff.path)?;
+        if untracked && before.is_none() {
+            return Err(Error::stale());
+        }
+        let index_content = if untracked {
+            Vec::new()
+        } else {
+            git.index_worktree_content(&workspace, &diff.path)?
+        };
         if index_content.len() > 32 * 1024 * 1024
             || index_content.contains(&0)
             || std::str::from_utf8(&index_content).is_err()
@@ -237,7 +363,7 @@ impl Proof {
                 ));
             }
         };
-        let after = Some(FileImage {
+        let after = (!untracked).then_some(FileImage {
             bytes: content,
             mode,
             identity: String::new(),
@@ -260,7 +386,13 @@ impl Proof {
             workspace_id: workspace.id.clone(),
             path: diff.path.clone(),
             scope: hunk_id.map_or_else(
-                || "文件全部未暂存变化".into(),
+                || {
+                    if untracked {
+                        "移除 untracked 文件，原内容保存在恢复点。".into()
+                    } else {
+                        "文件全部未暂存变化".into()
+                    }
+                },
                 |_| {
                     format!(
                         "单个 Hunk（{}）",
@@ -277,6 +409,7 @@ impl Proof {
             expires_at: created_at + RETENTION_MS,
             bytes: size,
             message: None,
+            removes_file: untracked,
         };
         let directory = self.recovery_directory(&point.id)?;
         fs::create_dir_all(&directory)?;
@@ -416,7 +549,8 @@ impl Proof {
         if context != record.context {
             return Err(Error::stale());
         }
-        let file = BoundFile::open(Path::new(&workspace.path), &record.point.path)?;
+        let file = BoundFile::open(Path::new(&workspace.path), &record.point.path)?
+            .with_binary_content(record.point.removes_file);
         file.check_volume(&directory)?;
         let current = file.read()?;
         if restore_missing && (current.is_some() || record.before.is_none()) {
@@ -447,14 +581,18 @@ impl Proof {
             });
         }
         let (expected, desired) = if undo {
-            if !restore_missing && current.is_none() && record.before.is_some() {
+            if !restore_missing
+                && current.is_none()
+                && record.before.is_some()
+                && record.after.is_some()
+            {
                 return Err(Error::new("RECOVERY_MISSING_PATH", "当前路径已无文件，无法判断是操作中断还是后续删除。请单独确认是否将保存版本恢复到空路径。", &record.point.path));
             }
             if !restore_missing && !guarded_file::matches(&current, &record.after) {
                 return Err(Error::stale());
             }
             if original.exists() {
-                let saved = guarded_file::read_saved(&original)?;
+                let saved = guarded_file::read_saved(&original, record.point.removes_file)?;
                 if record
                     .before
                     .as_ref()
@@ -568,15 +706,26 @@ impl Proof {
         let record = self.load_recovery(id)?;
         let original = self.recovery_directory(id)?.join("original");
         let (captured, warning) = if original.exists() {
-            match guarded_file::read_saved(&original) {
-                Ok(image) => (Some(String::from_utf8_lossy(&image.bytes).into_owned()), None),
+            match guarded_file::read_saved(&original, record.point.removes_file) {
+                Ok(image) => (Some(image), None),
                 Err(error) => (None, Some(format!("捕获的原文件无法预览：{} 保存前后的不可变副本仍可读取；请在恢复目录检查原文件。", error.message))),
             }
         } else {
             (None, None)
         };
+        let binary = [&record.before, &record.after, &captured]
+            .into_iter()
+            .flatten()
+            .any(|image| image.bytes.contains(&0) || std::str::from_utf8(&image.bytes).is_err());
+        let text = |image: Option<FileImage>| {
+            if binary {
+                None
+            } else {
+                image.map(|image| String::from_utf8_lossy(&image.bytes).into_owned())
+            }
+        };
         Ok(
-            serde_json::json!({"point": record.point, "before": record.before.map(|f| String::from_utf8_lossy(&f.bytes).into_owned()), "after": record.after.map(|f| String::from_utf8_lossy(&f.bytes).into_owned()), "capturedOriginal": captured, "capturedWarning": warning, "directory": self.recovery_directory(id)?}),
+            serde_json::json!({"point": record.point, "before": text(record.before), "after": text(record.after), "capturedOriginal": text(captured), "capturedWarning": warning, "binaryContent": binary, "directory": self.recovery_directory(id)?}),
         )
     }
 }

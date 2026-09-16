@@ -16,6 +16,10 @@ export type HistoryActionKind =
   | "fetch"
   | "pull"
   | "push"
+  | "stash"
+  | "stashApply"
+  | "stashPop"
+  | "stashDrop"
   | "continue"
   | "abort"
   | "stageResolution";
@@ -62,6 +66,12 @@ export interface HistoryRepositoryState {
   operation: string | null;
   conflicts: string[];
 }
+export interface StashEntry {
+  selector: string;
+  oid: string;
+  subject: string;
+  createdAt: number;
+}
 export function branchRef(branch: BranchEntry) {
   return `refs/${branch.remote ? "remotes" : "heads"}/${branch.name}`;
 }
@@ -80,6 +90,10 @@ export const actionVerbs: Record<HistoryActionKind, string> = {
   fetch: "Fetch",
   pull: "Pull",
   push: "Push",
+  stash: "Stash",
+  stashApply: "Apply Stash",
+  stashPop: "Pop Stash",
+  stashDrop: "Drop Stash",
   continue: "Continue",
   abort: "Abort",
   stageResolution: "Stage",
@@ -114,6 +128,14 @@ export function actionLabel(kind: HistoryActionKind) {
       return "Pull";
     case "push":
       return "Push";
+    case "stash":
+      return t("保存到 Stash…");
+    case "stashApply":
+      return t("Apply Stash…");
+    case "stashPop":
+      return t("Pop Stash…");
+    case "stashDrop":
+      return t("删除 Stash…");
     case "continue":
       return t("继续操作");
     case "abort":
@@ -174,7 +196,19 @@ export function actionExplanation(kind: HistoryActionKind, mode?: string) {
           : t("获取远程 Branch，仅允许 fast-forward；存在分叉时停止。");
     case "push":
       return t(
-        "把当前 Branch 推送到所选远程 Branch，并设置 upstream。远程不允许 fast-forward 时停止。",
+        "把所选本地 Branch 推送到远程 Branch，并设置 upstream。远程不允许 fast-forward 时停止。",
+      );
+    case "stash":
+      return t(
+        "保存本地修改并清理对应的 Worktree 内容，可稍后从 Stash 恢复。忽略的文件会保留。",
+      );
+    case "stashApply":
+      return t("恢复此 Stash 的修改，并保留 Stash。发生冲突时请手动解决。");
+    case "stashPop":
+      return t("恢复此 Stash 的修改，成功后删除 Stash。发生冲突时保留 Stash。");
+    case "stashDrop":
+      return t(
+        "删除此 Stash，Worktree 保持不变。删除后无法再从 Stash 列表恢复。",
       );
     case "continue":
       return t("使用已 Stage 的冲突解决结果继续当前 Git 操作。");

@@ -25,6 +25,10 @@ pub enum HistoryActionKind {
     Fetch,
     Pull,
     Push,
+    Stash,
+    StashApply,
+    StashPop,
+    StashDrop,
     Continue,
     Abort,
     StageResolution,
@@ -205,21 +209,33 @@ fn operation_guard(git: &Git, workspace: &Workspace, changes: &Changes) -> Resul
         &refs,
         &config,
         &state,
+        &git.query(workspace, &["stash", "list", "--format=%H%x00%gd%x00%gs"])?,
         git.executable.as_bytes(),
     ]))
 }
 impl Proof {
     pub fn history_repository_state(&self, workspace_id: &str) -> Result<HistoryRepositoryState> {
+        self.history_branch_state(workspace_id, None)
+    }
+    pub fn history_branch_state(
+        &self,
+        workspace_id: &str,
+        selected_branch: Option<&str>,
+    ) -> Result<HistoryRepositoryState> {
         let workspace = self.store.workspace(workspace_id)?;
         let git = self.git()?;
         let changes = git.changes(&workspace)?;
+        if let Some(name) = selected_branch {
+            valid_name(&git, &workspace, name, "heads")?;
+            commit(&git, &workspace, &format!("refs/heads/{name}"))?;
+        }
         let remotes = text(&git, &workspace, &["remote"])?
             .lines()
             .map(str::to_owned)
             .collect();
         let (mut remote, mut branch, mut upstream) = (None, None, None);
         let (mut ahead, mut behind) = (0, 0);
-        if let Some(name) = &changes.branch {
+        if let Some(name) = selected_branch.or(changes.branch.as_deref()) {
             remote = config(&git, &workspace, &format!("branch.{name}.remote"))?;
             branch = config(&git, &workspace, &format!("branch.{name}.merge"))?
                 .and_then(|value| value.strip_prefix("refs/heads/").map(str::to_owned));
@@ -242,7 +258,7 @@ impl Proof {
                         "rev-list",
                         "--left-right",
                         "--count",
-                        &format!("HEAD...{row}"),
+                        &format!("refs/heads/{name}...{row}"),
                         "--",
                     ],
                 ) {
@@ -330,7 +346,7 @@ impl Proof {
         let mut target_oid = None;
         let mut remote_branch = None;
         let mut affected_commits = 0;
-        let destructive = matches!(request.kind, Rebase | Reset | Abort)
+        let destructive = matches!(request.kind, Rebase | Reset | Abort | StashDrop)
             || request.kind == Pull && request.mode.as_deref() == Some("rebase");
         let needs_target = matches!(
             request.kind,
@@ -513,7 +529,26 @@ impl Proof {
                         &format!("+refs/heads/*:refs/remotes/{remote}/*"),
                     ]);
                 } else {
-                    let local = current_branch()?;
+                    let local = if request.kind == Push {
+                        match request.target.as_deref() {
+                            Some(target) if target.starts_with("refs/heads/") => {
+                                let branch = target.strip_prefix("refs/heads/").unwrap();
+                                valid_name(&git, &workspace, branch, "heads")?;
+                                branch
+                            }
+                            None => current_branch()?,
+                            Some(target) if Some(target) == changes.head.as_deref() => {
+                                current_branch()?
+                            }
+                            _ => return Err(invalid("Push requires a local source branch")),
+                        }
+                    } else {
+                        current_branch()?
+                    };
+                    if request.kind == Push {
+                        target_oid =
+                            Some(commit(&git, &workspace, &format!("refs/heads/{local}"))?);
+                    }
                     let branch = request
                         .name
                         .as_deref()
@@ -564,6 +599,70 @@ impl Proof {
                         ]);
                     }
                 }
+            }
+            Stash => {
+                if changes.head.is_none() {
+                    return Err(invalid("Stash requires an initial commit"));
+                }
+                let include_untracked = match request.mode.as_deref().unwrap_or("tracked") {
+                    "tracked" => false,
+                    "include-untracked" => true,
+                    _ => return Err(invalid("Invalid stash scope")),
+                };
+                if !changes
+                    .files
+                    .iter()
+                    .any(|file| include_untracked || file.status != "?")
+                {
+                    return Err(Error::new(
+                        "STASH_EMPTY",
+                        "没有可保存到 Stash 的修改。",
+                        "No matching changes",
+                    ));
+                }
+                let message = request
+                    .name
+                    .as_deref()
+                    .filter(|name| !name.trim().is_empty())
+                    .unwrap_or("Work in progress");
+                if message.len() > 2048 || message.chars().any(char::is_control) {
+                    return Err(invalid("Invalid stash message"));
+                }
+                args = words(&["stash", "push", "--message", message]);
+                if include_untracked {
+                    args.push("--include-untracked".into());
+                }
+            }
+            StashApply | StashPop | StashDrop => {
+                let entry = crate::stash::entries(&git, &workspace)?
+                    .into_iter()
+                    .find(|entry| Some(entry.selector.as_str()) == request.target.as_deref())
+                    .ok_or_else(|| {
+                        Error::new(
+                            "STASH_MISSING",
+                            "此 Stash 已更新或移除，请刷新后重试。",
+                            "Stash selector is no longer available",
+                        )
+                    })?;
+                target_oid = Some(entry.oid.clone());
+                let verb = match request.kind {
+                    StashApply => "apply",
+                    StashPop => "pop",
+                    _ => "drop",
+                };
+                args = words(&["stash", verb]);
+                if request.kind != StashDrop {
+                    match request.mode.as_deref().unwrap_or("worktree") {
+                        "worktree" => {}
+                        "index" => args.push("--index".into()),
+                        _ => return Err(invalid("Invalid stash restore mode")),
+                    }
+                }
+                args.push(if request.kind == StashApply {
+                    entry.oid
+                } else {
+                    entry.selector
+                });
             }
             Continue | Abort => {
                 if request.kind == Continue && changes.files.iter().any(|f| f.conflicted) {
@@ -659,6 +758,17 @@ impl Proof {
         let mut command = git.command(&workspace)?;
         // Keep configured hooks/signing, but never wait for a terminal editor or
         // credential prompt. Only this owned Git process is timed out.
+        if matches!(
+            prepared.preview.request.kind,
+            HistoryActionKind::Stash
+                | HistoryActionKind::StashApply
+                | HistoryActionKind::StashPop
+                | HistoryActionKind::StashDrop
+        ) {
+            // Stash receives no user pathspecs. Git's internal clean uses :/;
+            // inheriting literal-pathspecs silently leaves untracked files.
+            command.arg("--no-literal-pathspecs");
+        }
         command
             .arg("--no-replace-objects")
             .args(&prepared.preview.arguments)
@@ -719,8 +829,21 @@ impl Proof {
                 }
                 CheckoutCommit => result.branch.is_none() && result.head == p.target_oid,
                 Reset => result.branch == p.branch && result.head == p.target_oid,
-                Fetch | Push | StageResolution => {
+                Fetch | StageResolution | Stash | StashApply | StashPop | StashDrop => {
                     result.branch == p.branch && result.head == p.head
+                }
+                Push => {
+                    let source = r
+                        .target
+                        .as_deref()
+                        .filter(|name| name.starts_with("refs/heads/"))
+                        .map(str::to_owned)
+                        .or_else(|| p.branch.as_ref().map(|name| format!("refs/heads/{name}")));
+                    result.branch == p.branch
+                        && result.head == p.head
+                        && source.is_some_and(|source| {
+                            commit(&git, &workspace, &source).ok() == p.target_oid
+                        })
                 }
                 CreateBranch | CreateTag | RenameBranch => {
                     let namespace = if r.kind == CreateTag { "tags" } else { "heads" };

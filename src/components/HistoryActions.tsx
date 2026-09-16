@@ -11,6 +11,8 @@ import {
   CloudArrowDown,
   DotsThree,
   GitBranch,
+  Archive,
+  ArrowCounterClockwise,
   X,
 } from "@phosphor-icons/react";
 import { asError, useRequest } from "../api";
@@ -32,6 +34,7 @@ import type {
   HistoryTarget,
 } from "../history-actions";
 import { Modal } from "./Modal";
+import { StashManager } from "./StashManager";
 
 export function useHistoryActions(
   changes: Changes,
@@ -39,6 +42,9 @@ export function useHistoryActions(
   onChanged: () => Promise<void>,
   onOpenLocalFile: (path: string) => void,
   historyActive: boolean,
+  externalBusy = false,
+  onBusyChange?: (busy: boolean) => void,
+  onRecovery?: () => void,
 ) {
   const request = useRequest();
   const [revision, setRevision] = useState(0);
@@ -52,9 +58,15 @@ export function useHistoryActions(
   const [busy, setBusy] = useState(false);
   const running = useRef(false);
   const [result, setResult] = useState<HistoryActionResult | null>(null);
+  const [stashOpen, setStashOpen] = useState(false);
   const fetchOwner = useRef(changes.workspace.id);
   useEffect(() => {
     fetchOwner.current = changes.workspace.id;
+    setState(null);
+    setStateError(null);
+    setAction(null);
+    setResult(null);
+    setStashOpen(false);
     return () => {
       fetchOwner.current = "";
     };
@@ -134,8 +146,9 @@ export function useHistoryActions(
     target?: HistoryTarget,
     path?: string,
   ) {
-    if (running.current) return;
+    if (running.current || externalBusy) return;
     setResult(null);
+    setStashOpen(false);
     setAction({ kind, target, path });
   }
   async function copy(value: string, commitMessage = false) {
@@ -157,17 +170,20 @@ export function useHistoryActions(
     if (running.current) return;
     running.current = true;
     setBusy(true);
+    onBusyChange?.(true);
     try {
       const value = await request<HistoryActionResult>(
         "execute_history_action",
         { workspaceId: changes.workspace.id, previewId: preview.id },
       );
-      setResult(value);
-      setAction(null);
+      if (fetchOwner.current === changes.workspace.id) {
+        setResult(value);
+        setAction(null);
+      }
     } finally {
       // Also refresh on a failed or partially completed Git command.
       try {
-        await onChanged();
+        if (fetchOwner.current === changes.workspace.id) await onChanged();
       } catch (error) {
         setStateError(asError(error));
       } finally {
@@ -176,10 +192,11 @@ export function useHistoryActions(
         });
         running.current = false;
         setBusy(false);
+        onBusyChange?.(false);
       }
     }
   }
-  const disabled = demo || !changes.workspace.trusted || busy;
+  const disabled = demo || !changes.workspace.trusted || busy || externalBusy;
   return {
     open,
     copy,
@@ -192,28 +209,31 @@ export function useHistoryActions(
     },
     state,
     stateError,
+    manageStashes: () => {
+      setStashOpen(true);
+      setAction(null);
+    },
     toolbar: (
-      <div className="history-git-toolbar" aria-label={t("History Git 操作")}>
-        <span className="history-current-branch">
-          <GitBranch size={15} />
-          {changes.branch ?? "Detached HEAD"}
-        </span>
-        {state?.upstream && (
-          <span className="history-upstream" title={state.upstream}>
-            ↑ {state.ahead} ↓ {state.behind}
-          </span>
-        )}
-        <div className="toolbar-spacer" />
+      <div className="history-git-toolbar" aria-label={t("Git 操作")}>
         <Button
           className="button compact"
+          aria-label="Fetch"
+          title={
+            !state?.remotes.length ? t("未配置 Remote") : t("获取远程更新")
+          }
           disabled={disabled || !!changes.operation || !state?.remotes.length}
           onClick={() => open("fetch")}
         >
           <CloudArrowDown size={16} />
-          Fetch
+          <span className="git-action-label">Fetch</span>
         </Button>
         <Button
           className="button compact"
+          aria-label="Pull"
+          title={
+            state?.upstream ??
+            (!state?.remotes.length ? t("未配置 Remote") : "Pull")
+          }
           disabled={
             disabled ||
             !!changes.operation ||
@@ -223,10 +243,16 @@ export function useHistoryActions(
           onClick={() => open("pull")}
         >
           <ArrowDown size={15} />
-          Pull
+          <span className="git-action-label">Pull</span>
+          {!!state?.behind && <small>{state.behind}</small>}
         </Button>
         <Button
           className="button compact"
+          aria-label="Push"
+          title={
+            state?.upstream ??
+            (!state?.remotes.length ? t("未配置 Remote") : "Push")
+          }
           disabled={
             disabled ||
             !!changes.operation ||
@@ -237,16 +263,39 @@ export function useHistoryActions(
           onClick={() => open("push")}
         >
           <ArrowUp size={15} />
-          Push
+          <span className="git-action-label">Push</span>
+          {!!state?.ahead && <small>{state.ahead}</small>}
         </Button>
         <Button
           className="button compact"
           disabled={disabled || !!changes.operation || !changes.head}
+          aria-label={t("创建 Branch…")}
           onClick={() => open("createBranch")}
         >
           <GitBranch size={15} />
-          {t("创建 Branch…")}
+          <span className="git-action-label">{t("创建 Branch…")}</span>
         </Button>
+        <Button
+          className="button compact"
+          aria-label="Stash"
+          disabled={disabled || !!changes.operation || !changes.head}
+          onClick={() => setStashOpen(true)}
+        >
+          <Archive size={16} />
+          <span className="git-action-label">Stash</span>
+        </Button>
+        {onRecovery && (
+          <Button
+            className="button compact"
+            aria-label={t("恢复已 Discard 的修改…")}
+            title={t("恢复已 Discard 的修改…")}
+            disabled={busy || externalBusy || demo}
+            onClick={onRecovery}
+          >
+            <ArrowCounterClockwise size={16} />
+            <span className="git-action-label">{t("恢复点")}</span>
+          </Button>
+        )}
         {!demo && state && !state.remotes.length && (
           <span className="history-upstream">{t("未配置 Remote")}</span>
         )}
@@ -342,9 +391,9 @@ export function useHistoryActions(
         )}
       </>
     ),
-    dialog: action && (
+    dialog: action ? (
       <HistoryActionDialog
-        key={`${action.kind}:${action.path ?? ""}`}
+        key={`${changes.workspace.id}:${action.kind}:${action.path ?? ""}:${action.target?.type === "branch" ? action.target.branch.name : ""}`}
         action={action}
         changes={changes}
         state={state}
@@ -354,7 +403,15 @@ export function useHistoryActions(
         }}
         onExecute={execute}
       />
-    ),
+    ) : stashOpen ? (
+      <StashManager
+        workspaceId={changes.workspace.id}
+        disabled={disabled || !!changes.operation}
+        canSave={!!changes.files.length && !!changes.head}
+        onClose={() => setStashOpen(false)}
+        onAction={(kind, selector) => open(kind, undefined, selector)}
+      />
+    ) : null,
   };
 }
 export type HistoryActions = ReturnType<typeof useHistoryActions>;
@@ -376,15 +433,22 @@ function HistoryActionDialog({
 }) {
   const request = useRequest();
   const { kind, target } = action;
+  const selectedPushBranch =
+    kind === "push" && target?.type === "branch" && !target.branch.remote
+      ? target.branch.name
+      : null;
+  const [sourceReady, setSourceReady] = useState(!selectedPushBranch);
+  const [sourceError, setSourceError] = useState<ProofError | null>(null);
   const remoteBranch = target?.type === "branch" && target.branch.remote;
   const initialRemote =
     state?.upstreamRemote && state.remotes.includes(state.upstreamRemote)
       ? state.upstreamRemote
       : (state?.remotes[0] ?? "");
   const [remote, setRemote] = useState(initialRemote);
+  const edited = useRef({ name: false, remote: false });
   const [name, setName] = useState(
     kind === "pull" || kind === "push"
-      ? (state?.upstreamBranch ?? changes.branch ?? "")
+      ? (selectedPushBranch ?? state?.upstreamBranch ?? changes.branch ?? "")
       : kind === "renameBranch" && target?.type === "branch"
         ? target.branch.name
         : remoteBranch && target?.type === "branch"
@@ -395,18 +459,34 @@ function HistoryActionDialog({
             )
           : "",
   );
-  const [mode, setMode] = useState(kind === "pull" ? "ff-only" : "mixed");
+  const [mode, setMode] = useState(
+    kind === "pull"
+      ? "ff-only"
+      : kind === "stash"
+        ? "tracked"
+        : kind.startsWith("stash")
+          ? "worktree"
+          : "mixed",
+  );
   const [mainline, setMainline] = useState(1);
-  const [preview, setPreview] = useState<HistoryActionPreview | null>(null);
+  const [prepared, setPrepared] = useState<{
+    key: string;
+    value: HistoryActionPreview;
+  } | null>(null);
   const [error, setError] = useState<ProofError | null>(null);
   const [loading, setLoading] = useState(true);
   const [acknowledged, setAcknowledged] = useState(false);
   const [retry, setRetry] = useState(0);
   const generation = useRef(0);
   const named =
-    ["createBranch", "renameBranch", "createTag", "pull", "push"].includes(
-      kind,
-    ) ||
+    [
+      "createBranch",
+      "renameBranch",
+      "createTag",
+      "pull",
+      "push",
+      "stash",
+    ].includes(kind) ||
     (kind === "switch" && remoteBranch);
   const network = ["fetch", "pull", "push"].includes(kind);
   const parents = target?.type === "commit" ? target.commit.parents : [];
@@ -422,14 +502,60 @@ function HistoryActionDialog({
       ? branchRef(target.branch)
       : target?.type === "commit"
         ? target.commit.oid
-        : (changes.head ?? undefined));
+        : kind === "push" && changes.branch
+          ? `refs/heads/${changes.branch}`
+          : (changes.head ?? undefined));
+  const formKey = JSON.stringify([
+    kind,
+    requestTarget,
+    name,
+    remote,
+    mode,
+    mainline,
+    changes.token,
+    changes.workspace.id,
+    sourceReady,
+  ]);
+  const preview = prepared?.key === formKey ? prepared.value : null;
+  useEffect(() => {
+    if (!selectedPushBranch) return;
+    let disposed = false;
+    setSourceReady(false);
+    setSourceError(null);
+    void request<HistoryRepositoryState>("history_branch_state", {
+      workspaceId: changes.workspace.id,
+      branch: selectedPushBranch,
+    })
+      .then((value) => {
+        if (disposed) return;
+        if (!edited.current.remote)
+          setRemote(
+            value.upstreamRemote && value.remotes.includes(value.upstreamRemote)
+              ? value.upstreamRemote
+              : (value.remotes[0] ?? ""),
+          );
+        if (!edited.current.name)
+          setName(value.upstreamBranch ?? selectedPushBranch);
+        setSourceReady(true);
+      })
+      .catch((cause) => {
+        if (!disposed) setSourceError(asError(cause));
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [selectedPushBranch, changes.workspace.id, retry]);
   useEffect(() => {
     const current = ++generation.current;
-    setPreview(null);
+    setPrepared(null);
     setError(null);
     setLoading(true);
     setAcknowledged(false);
-    if ((named && !name) || (network && !remote)) {
+    if (
+      !sourceReady ||
+      (named && !name && kind !== "stash") ||
+      (network && !remote)
+    ) {
       setLoading(false);
       return;
     }
@@ -437,7 +563,8 @@ function HistoryActionDialog({
       const value: HistoryActionRequest = { kind, target: requestTarget };
       if (named) value.name = name;
       if (network) value.remote = remote;
-      if (kind === "pull" || kind === "reset") value.mode = mode;
+      if (["pull", "reset", "stash", "stashApply", "stashPop"].includes(kind))
+        value.mode = mode;
       if ((kind === "cherryPick" || kind === "revert") && parents.length > 1)
         value.mainline = mainline;
       void request<HistoryActionPreview>("prepare_history_action", {
@@ -446,7 +573,8 @@ function HistoryActionDialog({
         expectedToken: changes.token,
       })
         .then((value) => {
-          if (generation.current === current) setPreview(value);
+          if (generation.current === current)
+            setPrepared({ key: formKey, value });
         })
         .catch((error) => {
           if (generation.current === current) setError(asError(error));
@@ -472,21 +600,33 @@ function HistoryActionDialog({
     named,
     network,
     parents.length,
+    sourceReady,
+    formKey,
   ]);
   const source = ["merge", "pull", "cherryPick", "revert"].includes(kind)
     ? network
       ? `${remote}/${name}`
       : label
-    : (changes.branch ?? "Detached HEAD");
+    : kind === "push"
+      ? (selectedPushBranch ?? changes.branch ?? "Detached HEAD")
+      : kind.startsWith("stash") && kind !== "stash"
+        ? label
+        : (changes.branch ?? "Detached HEAD");
   const destination = ["merge", "pull", "cherryPick", "revert"].includes(kind)
     ? (changes.branch ?? "Detached HEAD")
-    : network
-      ? `${remote}/${name}`
-      : label;
+    : kind.startsWith("stash")
+      ? kind === "stash"
+        ? "Stash"
+        : kind === "stashDrop"
+          ? t("删除")
+          : "Worktree"
+      : network
+        ? `${remote}/${name}`
+        : label;
   return (
     <Modal
       title={actionLabel(kind)}
-      error={error}
+      error={error ?? sourceError}
       onClose={onClose}
       dismissible={!busy}
       className="history-action-dialog"
@@ -497,7 +637,7 @@ function HistoryActionDialog({
           if (preview && !busy && (!preview.destructive || acknowledged))
             void onExecute(preview).catch((error) => {
               setError(asError(error));
-              setPreview(null);
+              setPrepared(null);
             });
         }}
       >
@@ -514,7 +654,10 @@ function HistoryActionDialog({
               <Select
                 aria-label="Remote"
                 value={remote}
-                onChange={(e) => setRemote(e.target.value)}
+                onChange={(e) => {
+                  edited.current.remote = true;
+                  setRemote(e.target.value);
+                }}
               >
                 {state?.remotes.map((value) => (
                   <option key={value}>{value}</option>
@@ -524,24 +667,57 @@ function HistoryActionDialog({
           )}
           {named && (
             <label className="field-label">
-              {kind === "createTag"
-                ? t("Tag 名称")
-                : kind === "pull" || kind === "push"
-                  ? t("远程 Branch")
-                  : t("Branch 名称")}
+              {kind === "stash"
+                ? t("Stash 说明（可选）")
+                : kind === "createTag"
+                  ? t("Tag 名称")
+                  : kind === "pull" || kind === "push"
+                    ? t("远程 Branch")
+                    : t("Branch 名称")}
               <Input
                 autoFocus
                 aria-label={
-                  kind === "createTag"
-                    ? t("Tag 名称")
-                    : kind === "pull" || kind === "push"
-                      ? t("远程 Branch")
-                      : t("Branch 名称")
+                  kind === "stash"
+                    ? t("Stash 说明（可选）")
+                    : kind === "createTag"
+                      ? t("Tag 名称")
+                      : kind === "pull" || kind === "push"
+                        ? t("远程 Branch")
+                        : t("Branch 名称")
                 }
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => {
+                  edited.current.name = true;
+                  setName(e.target.value);
+                }}
                 spellCheck={false}
               />
+            </label>
+          )}
+          {kind === "stash" && (
+            <label className="history-action-ack">
+              <Input
+                type="checkbox"
+                checked={mode === "include-untracked"}
+                onChange={(event) =>
+                  setMode(
+                    event.target.checked ? "include-untracked" : "tracked",
+                  )
+                }
+              />
+              {t("包含 untracked 文件")}
+            </label>
+          )}
+          {(kind === "stashApply" || kind === "stashPop") && (
+            <label className="history-action-ack">
+              <Input
+                type="checkbox"
+                checked={mode === "index"}
+                onChange={(event) =>
+                  setMode(event.target.checked ? "index" : "worktree")
+                }
+              />
+              {t("恢复 Stage 状态")}
             </label>
           )}
           {kind === "pull" && (
@@ -648,7 +824,7 @@ function HistoryActionDialog({
             <Button type="button" className="button" onClick={onClose}>
               {t("取消")}
             </Button>
-            {error && (
+            {(error || sourceError) && (
               <Button
                 type="button"
                 className="button"
@@ -752,7 +928,14 @@ export function HistoryTargetActions({
         "createBranch",
         "merge",
         "rebase",
-        ...(!branch.remote ? (["renameBranch", "deleteBranch"] as const) : []),
+        ...(!branch.remote
+          ? ([
+              "push",
+              ...(branch.current ? ["pull" as const] : []),
+              "renameBranch",
+              "deleteBranch",
+            ] as const)
+          : []),
       ]
     : [
         "checkoutCommit",
@@ -775,6 +958,8 @@ export function HistoryTargetActions({
           key={kind}
           disabled={
             actions.disabled ||
+            (["push", "pull"].includes(kind) &&
+              !actions.state?.remotes.length) ||
             !!changes.operation ||
             ((kind === "switch" ||
               kind === "deleteBranch" ||
@@ -817,6 +1002,29 @@ export function HistoryTargetActions({
           }}
         >
           {t("复制 Commit message")}
+        </MenuItem>
+      )}
+      {branch && (
+        <MenuItem
+          role="menuitem"
+          onClick={() => {
+            void actions.copy(branchRef(branch));
+            onClose();
+          }}
+        >
+          {t("复制完整 Ref")}
+        </MenuItem>
+      )}
+      {branch && (
+        <MenuItem
+          role="menuitem"
+          disabled={!branch.oid}
+          onClick={() => {
+            void actions.copy(branch.oid);
+            onClose();
+          }}
+        >
+          {t("复制 Commit SHA")}
         </MenuItem>
       )}
       <hr />

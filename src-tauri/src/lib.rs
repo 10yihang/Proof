@@ -606,6 +606,21 @@ fn dispatch_with_progress(
         "history_repository_state" => {
             serde_json::to_value(proof.history_repository_state(string(&args, "workspaceId")?)?)
         }
+        "history_branch_state" => serde_json::to_value(proof.history_branch_state(
+            string(&args, "workspaceId")?,
+            Some(string(&args, "branch")?),
+        )?),
+        "stashes" => serde_json::to_value(proof.stashes(string(&args, "workspaceId")?)?),
+        "discard_files_preview" => serde_json::to_value(proof.discard_files_preview(
+            string(&args, "workspaceId")?,
+            &serde_json::from_value::<Vec<String>>(args["paths"].clone())?,
+            string(&args, "expectedToken")?,
+        )?),
+        "discard_files" => serde_json::to_value(proof.discard_files(
+            string(&args, "workspaceId")?,
+            &serde_json::from_value::<Vec<String>>(args["recoveryIds"].clone())?,
+            string(&args, "expectedToken")?,
+        )?),
         "history_commit_message" => serde_json::to_value(
             proof.history_commit_message(string(&args, "workspaceId")?, string(&args, "oid")?)?,
         ),

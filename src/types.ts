@@ -190,6 +190,7 @@ export interface RecoveryPoint {
   expiresAt: number;
   bytes: number;
   message: string | null;
+  removesFile?: boolean;
 }
 export interface RecoveryAction {
   point: RecoveryPoint;

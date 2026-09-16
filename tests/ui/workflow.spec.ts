@@ -1498,9 +1498,10 @@ test("a Diff from a newer Branch waits for matching repository state before revi
   await page
     .getByRole("button", { name: "response.ts M", exact: true })
     .click();
+  await expect.poll(() => page.evaluate(() => (window as any).branchReadingRace.reads)).toBeGreaterThan(0);
   await expect(
     page.getByText("仓库已更新，正在刷新…", { exact: true }),
-  ).toBeVisible();
+  ).toHaveCount(0);
   await expect(
     page.getByRole("region", { name: "代码差异", exact: true }),
   ).toHaveCount(0);

@@ -82,6 +82,7 @@ import { useRepositoryLayout } from "./use-repository-layout";
 import { DiffCache, matchesGitBase } from "./diff-cache";
 import { WorkspaceRefresh, type RefreshResult } from "./workspace-refresh";
 import { BranchPicker } from "./components/BranchPicker";
+import { useHistoryActions } from "./components/HistoryActions";
 import { CommitComposer } from "./components/CommitComposer";
 import { CommitWorkspace } from "./components/CommitWorkspace";
 import { shouldDismissDrawer } from "./components/panel-focus";
@@ -286,7 +287,9 @@ export default function App({
     branch: string | null;
   } | null>(null);
   const normalDraft = useRef("");
-  const [discardPoint, setDiscardPoint] = useState<RecoveryPoint | null>(null);
+  const [discardPoints, setDiscardPoints] = useState<RecoveryPoint[]>([]);
+  const [discardToken, setDiscardToken] = useState<string | null>(null);
+  const discardPoint = discardPoints[0] ?? null;
   const [path, setPath] = useState(""),
     [notification, setNotification] = useState(initialDataNotice ?? "");
   const [openingEditor, setOpeningEditor] = useState(false);
@@ -304,6 +307,20 @@ export default function App({
     if (value) ++refreshGeneration.current;
     setBusyState(value);
   }
+  const gitActions = useHistoryActions(
+    changes ?? demoChanges,
+    demo || !changes || diffWindow,
+    refresh,
+    (path) => {
+      const file = changes?.files.find((file) => file.path === path);
+      setTab("changes");
+      if (file) void loadFile(file);
+    },
+    !diffWindow && tab === "repository" && repositorySection === "history",
+    busy,
+    setBusy,
+    () => setDialog("recovery"),
+  );
 
   useEffect(() => {
     if (initialized.current) return;
@@ -695,7 +712,7 @@ export default function App({
   acceptChangesRef.current = (next) => acceptChanges(next, false, true);
 
   async function openWorkspace(repositoryPath: string) {
-    if (!repositoryPath.trim()) return;
+    if (!repositoryPath.trim() || busyRef.current) return;
     const epoch = ++workspaceEpoch.current;
     fileReader.cancel();
     cache.current.cancelPending();
@@ -1038,10 +1055,33 @@ export default function App({
         current.current?.workspace.id !== workspaceId
       )
         return;
-      setDiscardPoint(point);
+      setDiscardPoints([point]);
+      setDiscardToken(null);
       setDialog("discard");
     } catch (e) {
       if (epoch === workspaceEpoch.current) await snapshotError(e, diff, epoch);
+    } finally {
+      if (epoch === workspaceEpoch.current) setBusy(false);
+    }
+  }
+  async function prepareDiscardFiles(files: ChangedFile[]) {
+    const active = current.current;
+    if (!active || busyRef.current || demo || !files.length) return;
+    const epoch = workspaceEpoch.current;
+    setBusy(true);
+    setError(null);
+    try {
+      const points = await request<RecoveryPoint[]>("discard_files_preview", {
+        workspaceId: active.workspace.id,
+        paths: files.map((file) => file.path),
+        expectedToken: active.token,
+      });
+      if (epoch !== workspaceEpoch.current) return;
+      setDiscardPoints(points);
+      setDiscardToken(active.token);
+      setDialog("discard");
+    } catch (cause) {
+      if (epoch === workspaceEpoch.current) setError(asError(cause));
     } finally {
       if (epoch === workspaceEpoch.current) setBusy(false);
     }
@@ -1052,9 +1092,11 @@ export default function App({
     setBusy(true);
     setError(null);
     try {
-      await request("cancel_discard_preview", { recoveryId: discardPoint.id });
+      for (const point of discardPoints)
+        await request("cancel_discard_preview", { recoveryId: point.id });
       if (epoch === workspaceEpoch.current) {
-        setDiscardPoint(null);
+        setDiscardPoints([]);
+        setDiscardToken(null);
         setDialog(null);
       }
     } catch (e) {
@@ -1070,6 +1112,34 @@ export default function App({
     setBusy(true);
     setError(null);
     try {
+      if (discardToken !== null) {
+        const result = await request<{
+          applied: RecoveryAction[];
+          error: ProofError | null;
+        }>("discard_files", {
+          workspaceId,
+          recoveryIds: discardPoints.map((point) => point.id),
+          expectedToken: discardToken,
+        });
+        if (
+          epoch !== workspaceEpoch.current ||
+          current.current?.workspace.id !== workspaceId
+        )
+          return;
+        const completed = result.applied.filter(
+          (action) => action.result.ok,
+        ).length;
+        if (completed)
+          setNotification(
+            t("已 Discard {v0} 个文件，可从恢复点撤销。", { v0: completed }),
+          );
+        if (result.error) setError(result.error);
+        setDiscardPoints([]);
+        setDiscardToken(null);
+        setDialog(result.error ? "recovery" : null);
+        await refresh();
+        return;
+      }
       const action = await request<RecoveryAction>("discard", {
         recoveryId: discardPoint.id,
       });
@@ -1085,7 +1155,7 @@ export default function App({
           message: action.result.message,
           detail: action.result.warning,
         });
-      setDiscardPoint(null);
+      setDiscardPoints([]);
       setDialog(action.result.ok ? null : "recovery");
       await refresh();
     } catch (e) {
@@ -1589,24 +1659,30 @@ export default function App({
           <span>{t("Proof")}</span>
         </a>
         <span className="header-divider" />
-        <Button className="workspace-picker" onClick={() => setDialog("open")}>
+        <Button
+          className="workspace-picker"
+          disabled={busy}
+          onClick={() => setDialog("open")}
+        >
           <FolderOpen size={17} />
           <strong>{changes?.workspace.name ?? t("打开仓库")}</strong>
           <CaretDown size={12} />
         </Button>
-        {changes && (
+        {changes && !diffWindow && (
           <BranchPicker
             key={changes.workspace.id}
             changes={changes}
             demo={demo}
             busy={busy}
             onSwitch={switchBranch}
+            actions={gitActions}
           />
         )}
         <div
           className="toolbar-spacer window-drag-space"
           data-tauri-drag-region
         />
+        {changes && !diffWindow && gitActions.toolbar}
         {demo && <span className="demo-badge">{t("演示数据")}</span>}
         {changes && (
           <Button
@@ -1647,6 +1723,8 @@ export default function App({
           <GearSix size={19} />
         </Button>
       </header>
+      {changes && !diffWindow && gitActions.feedback}
+      {changes && !diffWindow && gitActions.dialog}
       {changes && !diffWindow && (
         <WorkspaceTabs
           onReorder={(source, target) =>
@@ -1914,13 +1992,8 @@ export default function App({
           >
             {(repositoryVisited || tab === "repository") && (
               <RepositoryView
-                active={tab === "repository"}
+                actions={gitActions}
                 key={changes.workspace.id}
-                onOpenLocalFile={(path) => {
-                  const file = changes.files.find((file) => file.path === path);
-                  setTab("changes");
-                  if (file) void loadFile(file);
-                }}
                 onOpenDiff={openHistoryDiff}
                 section={repositorySection}
                 onSection={setRepositorySection}
@@ -1931,7 +2004,6 @@ export default function App({
                   if (current.current?.workspace.id === changes.workspace.id)
                     setError(asError(e));
                 }}
-                onChanged={refresh}
               />
             )}
           </Tabs.Panel>
@@ -1953,6 +2025,8 @@ export default function App({
                   !!changes.operation
                 }
                 onStage={(files, side) => void stageFiles(files, side)}
+                onDiscard={(files) => void prepareDiscardFiles(files)}
+                onRecovery={() => setDialog("recovery")}
                 onOpenDiff={(file) => {
                   setTab("changes");
                   void loadFile(file);
@@ -2025,6 +2099,9 @@ export default function App({
                     !!changes.operation
                   }
                   onStage={(files, side) => void stageFiles(files, side)}
+                  onDiscard={(files) => void prepareDiscardFiles(files)}
+                  onRecovery={() => setDialog("recovery")}
+                  workspacePath={changes.workspace.path}
                   files={changes.files}
                   selected={selected}
                   onSelect={(file) => {
@@ -2394,12 +2471,21 @@ export default function App({
           onClose={() => void cancelDiscard()}
         >
           <div className="discard-scope">
-            <strong>{discardPoint.path}</strong>
-            <p>{discardPoint.scope}</p>
+            {discardPoints.length > 1 && (
+              <strong>{t("{v0} 个文件", { v0: discardPoints.length })}</strong>
+            )}
+            <ul>
+              {discardPoints.map((point) => (
+                <li key={point.id}>
+                  <strong>{point.path}</strong>
+                  <small>{point.scope}</small>
+                </li>
+              ))}
+            </ul>
           </div>
           <p>
             {t(
-              "恢复点已经保存。确认后，所选 Worktree 内容会还原到索引中的版本。",
+              "恢复点已经保存。已跟踪文件会还原到 Index 版本，untracked 文件会移出 Worktree；均可从恢复点撤销。",
             )}
           </p>
           <p className="inline-help">
@@ -2744,6 +2830,50 @@ export default function App({
         <Modal title={t("命令面板")} onClose={() => setDialog(null)}>
           <CommandList
             actions={[
+              ...(["fetch", "pull", "push"] as const).map((kind) => ({
+                label: { fetch: "Fetch", pull: "Pull", push: "Push" }[kind],
+                icon: <ArrowClockwise size={19} />,
+                run: () => {
+                  setDialog(null);
+                  gitActions.open(kind);
+                },
+                disabled:
+                  !changes ||
+                  gitActions.disabled ||
+                  !!changes.operation ||
+                  !gitActions.state?.remotes.length ||
+                  (kind !== "fetch" && !changes.branch),
+              })),
+              {
+                label: t("复制 Branch 名称"),
+                icon: <GitBranch size={19} />,
+                disabled: !changes?.branch,
+                run: () => {
+                  setDialog(null);
+                  if (changes?.branch) void gitActions.copy(changes.branch);
+                },
+              },
+              {
+                label: t("保存到 Stash…"),
+                icon: <GitBranch size={19} />,
+                disabled:
+                  !changes?.head ||
+                  !changes.files.length ||
+                  gitActions.disabled,
+                run: () => {
+                  setDialog(null);
+                  gitActions.open("stash");
+                },
+              },
+              {
+                label: t("Stashes"),
+                icon: <ClockCounterClockwise size={19} />,
+                disabled: !changes || gitActions.disabled,
+                run: () => {
+                  setDialog(null);
+                  gitActions.manageStashes();
+                },
+              },
               {
                 label: t("打开本地仓库"),
                 icon: <FolderOpen size={19} />,

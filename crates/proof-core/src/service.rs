@@ -312,9 +312,11 @@ impl Proof {
             && operation.is_none();
         let can_discard = can_stage
             && side == Side::Unstaged
-            && kind == FileKind::Text
-            && ["M", "D"].contains(&file.status.as_str())
-            && !metadata.mode_changed()
+            && ((kind == FileKind::Text
+                && ["M", "D"].contains(&file.status.as_str())
+                && !metadata.mode_changed())
+                || (file.status == "?"
+                    && !matches!(kind, FileKind::Symlink | FileKind::Submodule)))
             && cfg!(any(target_os = "macos", target_os = "linux"));
         let diff = FileDiff {
             id: uuid::Uuid::new_v4().to_string(),
@@ -341,7 +343,7 @@ impl Proof {
                 && file.status != "D",
             can_discard,
             can_discard_hunks: can_discard && file.status == "M",
-            discard_reason: (!can_discard).then(|| "仅支持已信任仓库中，已跟踪的普通文本变化；暂存、重命名和属性变化不在丢弃范围内。".into()),
+            discard_reason: (!can_discard).then(|| "支持未暂存的普通文本修改和 untracked 普通文件；暂存、重命名、符号链接和属性变化不在 Discard 范围内。".into()),
             guard: before.token,
         };
         let snapshot = diff.clone();

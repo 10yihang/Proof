@@ -16,6 +16,12 @@ import {
 } from "@phosphor-icons/react";
 import { moveGroupedFile, type AiController, type AiGroup } from "../ai";
 import { fileKey, type ChangedFile } from "../types";
+import {
+  FileActionsButton,
+  FileActionItems,
+  type FileOperations,
+} from "./FileActions";
+import { GitContextMenu } from "./HistoryActions";
 export function GroupingToolbar({
   ai,
   onGroup,
@@ -56,15 +62,22 @@ export function ChangeGroups({
   selected,
   onSelect,
   token,
+  operations,
 }: {
   ai: AiController;
   files: ChangedFile[];
   selected: string | null;
   onSelect: (file: ChangedFile) => void;
   token: string;
+  operations: FileOperations;
 }) {
   const dragVersion = useRef<{ token: string; revision: number } | null>(null);
   const reduced = useReducedMotion();
+  const [menu, setMenu] = useState<{
+    file: ChangedFile;
+    x: number;
+    y: number;
+  } | null>(null);
   const [collapsed, setCollapsed] = useState(new Set<number>());
   const [renaming, setRenaming] = useState<number | null>(null),
     [title, setTitle] = useState("");
@@ -95,6 +108,10 @@ export function ChangeGroups({
           className="group-file-select"
           aria-label={file.path}
           onClick={() => onSelect(file)}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            setMenu({ file, x: event.clientX, y: event.clientY });
+          }}
           title={file.path}
         >
           <span className={`file-status ${file.status}`}>{file.status}</span>
@@ -110,6 +127,7 @@ export function ChangeGroups({
           </span>
           {file.side === "staged" && <small>Staged</small>}
         </Button>
+        <FileActionsButton files={[file]} {...operations} />
         <Select
           className="group-file-move"
           popupClassName="group-file-move-menu"
@@ -346,6 +364,20 @@ export function ChangeGroups({
           </span>
         )}
       </DragOverlay>
+      {menu && (
+        <GitContextMenu
+          x={menu.x}
+          y={menu.y}
+          label={t("文件操作")}
+          onClose={() => setMenu(null)}
+        >
+          <FileActionItems
+            files={[menu.file]}
+            {...operations}
+            onClose={() => setMenu(null)}
+          />
+        </GitContextMenu>
+      )}
     </DragDropProvider>
   );
 }

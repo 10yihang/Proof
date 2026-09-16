@@ -20,6 +20,8 @@ import { fileKey } from "../types";
 import type { ChangedFile, FileDiff, Side } from "../types";
 import { treeRows, type TreeRow } from "../file-tree";
 import { useClientStorage } from "../api";
+import { FileActionItems, FileActionsButton } from "./FileActions";
+import { GitContextMenu } from "./HistoryActions";
 
 export function FileTree({
   files,
@@ -34,6 +36,9 @@ export function FileTree({
   onStage,
   searchId = "file-search",
   readOnly = false,
+  onDiscard,
+  onRecovery,
+  workspacePath,
 }: {
   files: ChangedFile[];
   selected: string | null;
@@ -47,6 +52,9 @@ export function FileTree({
   onStage: (files: ChangedFile[], side: Side) => void;
   searchId?: string;
   readOnly?: boolean;
+  onDiscard?: (files: ChangedFile[]) => void;
+  onRecovery?: () => void;
+  workspacePath?: string;
 }) {
   const clientStorage = useClientStorage();
   const parent = useRef<HTMLDivElement>(null);
@@ -60,6 +68,11 @@ export function FileTree({
   const [collapsed, setCollapsed] = useState(new Set<string>());
   const [checked, setChecked] = useState(new Set<string>());
   const [focusKey, setFocusKey] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{
+    files: ChangedFile[];
+    x: number;
+    y: number;
+  } | null>(null);
   useEffect(() => {
     setChecked(
       (previous) =>
@@ -99,6 +112,24 @@ export function FileTree({
     }
   }
   const selectedFiles = files.filter((file) => checked.has(fileKey(file)));
+  const operations = {
+    disabled,
+    readOnly,
+    workspacePath,
+    onStage,
+    onDiscard,
+    onRecovery,
+  };
+  function menuFiles(row: TreeRow) {
+    return row.kind === "file"
+      ? checked.has(row.key)
+        ? selectedFiles
+        : [row.file]
+      : row.files;
+  }
+  function openMenu(row: TreeRow, x: number, y: number) {
+    setMenu({ files: menuFiles(row), x, y });
+  }
   function focus(index: number) {
     const target = rows[Math.max(0, Math.min(rows.length - 1, index))];
     if (!target) return;
@@ -196,6 +227,25 @@ export function FileTree({
               )
             );
           })}
+          {onDiscard &&
+            selectedFiles.some((file) => file.side === "unstaged") && (
+              <Button
+                className="danger-text"
+                disabled={
+                  disabled ||
+                  selectedFiles.some(
+                    (file) => file.side === "unstaged" && file.conflicted,
+                  )
+                }
+                onClick={() =>
+                  onDiscard(
+                    selectedFiles.filter((file) => file.side === "unstaged"),
+                  )
+                }
+              >
+                {t("Discard…")}
+              </Button>
+            )}
           <Button onClick={() => setChecked(new Set())}>{t("清除")}</Button>
         </div>
       )}
@@ -218,6 +268,15 @@ export function FileTree({
           );
           if (index < 0) return;
           const row = rows[index];
+          if (
+            event.key === "ContextMenu" ||
+            (event.shiftKey && event.key === "F10")
+          ) {
+            event.preventDefault();
+            const rect = target.getBoundingClientRect();
+            openMenu(row, rect.left, rect.bottom + 4);
+            return;
+          }
           if (event.key === "ArrowDown" || event.key === "ArrowUp") {
             event.preventDefault();
             focus(index + (event.key === "ArrowDown" ? 1 : -1));
@@ -269,6 +328,10 @@ export function FileTree({
                   (focusKey ?? selected ?? rows[0]?.key) === row.key ? 0 : -1
                 }
                 onFocus={() => setFocusKey(row.key)}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  openMenu(row, event.clientX, event.clientY);
+                }}
                 className={`file-tree-row ${row.kind} ${selected === row.key ? "is-selected" : ""}`}
                 style={{
                   position: "absolute",
@@ -346,6 +409,7 @@ export function FileTree({
                         )}
                       </Button>
                     )}
+                    <FileActionsButton files={menuFiles(row)} {...operations} />
                   </>
                 ) : (
                   <>
@@ -400,6 +464,11 @@ export function FileTree({
                           (row.side === "staged" ? "Unstage" : t("Stage all"))}
                       </Button>
                     )}
+                    <FileActionsButton
+                      files={row.files}
+                      label={t("{v0} 的目录操作", { v0: row.label })}
+                      {...operations}
+                    />
                   </>
                 )}
               </div>
@@ -416,6 +485,20 @@ export function FileTree({
           </p>
         )}
       </div>
+      {menu && (
+        <GitContextMenu
+          x={menu.x}
+          y={menu.y}
+          label={t("文件操作")}
+          onClose={() => setMenu(null)}
+        >
+          <FileActionItems
+            files={menu.files}
+            {...operations}
+            onClose={() => setMenu(null)}
+          />
+        </GitContextMenu>
+      )}
     </>
   );
 }

@@ -69,7 +69,7 @@
 | --- | --- | --- |
 | 仓库与工作区 | 打开本地仓库、最近项目、已有 worktree 识别与切换 | Clone、创建 / 删除 worktree |
 | Changes / Diff | 文件树、状态过滤、统一 / 并排、Hunk 导航、原始 patch | 更丰富的移动代码展示、跨文件阅读路线 |
-| Git 写操作 | 文件 / Hunk 暂存与撤销暂存、受保护的丢弃、普通提交、基础分支创建 / 切换 | 行级暂存、Amend、Fetch / Push / Pull、Stash |
+| Git 写操作 | 文件 / Hunk Stage 与 Unstage、受保护的单文件 / 多文件 Discard、Commit / Amend、Branch 操作、Fetch / Push / Pull、Stash | 行级 Stage、交互式 Rebase |
 | Repository | 提交列表、单提交 Diff、基础文件历史与 Blame | 完整图谱、复杂比较、交互式 Rebase / Cherry-pick |
 | 人工 Review | 内容版本绑定、Hunk 标记、审查后变化提醒、专注模式 | 本地评论、导出完整审查报告 |
 | Agent 观察 | Claude Code / Codex 的经验证本地版本；显式授权与能力检测 | 更多 Agent、经授权的历史会话导入 |
@@ -186,7 +186,7 @@ Monaco 等组件只负责展示和文本交互；Git patch 与 Hunk 身份由独
 **验收：** 只选择一个 Hunk 时不得把另一 Hunk 或同文件后续外部修改一起暂存。
 
 ## GIT-02｜安全丢弃 · P0
-首版仅对支持的已跟踪文本文件提供文件 / Hunk 丢弃。二次确认显示范围；操作前保存可恢复内容或 patch，并检查当前位置仍匹配。无法保存恢复点、出现并发写入或特殊文件时禁用。未跟踪文件删除、git clean、hard reset 不进入首版。
+文件 / Hunk Discard 支持已跟踪的未暂存文本修改与删除；0.1.2 增加多个文件以及 untracked 普通文件（含二进制文件）的 Discard。先展示文件清单并保存每个文件的恢复点，确认后才执行。批量执行前核对完整 Worktree token，每个文件仍单独核对内容；并发写入时停止，已完成的动作与未完成的动作分别报告，不自动覆盖式回滚。untracked 文件从 Worktree 移除但保留原字节，可在路径仍为空时恢复。容量不足、符号链接、重命名等不支持范围明确报错。不会用 git clean 代替所选文件操作。
 **验收：** 无法可靠回滚时不执行丢弃；“撤销丢弃”遇到新改动时不得覆盖新内容。
 
 ## GIT-03｜提交预览与执行 · P0
@@ -824,3 +824,14 @@ Local changes 和历史 Diff 复用同一 Files / Change groups、Diff、Context
 ## Context：文件活动摘要
 
 右侧默认读取当前文件的 Hook 活动，按原生 Turn 展示任务原文、文件操作、命令结果和 Agent 回执；完整会话须显式切换。过滤在数据库分页前进行，其他文件的工具调用不因共用 Session 混入。重复操作折叠、失败优先呈现，命令和有效输出摘要直接可见。没有原生任务编号时不猜测归属，未采集的历史内容不补造，回执和退出码不自动升级为 Review 或测试通过。该整理仅使用本地已有记录，不调用模型。
+
+
+## GIT-12｜日常 Git 操作入口 · 0.1.2
+
+- 顶部 Git 工具栏在 Local Changes、Commit、History 与 Branches 中共用，提供 Fetch、Pull、Push、创建 Branch、Stash 与 Discard 恢复点。使用同一个操作控制器和预览确认框；进行中的动作不能重复执行。
+- 当前 Branch 旁有可见的操作菜单；分支下拉列表、History Branch 列表共用 Switch、Merge、Rebase、Rename、Delete、Push、复制 Branch 名称、完整 Ref 与 Commit SHA。Push 可以指定其他本地 Branch，无需先 Switch；预填该 Branch 自己的 upstream，预览清楚显示本地来源和远程目标。默认普通 Push，拒绝 non-fast-forward，不自动 Force Push。
+- 文件树、文件列表与 AI Change Groups 共享文件操作菜单；提供 Stage / Unstage、Discard、相对路径 / 绝对路径 / 文件名复制以及恢复点入口。文件树支持多选和目录范围，菜单始终显示实际文件范围。历史 Diff 仅提供复制等只读动作。
+- Stash 管理支持保存（可选说明、可选包含 untracked）、Apply、Pop、Drop；恢复时可选恢复 Stage 状态。Pop 遇到冲突保留 Stash；Drop 要求明确确认。操作绑定预览时的 Stash selector 与对象 ID，并校验完整 Stash reflog，禁止因序号移动误操作其他 Stash。
+- Discard 全部文件后，顶部恢复入口仍可用。二进制备份明确标为二进制，不显示有损文本，也不提供伪造的文本复制。所有手动 Git 操作独立于 AI Review，不会自动标记人工 Review 完成。
+
+交互参考：[Fork 分支菜单与 Push 更新记录](https://git-fork.com/releasenotes)、[GitKraken 工具栏](https://help.gitkraken.com/gitkraken-desktop/interface/)、[GitKraken Stash](https://help.gitkraken.com/gitkraken-desktop/stashing/)。

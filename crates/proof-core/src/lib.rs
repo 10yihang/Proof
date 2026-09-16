@@ -30,6 +30,7 @@ mod reading;
 mod recovery;
 mod service;
 mod staging;
+mod stash;
 mod store;
 mod transient;
 
@@ -52,7 +53,9 @@ pub use model::*;
 pub use observer::*;
 pub use process::cancel_owned_operations_for_shutdown;
 pub use read_cancel::{check_read_cancellation, read_cancellation_active, ReadCancellation};
+pub use recovery::DiscardBatchResult;
 pub use service::Proof;
+pub use stash::StashEntry;
 
 pub(crate) fn fingerprint(parts: &[&[u8]]) -> String {
     use sha2::{Digest, Sha256};

@@ -54,6 +54,14 @@ export function DiffFilePane({
           selected={tree.selected}
           token={token}
           onSelect={tree.onSelect}
+          operations={{
+            disabled: tree.disabled,
+            readOnly: tree.readOnly,
+            workspacePath: tree.workspacePath,
+            onStage: tree.onStage,
+            onDiscard: tree.onDiscard,
+            onRecovery: tree.onRecovery,
+          }}
         />
       ) : (
         <FileTree key={scopeKey} {...tree} />

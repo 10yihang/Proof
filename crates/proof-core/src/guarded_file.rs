@@ -50,6 +50,7 @@ mod platform {
     pub(crate) struct BoundFile {
         parent: File,
         name: CString,
+        allow_binary: bool,
     }
     pub(crate) struct RecoveryLease {
         _directory: File,
@@ -95,12 +96,12 @@ mod platform {
             .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
             .open(path)?)
     }
-    fn read_image(mut file: File, limit: u64) -> Result<FileImage> {
+    fn read_image(mut file: File, limit: u64, allow_binary: bool) -> Result<FileImage> {
         let before = file.metadata()?;
         if !before.is_file() || before.nlink() != 1 || before.len() > limit {
             return Err(Error::new(
                 "UNSUPPORTED_RECOVERY_FILE",
-                "丢弃仅支持 32 MiB 以内、没有硬链接的普通文本文件。",
+                "Discard 仅支持 32 MiB 以内、没有硬链接的普通文件。",
                 "Special, hard-linked or oversized file",
             ));
         }
@@ -118,7 +119,7 @@ mod platform {
         {
             return Err(Error::stale());
         }
-        if bytes.contains(&0) || std::str::from_utf8(&bytes).is_err() {
+        if !allow_binary && (bytes.contains(&0) || std::str::from_utf8(&bytes).is_err()) {
             return Err(Error::new(
                 "UNSUPPORTED_RECOVERY_ENCODING",
                 "丢弃仅支持 UTF-8 文本文件。",
@@ -156,7 +157,12 @@ mod platform {
             Ok(Self {
                 parent,
                 name: cstr(parts.last().unwrap().as_os_str().as_bytes())?,
+                allow_binary: false,
             })
+        }
+        pub fn with_binary_content(mut self, enabled: bool) -> Self {
+            self.allow_binary = enabled;
+            self
         }
         pub fn open_file(&self) -> Result<Option<File>> {
             let fd = unsafe {
@@ -178,7 +184,7 @@ mod platform {
         }
         pub fn read(&self) -> Result<Option<FileImage>> {
             self.open_file()?
-                .map(|file| read_image(file, MAX_FILE))
+                .map(|file| read_image(file, MAX_FILE, self.allow_binary))
                 .transpose()
         }
         pub fn matches_bytes(&self, expected: &[u8]) -> Result<bool> {
@@ -187,7 +193,7 @@ mod platform {
             }
             let image = self
                 .open_file()?
-                .map(|file| read_image(file, expected.len() as u64))
+                .map(|file| read_image(file, expected.len() as u64, self.allow_binary))
                 .transpose()?;
             Ok(image.is_some_and(|image| image.bytes == expected))
         }
@@ -270,7 +276,7 @@ mod platform {
                 // Directory entries must be durable before installation starts.
                 self.parent.sync_all()?;
                 directory(backup.parent().unwrap())?.sync_all()?;
-                let captured = read_saved(backup)?;
+                let captured = read_saved(backup, self.allow_binary)?;
                 if !captured.same_content(expected_image)
                     || captured.identity != expected_image.identity
                 {
@@ -301,7 +307,7 @@ mod platform {
                 return Err(Error::stale());
             }
             if let Some(expected) = expected {
-                if !read_saved(backup)?.same_content(expected) {
+                if !read_saved(backup, self.allow_binary)?.same_content(expected) {
                     return Err(Error::new(
                         "CAPTURE_CHANGED",
                         "原文件在操作期间收到后续编辑，内容已保留在恢复副本中。",
@@ -312,13 +318,14 @@ mod platform {
             Ok(())
         }
     }
-    pub fn read_saved(path: &Path) -> Result<FileImage> {
+    pub fn read_saved(path: &Path, allow_binary: bool) -> Result<FileImage> {
         read_image(
             fs::OpenOptions::new()
                 .read(true)
                 .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
                 .open(path)?,
             MAX_FILE,
+            allow_binary,
         )
     }
     fn rename_exclusive(from_dir: i32, from: &CString, to_dir: i32, to: &CString) -> Result<()> {
@@ -448,6 +455,9 @@ mod platform {
         pub fn open(_: &Path, _: &str) -> Result<Self> {
             unsupported()
         }
+        pub fn with_binary_content(self, _: bool) -> Self {
+            self
+        }
         pub fn read(&self) -> Result<Option<FileImage>> {
             unsupported()
         }
@@ -468,7 +478,7 @@ mod platform {
             unsupported()
         }
     }
-    pub fn read_saved(_: &Path) -> Result<FileImage> {
+    pub fn read_saved(_: &Path, _: bool) -> Result<FileImage> {
         unsupported()
     }
 }

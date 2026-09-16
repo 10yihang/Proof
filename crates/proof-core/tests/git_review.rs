@@ -733,7 +733,7 @@ fn discard_handles_crlf_and_no_final_newline() {
 }
 
 #[test]
-fn discard_refuses_hardlinks_untracked_files_and_unknown_database_versions() {
+fn discard_refuses_tracked_and_untracked_hardlinks_and_unknown_database_versions() {
     let mut f = Fixture::new();
     f.change();
     fs::hard_link(f.repo.join("code.txt"), f.repo.join("other-link")).unwrap();
@@ -749,7 +749,10 @@ fn discard_refuses_hardlinks_untracked_files_and_unknown_database_versions() {
         .proof
         .file_diff(&f.workspace.id, "other-link", Side::Unstaged)
         .unwrap();
-    assert!(!diff.can_discard);
+    assert_eq!(
+        f.proof.discard_preview(&diff.id, None).unwrap_err().code,
+        "UNSUPPORTED_RECOVERY_FILE"
+    );
     drop(f.proof);
     rusqlite::Connection::open(f.data.join("proof.sqlite3"))
         .unwrap()

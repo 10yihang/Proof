@@ -16,6 +16,8 @@ export function CommitWorkspace({
   loaded,
   disabled,
   onStage,
+  onDiscard,
+  onRecovery,
   onOpenDiff,
   children,
 }: {
@@ -23,6 +25,8 @@ export function CommitWorkspace({
   loaded: Record<string, FileDiff>;
   disabled: boolean;
   onStage: (files: ChangedFile[], side: Side) => void;
+  onDiscard: (files: ChangedFile[]) => void;
+  onRecovery: () => void;
   onOpenDiff: (file: ChangedFile) => void;
   children: ReactNode;
 }) {
@@ -45,6 +49,9 @@ export function CommitWorkspace({
           onScope={setScope}
           disabled={disabled}
           onStage={onStage}
+          onDiscard={onDiscard}
+          onRecovery={onRecovery}
+          workspacePath={changes.workspace.path}
         />
         <div className="commit-file-inspector">
           <FileCode size={16} />

@@ -269,6 +269,8 @@ pub struct RecoveryPoint {
     pub expires_at: u64,
     pub bytes: u64,
     pub message: Option<String>,
+    #[serde(default)]
+    pub removes_file: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
