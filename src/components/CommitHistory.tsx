@@ -320,6 +320,7 @@ export function CommitHistory({
   const range = !!branchComparison || !!compared;
   return (
     <section className="commit-history" aria-label={t("Git 提交图")}>
+      {actions.toolbar}
       <header className="graph-toolbar">
         <div className="graph-heading">
           <GitBranch size={21} />

@@ -4106,11 +4106,12 @@ test("Branch comparison opens a Diff tab and an older file response cannot repla
   await expect(panel.locator(".compare-empty")).toContainText("没有文件差异");
 });
 
-test("Hook uses current workspace trust and requires a config preview before installing", async ({
+for (const adapter of [{ agent: "codex", name: "Codex", config: "/fixture/config/hooks.json" }, { agent: "codewiz", name: "Codewiz", config: "/fixture/config/plugins/proof-observer.js" }]) {
+test(`${adapter.name} Hook uses current workspace trust and requires a config preview before installing`, async ({
   page,
 }) => {
   await openFixture(page);
-  await page.evaluate(() => {
+  await page.evaluate((adapter) => {
     const w = window as any,
       state = w.fixture,
       original = w.__TAURI_INTERNALS__.invoke;
@@ -4147,11 +4148,11 @@ test("Hook uses current workspace trust and requires a config preview before ins
           },
         ];
       if (c === "observer_program_locations")
-        return [{ agent: "codex", executablePath: "/fixture/codex" }];
+        return [{ agent: adapter.agent, executablePath: `/fixture/${adapter.agent}`, name: adapter.name, installationAvailable: true, unavailableReason: null }];
       if (c === "observer_status") return structuredClone(hook);
       if (c === "probe_observer")
         return {
-          agent: "codex",
+          agent: adapter.agent,
           version: "99.0.0-preview.2",
           status: "candidate_unverified",
           profile: { runtimeVerified: false, adapterVersion: "1" },
@@ -4160,14 +4161,14 @@ test("Hook uses current workspace trust and requires a config preview before ins
         preview = {
           id: "hook-preview",
           action: "install",
-          agent: "codex",
+          agent: adapter.agent,
           agentVersion: "99.0.0-preview.2",
           workspaceId: a.workspaceId,
-          configPath: "/fixture/config/hooks.json",
+          configPath: adapter.config,
           before: '{"userHook":true}',
           after: '{"userHook":true,"proofHook":true}',
           fields: a.fields,
-          requiresHookTrust: true,
+          requiresHookTrust: adapter.agent === "codex",
         };
         return preview;
       }
@@ -4178,7 +4179,7 @@ test("Hook uses current workspace trust and requires a config preview before ins
         hook.installations = [
           {
             installationId: "fixture-hook",
-            agent: "codex",
+            agent: adapter.agent,
             agentVersion: "99.0.0-preview.2",
             configPath: preview.configPath,
             state: "configured_pending",
@@ -4207,9 +4208,9 @@ test("Hook uses current workspace trust and requires a config preview before ins
         return null;
       }
     };
-  });
+  }, adapter);
   await page.getByRole("button", { name: "Agent Hook", exact: true }).click();
-  const card = page.getByRole("region", { name: "Codex Hook", exact: true });
+  const card = page.getByRole("region", { name: `${adapter.name} Hook`, exact: true });
   await expect(
     card.getByRole("checkbox", { name: "Prompt", exact: true }),
   ).not.toBeChecked();
@@ -4220,7 +4221,7 @@ test("Hook uses current workspace trust and requires a config preview before ins
   await card.getByRole("checkbox", { name: "Prompt", exact: true }).check();
   await card.getByRole("button", { name: "预览安装…", exact: true }).click();
   await expect(card.locator(".hook-config-preview")).toContainText(
-    "/fixture/config/hooks.json",
+    adapter.config,
   );
   await card.getByRole("button", { name: "取消", exact: true }).click();
   expect(
@@ -4238,6 +4239,8 @@ test("Hook uses current workspace trust and requires a config preview before ins
   await card.getByRole("button", { name: "暂停", exact: true }).click();
   await expect(card).toContainText("已暂停");
 });
+
+}
 
 test("Context: opening a file's activity requests that file, not the entire session", async ({ page }) => {
   await openContextFixture(page);

@@ -23,14 +23,12 @@
   min-width: 0;
   flex: 1;
 }
-.desktop-toolbar .history-git-toolbar {
-  gap: 4px;
-  padding: 0 7px;
-  min-height: 0;
-  border: 0;
-  border-left: 1px solid var(--border);
+.commit-history .history-git-toolbar {
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 14px;
 }
-.desktop-toolbar .history-git-toolbar .button {
+.commit-history .history-git-toolbar .button {
   height: 29px;
   padding: 0 8px;
   gap: 5px;
@@ -127,36 +125,13 @@
   flex-shrink: 0;
 }
 @media (max-width: 1180px) {
-  .desktop-toolbar .history-git-toolbar .git-action-label {
-    display: none;
-  }
-  .desktop-toolbar .history-git-toolbar .button {
-    min-width: 28px;
-    padding: 0 6px;
-  }
-  .desktop-toolbar .history-upstream {
-    display: none;
-  }
   .branch-control {
     max-width: 190px;
   }
 }
 @media (max-width: 780px) {
-  .app.layout-enabled .desktop-toolbar {
-    flex-wrap: wrap;
-    height: auto;
-    min-height: 48px;
-    row-gap: 4px;
-  }
-  .desktop-toolbar .history-git-toolbar {
-    order: 2;
-    width: 100%;
-    padding: 4px 0;
-    border-left: 0;
-    border-top: 1px solid var(--border);
-  }
-  .desktop-toolbar .history-git-toolbar .git-action-label {
-    display: inline;
+  .commit-history .history-git-toolbar {
+    padding: 6px 10px;
   }
   .stash-entry {
     flex-wrap: wrap;

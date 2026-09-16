@@ -16,8 +16,15 @@ mod native_codewiz_tests;
 #[path = "native_codex_tests.rs"]
 mod native_codex_tests;
 
-/// Active inference only. Passive Observer registrations, hooks and sessions are
-/// deliberately not part of this interface. Implementations own fresh processes.
+/// The actual project and this task's fixed Git evidence have separate paths.
+#[derive(Clone, Copy)]
+pub struct AgentReadContext<'a> {
+    pub project: &'a Path,
+    pub evidence: &'a Path,
+    pub paths: &'a [String],
+}
+
+/// Active inference only. Passive Observer consent and sessions are separate.
 pub trait AgentProvider: Send + Sync {
     fn kind(&self) -> AgentKind;
     fn analyze_workspace(
@@ -25,8 +32,7 @@ pub trait AgentProvider: Send + Sync {
         program: &AgentProgram,
         prompt: &str,
         schema: &Value,
-        workspace: &Path,
-        paths: &[String],
+        context: AgentReadContext<'_>,
         emit: &dyn Fn(super::AiProgress),
     ) -> Result<Value> {
         if program.kind != self.kind() {
@@ -39,7 +45,7 @@ pub trait AgentProvider: Send + Sync {
             schema,
             program.model.as_deref(),
             || program.validate(),
-            Some((workspace, paths, emit)),
+            Some((context, emit)),
         )
     }
     fn analyze(&self, program: &AgentProgram, prompt: &str, schema: &Value) -> Result<Value> {
@@ -221,10 +227,11 @@ pub fn agent_providers() -> Vec<AgentProviderInfo> {
     provider_information(&AgentSettings::default())
 }
 pub(super) fn provider_information(settings: &AgentSettings) -> Vec<AgentProviderInfo> {
-    [AgentKind::Codex, AgentKind::ClaudeCode, AgentKind::Codewiz]
-        .into_iter()
+    crate::AGENT_ADAPTERS
+        .iter()
+        .map(|adapter| adapter.kind)
         .filter(|id| {
-            *id != AgentKind::Codewiz
+            !id.adapter().installed_only
                 || locate(*id).is_some()
                 || settings
                     .options(*id)
@@ -263,12 +270,8 @@ pub(super) fn provider_information(settings: &AgentSettings) -> Vec<AgentProvide
         })
         .collect()
 }
-fn locate(kind: AgentKind) -> Option<PathBuf> {
-    let name = match kind {
-        AgentKind::Codex => "codex",
-        AgentKind::ClaudeCode => "claude",
-        AgentKind::Codewiz => "codewiz",
-    };
+pub(crate) fn locate(kind: AgentKind) -> Option<PathBuf> {
+    let name = kind.adapter().executable;
     let mut roots = vec![
         PathBuf::from("/opt/homebrew/bin"),
         PathBuf::from("/usr/local/bin"),
@@ -342,7 +345,10 @@ pub(super) fn unsupported(message: &str) -> Error {
     )
 }
 
-fn resolve_executable(kind: AgentKind, source: &Path) -> Result<(PathBuf, Vec<PathBuf>, String)> {
+pub(crate) fn resolve_executable(
+    kind: AgentKind,
+    source: &Path,
+) -> Result<(PathBuf, Vec<PathBuf>, String)> {
     let (mut path, mut origins) = program::resolve_program_path(source)?;
     let mut identity = program::program_identity(&path)?;
     if kind == AgentKind::Codewiz {
@@ -470,7 +476,7 @@ fn isolated_command_options(
     }
     if let Some(workspace) = workspace {
         if workspace.starts_with(directory) {
-            return Err(unsupported("分析快照不能位于可写运行目录内。"));
+            return Err(unsupported("项目目录不能位于可写运行目录内。"));
         }
         if kind == AgentKind::Codex {
             if let Some(host) = companion_host(executable)? {
@@ -507,6 +513,8 @@ fn isolated_command_options(
             "/usr/bin/basename",
             "/usr/bin/xcrun",
             "/Library/Developer/CommandLineTools/usr/bin/git",
+            "/Applications/Xcode.app/Contents/Developer/usr/bin/git",
+            "/Applications/Xcode-beta.app/Contents/Developer/usr/bin/git",
             "/usr/bin/readlink",
             "/opt/homebrew/bin/rg",
             "/usr/local/bin/rg",
@@ -548,6 +556,14 @@ fn isolated_command_options(
         .env("TERM", "dumb")
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_COUNT", "3")
+        .env("GIT_CONFIG_KEY_0", "core.hooksPath")
+        .env("GIT_CONFIG_VALUE_0", "/dev/null")
+        .env("GIT_CONFIG_KEY_1", "core.fsmonitor")
+        .env("GIT_CONFIG_VALUE_1", "false")
+        .env("GIT_CONFIG_KEY_2", "core.pager")
+        .env("GIT_CONFIG_VALUE_2", "cat")
+        .env("GIT_PAGER", "cat")
         .env("GIT_OPTIONAL_LOCKS", "0");
     if kind == AgentKind::Codex {
         // Configure only this child process's Codex runtime. The parent env and
@@ -618,7 +634,7 @@ fn help_output(kind: AgentKind, executable: &Path, root: &Path) -> Result<proces
         process::run_diff(command, None, Duration::from_secs(10), 256 * 1024)
     }
 }
-type ReadingWorkspace<'a> = (&'a Path, &'a [String], &'a dyn Fn(super::AiProgress));
+type ReadingWorkspace<'a> = (AgentReadContext<'a>, &'a dyn Fn(super::AiProgress));
 
 #[allow(clippy::too_many_arguments)]
 fn run_workspace(
@@ -659,7 +675,7 @@ fn run_workspace(
     }
     fs::write(root.join("schema.json"), serde_json::to_vec(schema)?)?;
     let mut command = match workspace {
-        Some((workspace, _, _)) => reading_command(kind, executable, &root, workspace)?,
+        Some((context, _)) => reading_command(kind, executable, &root, context.project)?,
         None => isolated_command(kind, executable, &root)?,
     };
     command.args(if workspace.is_some() {
@@ -667,6 +683,15 @@ fn run_workspace(
     } else {
         arguments(kind, &root, schema)?
     });
+    if let Some((context, _)) = workspace {
+        match kind {
+            AgentKind::Codewiz => codewiz::allow_evidence(&mut command, &root, context.evidence)?,
+            AgentKind::ClaudeCode => {
+                command.arg("--add-dir").arg(context.evidence);
+            }
+            AgentKind::Codex => (),
+        }
+    }
     if let Some(model) = model {
         command.args(["--model", model]);
     }
@@ -676,8 +701,9 @@ fn run_workspace(
         prompt.to_owned()
     };
     validate()?;
-    let output = (if let Some((_, paths, emit)) = workspace {
-        let mut activity = super::progress::ActivityStream::new(paths, emit);
+    let output = (if let Some((context, emit)) = workspace {
+        let mut activity =
+            super::progress::ActivityStream::in_project(context.paths, context.project, emit);
         process::run_until_cancelled(
             command,
             Some(input.as_bytes()),
@@ -915,12 +941,9 @@ fn missing_capabilities(kind: AgentKind, help: &str) -> Vec<&'static str> {
         .collect()
 }
 fn provider_name(kind: AgentKind) -> &'static str {
-    match kind {
-        AgentKind::Codex => "Codex",
-        AgentKind::ClaudeCode => "Claude Code",
-        AgentKind::Codewiz => "Codewiz",
-    }
+    kind.adapter().name
 }
+
 fn safe_failure_text(output: &process::Output) -> String {
     let mut lines = Vec::new();
     for line in output.stdout.split(|c| *c == b'\n') {
@@ -1518,16 +1541,57 @@ int main(int argc, char **argv) {
     }
     #[cfg(target_os = "macos")]
     #[test]
-    fn reading_tools_stream_activity_but_cannot_modify_snapshot_or_git() {
+    fn reading_tools_read_a_live_git_project_but_cannot_change_files_or_git() {
         let temp = tempfile::tempdir().unwrap();
         let root = fs::canonicalize(temp.path()).unwrap();
         let runtime = root.join("runtime");
         let snapshot = root.join("snapshot");
         fs::create_dir(&runtime).unwrap();
-        fs::create_dir_all(snapshot.join(".git")).unwrap();
-        for path in ["code.txt", ".git/index", ".git/HEAD", "other-session.jsonl"] {
+        fs::create_dir(&snapshot).unwrap();
+        let git = |args: &[&str]| {
+            let output = Command::new("/usr/bin/git")
+                .env_clear()
+                .env("PATH", "/usr/bin:/bin")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .arg("-C")
+                .arg(&snapshot)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            output.stdout
+        };
+        git(&["init", "-b", "main"]);
+        for path in ["code.txt", "other-session.jsonl"] {
             fs::write(snapshot.join(path), "preserve").unwrap();
         }
+        git(&["add", "code.txt"]);
+        git(&[
+            "-c",
+            "user.name=Proof",
+            "-c",
+            "user.email=proof@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "commit",
+            "-m",
+            "base",
+        ]);
+        fs::write(snapshot.join(".git/info/exclude"), "ignored-context.txt\n").unwrap();
+        fs::write(
+            snapshot.join("ignored-context.txt"),
+            "complete project context",
+        )
+        .unwrap();
+        let head = fs::read(snapshot.join(".git/HEAD")).unwrap();
+        let index = fs::read(snapshot.join(".git/index")).unwrap();
         let mut command = reading_command(
             AgentKind::Codex,
             Path::new("/bin/bash"),
@@ -1535,7 +1599,7 @@ int main(int argc, char **argv) {
             &snapshot,
         )
         .unwrap();
-        command.args(["-c", "cat code.txt; grep preserve code.txt; for path in code.txt .git/index .git/HEAD other-session.jsonl; do if printf changed > \"$path\"; then exit 9; fi; done; printf '\\nstream-ready\\n'; while :; do :; done"]);
+        command.args(["-c", "cat ignored-context.txt; git show HEAD:code.txt || exit 8; git status --short || exit 7; for path in code.txt .git/index .git/HEAD other-session.jsonl; do if printf changed > \"$path\"; then exit 9; fi; done; printf '\\nstream-ready\\n'; while :; do :; done"]);
         let cancel = crate::ReadCancellation::default();
         let mut streamed = Vec::new();
         let result = cancel.run(|| {
@@ -1546,9 +1610,20 @@ int main(int argc, char **argv) {
                 }
             })
         });
+        if let Ok(output) = &result {
+            panic!(
+                "Reading command exited before cancellation: {} {} {}",
+                output.code,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
         assert_eq!(result.err().unwrap().code, "READ_CANCELLED");
         assert!(String::from_utf8_lossy(&streamed).contains("preserve"));
-        for path in ["code.txt", ".git/index", ".git/HEAD", "other-session.jsonl"] {
+        assert!(String::from_utf8_lossy(&streamed).contains("complete project context"));
+        assert_eq!(fs::read(snapshot.join(".git/HEAD")).unwrap(), head);
+        assert_eq!(fs::read(snapshot.join(".git/index")).unwrap(), index);
+        for path in ["code.txt", "other-session.jsonl"] {
             assert_eq!(fs::read_to_string(snapshot.join(path)).unwrap(), "preserve");
         }
     }

@@ -16,12 +16,14 @@ pub const OBSERVER_TEXT_LIMIT: usize = 64 * 1024;
 pub enum ObserverAgent {
     Codex,
     Claude,
+    Codewiz,
 }
 impl ObserverAgent {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Codex => "codex",
             Self::Claude => "claude",
+            Self::Codewiz => "codewiz",
         }
     }
 }
@@ -187,11 +189,15 @@ impl Proof {
                 let agent: String = row.get(1)?;
                 Ok(ObserverInstallation {
                     id: row.get(0)?,
-                    agent: if agent == "codex" {
-                        ObserverAgent::Codex
-                    } else {
-                        ObserverAgent::Claude
-                    },
+                    agent: serde_json::from_value(serde_json::Value::String(agent)).map_err(
+                        |error| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                1,
+                                rusqlite::types::Type::Text,
+                                Box::new(error),
+                            )
+                        },
+                    )?,
                     agent_version: row.get(2)?,
                     adapter_version: row.get(3)?,
                     state: row.get(4)?,
@@ -541,7 +547,7 @@ impl Proof {
             &mut fields,
         );
         let tool_name = identifier(&raw, "tool_name");
-        let shell = tool_name.as_deref() == Some("Bash");
+        let shell = matches!(tool_name.as_deref(), Some("Bash" | "bash"));
         let command = budget.field(
             "command",
             shell
@@ -725,14 +731,19 @@ fn observed_paths(
     if let Some(path) = raw["tool_input"]["file_path"]
         .as_str()
         .or(raw["tool_input"]["path"].as_str())
+        .or(raw["tool_input"]["filePath"].as_str())
     {
         requested.push(path.to_string());
     }
     if let Some(path) = raw["tool_response"]["filePath"].as_str() {
         requested.push(path.to_string());
     }
-    if agent == ObserverAgent::Codex && tool == Some("apply_patch") {
-        if let Some(patch) = raw["tool_input"]["command"].as_str() {
+    if matches!(agent, ObserverAgent::Codex | ObserverAgent::Codewiz) && tool == Some("apply_patch")
+    {
+        if let Some(patch) = raw["tool_input"]["command"]
+            .as_str()
+            .or(raw["tool_input"]["patch"].as_str())
+        {
             for line in patch.lines() {
                 if let Some(path) = line
                     .strip_prefix("*** Update File: ")

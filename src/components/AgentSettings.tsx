@@ -206,24 +206,16 @@ export function AgentSettings({ demo }: { demo: boolean }) {
           setSaved(false);
         }}
       >
-        <option value="codex">{t("Codex")}</option>
-        <option value="claude_code">{t("Claude Code")}</option>
-        {providers.some((p) => p.id === "codewiz") && (
-          <option value="codewiz">Codewiz</option>
-        )}
+        {providers.map((provider) => (
+          <option key={provider.id} value={provider.id}>
+            {provider.name}
+          </option>
+        ))}
       </Select>
-      {(
-        [
-          "codex",
-          "claude_code",
-          ...(providers.some((p) => p.id === "codewiz")
-            ? ["codewiz" as const]
-            : []),
-        ] as const
-      ).map((kind) => {
+      {providers.map((found) => {
+        const kind = found.id;
         const options = draft[kind === "claude_code" ? "claudeCode" : kind],
-          name = agentName(kind),
-          found = providers.find((p) => p.id === kind),
+          name = found.name,
           result = results[kind];
         return (
           <section className="agent-setting-card" key={kind}>

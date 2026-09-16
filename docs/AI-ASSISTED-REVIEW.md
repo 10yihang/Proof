@@ -4,20 +4,20 @@
 
 ## 使用方式
 
-打开 **Settings → AI Agents**，配置默认 Agent、Codex / Claude Code 的 CLI 路径以及可选模型。路径留空自动查找；模型作为本次 CLI 的 `--model` 参数传入，不改变终端配置。**Test CLI** 只检测版本、只读参数和本地登录状态，不调用模型、不验证服务端额度。保存后已有 Review 面板会刷新默认选择。它与 **Agent 观察** 是两个独立入口。
+打开 **Settings → AI Agents**，配置默认 Agent、Codex / Claude Code / 已安装 Codewiz 的 CLI 路径以及可选模型。路径留空自动查找；模型作为本次 CLI 的 `--model` 参数传入，不改变终端配置。**Test CLI** 只检测版本、只读参数和本地登录状态，不调用模型、不验证服务端额度。保存后已有 Review 面板会刷新默认选择。它与 **Agent 观察** 是两个独立入口。
 
 
 - Local changes 左侧 **AI Group Changes** 根据当前 Diff 生成逻辑分组。没有现有分组时应用结果；已有分组时显示 **Apply groups**。文件侧的选择框可移到其他组、新组或 Ungrouped，组标题旁提供 Rename / Ungroup，顶部支持 Ungroup all。
-- 右侧 **Context / AI Review** 切换。选择 Codex / Claude Code 后点击 **Review Current Change** 或 **Review All Changes**。Current 对应选中文件所在组；未分组时只分析当前文件。
+- 右侧 **Context / AI Review** 切换。选择本机 Coding Agent 后点击 **Review Current Change** 或 **Review All Changes**。Current 对应选中文件所在组；未分组时只分析当前文件。
 - 独立 Diff tab 和窗口支持 AI 分组与 AI Review，分析该视图冻结的 base / target；分组独立保存，可手动调整。All 仅覆盖此比较；Current 仅覆盖当前文件。不会把历史比较替换成 Local changes。
 - 报告包含 Summary、Overall Risk、Findings、Behavior changes、Missing tests、Review priority。点击 Finding 定位并突出显示对应 Diff 行。AI 输出不触发 `mark_reviewed` / `mark_comparison_reviewed`。
 - 每次用户点击才调用 CLI。打开页面、检测安装、刷新 Git、切换文件和收到 Observer 事件都不运行模型。点击动作旁显示 CLI、范围和额度归属，不提供聊天框或 API Key 表单。
 
 ## 架构与执行
 
-`crates/proof-core/src/ai` 独立于 `observer`、`adapter`、Hook transport 和会话关联。`AgentProvider` 的两个实现是 `CodexProvider` / `ClaudeCodeProvider`；`PreparedAiTask` 捕获输入，`AgentProgram` 封装来源、身份、信任和 data epoch 校验。Native `run_ai_task` 复用窗口拥有的一次性取消 ticket，在释放 Git 核心 mutex 后运行。
+`crates/proof-core/src/ai` 独立于 `observer`、`adapter`、Hook transport 和会话关联。`agents.rs` 的 `AgentAdapter` 统一登记主动 Provider、程序发现与 Hook 能力，设置页不维护另一份 Agent 列表。`AgentProvider` 的实现是 `CodexProvider` / `ClaudeCodeProvider` / `CodewizProvider`；`PreparedAiTask` 捕获输入，`AgentProgram` 封装来源、身份、信任和 data epoch 校验。Native `run_ai_task` 复用窗口拥有的一次性取消 ticket，在释放 Git 核心 mutex 后运行。
 
-输入是任务说明、Scope、结构化结果要求和只读快照入口，通过 stdin 传入。原始 Git Patch 保存在磁盘快照的 diffs/，manifest.json 记录路径、文件侧、类型和不可用上下文。Agent 按需读取，并在 base/、index/、workspace/ 搜索关联实现和测试。Observer Session 不作为输入；CLI 的临时日志可能包含本次输入，因此目录权限为 0700，结束后清理。临时目录保存输出 schema 和 CLI 本次运行的临时文件、状态库、日志，任务返回 / 失败 / 取消时回收。Codex 子进程的运行时目录、`sqlite_home` / `log_dir` 显式指向此处；Claude 使用 `CLAUDE_CODE_TMPDIR`，不会使用其他 Session 的 `/tmp/claude-{uid}`。
+输入是任务说明、Scope、结构化结果要求、真实项目目录和辅助范围清单，通过 stdin 传入。CLI 的 cwd 直接使用真实项目目录，可按需读取项目全部上下文。`input.rs` 只保存 manifest.json 与选定 Diff 的 canonical patches，不复制、过滤或截断项目目录。Agent 使用 git show 查询 HEAD / Index / 固定历史 OID，避免把工作区文件误当成对应版本。Observer Session 不作为输入；CLI 的临时日志可能包含本次输入，因此目录权限为 0700，结束后清理。临时目录保存输出 schema 和 CLI 本次运行的临时文件、状态库、日志，任务返回 / 失败 / 取消时回收。Codex 子进程的运行时目录、`sqlite_home` / `log_dir` 显式指向此处；Claude 使用 `CLAUDE_CODE_TMPDIR`，不会使用其他 Session 的 `/tmp/claude-{uid}`。
 
 本机 CLI 参数依据安装版本 Codex **0.153.4** / Claude Code **2.1.236** 的 `--help` 核对。Proof 不直接调用模型 API，不读取或保存 API Key，也不安装 CLI。沿用本机 CLI 的正常登录；不传 `resume`、`continue`、Session ID，也不修改全局配置。
 
@@ -41,7 +41,7 @@ codex exec --ignore-user-config --ignore-rules --ephemeral
   -c sqlite_home="<owned-job>/state" -c log_dir="<owned-job>/logs" -
 ```
 
-`danger-full-access` 只在 Proof 已强制施加进程级只读沙箱时使用，避免 macOS 拒绝对子进程再次 sandbox_apply。该参数不代表可修改文件，不能脱离 reading_command 单独调用；真实 CLI 回归验证同一次工具调用可读快照、不可写快照。探测仍使用无工具子进程环境。
+`danger-full-access` 只在 Proof 已强制施加进程级只读沙箱时使用，避免 macOS 拒绝对子进程再次 sandbox_apply。该参数不代表可修改文件，不能脱离 reading_command 单独调用；真实 CLI 回归验证同一次工具调用可读项目、不可写项目或 Git。探测仍使用无工具子进程环境。
 
 参数逐项传递给 `Command`，不是 shell 字符串。CLI `item.completed` 中最后的 `agent_message` 提供 JSON，必须见到 `turn.completed`；中间解说不是最终结果。配置与能力含义可见 [Codex configuration reference](https://developers.openai.com/codex/config-reference/)。
 
@@ -53,16 +53,16 @@ claude --print --safe-mode --output-format stream-json --verbose --no-session-pe
   --permission-mode plan --disable-slash-commands
   --strict-mcp-config --mcp-config '{"mcpServers":{}}'
   --setting-sources "" --settings '{"disableAllHooks":true}' --no-chrome
-  --json-schema <schema-json>
+  --add-dir <owned-evidence-directory> --json-schema <schema-json>
 ```
 
 优先解析成功 result 的 `structured_output`，兼容 `result` 中纯 JSON，失败结果不会变成“无 Findings”。`--safe-mode` 保留正常登录且禁用用户扩展，未使用会跳过 OAuth 的 `--bare`。见 [Claude Code CLI reference](https://code.claude.com/docs/en/cli-reference)。
 
 ## 只读与隔离
 
-首个经过验证的执行平台为 macOS 原生 CLI。外层 sandbox-exec 禁止所有文件写入，仅允许本任务私有运行目录和 /dev/null；磁盘快照位于另一个临时目录，所以 CLI 与子进程都不能修改。原仓库、Git 元数据、其他 Agent 配置 / Session 同样禁止写入。允许 CLI self-exec、系统认证辅助程序和受控的 Shell、读取、搜索、Git 查询可执行文件；用户 Hooks / MCP / Plugins 等扩展仍禁用。取消、超时只终止自有进程组。
+首个经过验证的执行平台为 macOS 原生 CLI。外层 sandbox-exec 禁止所有文件写入，仅允许本任务私有运行目录和 /dev/null；辅助范围证据位于另一个临时目录，CLI 与子进程都不能修改。原仓库、Git 元数据、其他 Agent 配置 / Session 同样禁止写入。允许 CLI self-exec、系统认证辅助程序和受控的 Shell、读取、搜索、Git 查询可执行文件；用户 Hooks / MCP / Plugins 等扩展仍禁用。取消只终止自有进程组。
 
-快照最多 256 MiB，canonical patches 最多 128 MiB / 20,000 文件侧，完整上下文最多 100,000 路径。单份上下文超过 4 MiB、二进制、非 UTF-8、符号链接、子模块或无法读取时写入 manifest 的 omittedContext，报告注明数量。Local 核对捕获前后版本；历史上下文从固定 OID 读取，不使用当前 Worktree。快照和 CLI 运行目录在任务回收时删除。
+不再复制 base / index / workspace 项目视图；ignored 文件、关联文档和超过 4 MiB 的文件仍可由 Agent 按需读取。原项目快照的 256 MiB / 100,000 路径限制已移除。辅助 canonical patches 最多 128 MiB / 20,000 文件侧，现有单文件 Diff 读取保护保留。清单只限定审查对象，不限定项目上下文。历史版本通过固定 Git OID 查询；实时文件可变化，报告附带说明并保留原 Diff token 过期保护。临时范围证据和 CLI 运行目录在任务回收时删除。
 
 搜索固定安装位置 `/opt/homebrew/bin`、`/usr/local/bin` 以及用户 `.local/bin`、`.cargo/bin`、`.npm-global/bin`，不使用仓库内 PATH、shell alias 或 function。解析所有符号链接来源及最终程序目录，复用 `trusted_program_workspace` 检查；启动前和结果返回前核对信任、程序身份及 data epoch。程序身份检测不构成发布者认证。
 
@@ -70,7 +70,7 @@ claude --print --safe-mode --output-format stream-json --verbose --no-session-pe
 
 ## 数据与校验
 
-- 不再把全部 Patch 塞进提示词，不再使用 500 文件 / 1 MiB 输入门槛。资源上限见上方快照说明；现有单文件 Diff 读取上限继续适用。流式 stdout 最多 32 MiB，任务最多 10 分钟。stderr 有界，不保存原始日志；Failure details 只展示限长、经过凭据脱敏的错误摘要，包含 Provider、执行阶段和退出码。Bun 的大段源码栈不会进入界面。
+- 不再把全部 Patch 塞进提示词，不再使用 500 文件 / 1 MiB 输入门槛。范围证据资源上限见上文；现有单文件 Diff 读取上限继续适用。流式 stdout 最多 32 MiB，没有固定推理时限。stderr 有界，不保存原始日志；Failure details 只展示限长、经过凭据脱敏的错误摘要，包含 Provider、执行阶段和退出码。Bun 的大段源码栈不会进入界面。
 - Grouping 输出 `title / summary / files / risk / reviewPriority`。原始结果要求所有 changed path 恰好出现一次；未知路径、重复、遗漏、非法枚举、过长文本拒绝。用户编辑可以留下 Ungrouped 文件。
 - 分组保存在 SQLite `change_groups`，schema 7；每个 workspace 一份，使用 revision CAS，删除 workspace 后级联删除。无 CLI 仍可编辑分组。过期风险不作为新版本结论，手动保存过期分组时风险改为 unknown。
 - Review 输出 `summary / overallRisk / findings / behaviorChanges / missingTests / reviewPriority`。每个 Finding 的 file、Staged / Unstaged 侧、old / new 侧及闭区间 `line..endLine` 的每一行必须在此次原始 Hunk 中验证；不允许跨越未捕获的行。单行可以 start=end，兼容旧结果缺省 endLine 时回退为 line。priority 中的文件也必须属于输入。
@@ -120,9 +120,9 @@ UI 覆盖显式触发、改名 / 移动 / 新建 / 取消分组、已有分组�
 
 桌面向发起窗口发送 proof://ai-progress，携带原生一次性 read ticket。前端先监听后启动，按 ticket 和 data generation 过滤，完成 / 失败 / 取消解除监听。分组、Review 和独立 Diff 共用 AiTaskProgress，显示当前操作、路径、运行时长、最近 40 条活动以及取消状态。15 秒无事件只提示等待，不假报进度或宣告卡死。
 
-回归包含 >1 MiB 真实 Patch、分离的 staged / unstaged 快照、根 Commit、选定范围之外的关联上下文、外部编辑后的快照稳定性、工具输出在进程结束前触发取消，以及窗口 / 任务事件隔离。真实 Codex 使用回环模型协议夹具验证原生工具读取和写入拒绝，不使用用户凭据、远程模型或额度。
+回归包含 >1 MiB 真实 Patch、分离的 staged / unstaged Patch、根 Commit、ignored 与大文件上下文可读、外部编辑实时可见且 canonical patches 保持稳定、工具输出在进程结束前触发取消，以及窗口 / 任务事件隔离。真实 Codex 使用回环模型协议夹具验证原生工具读取和写入拒绝，不使用用户凭据、远程模型或额度。
 
-快照预算优先保留选中路径及旧路径的上下文，为 base / index / workspace 分别预留空间，并为全部 canonical patches 预留独立容量。其余上下文超出预算时进入 manifest 不可用清单，不因此拒绝小范围 Review，也不静默宣称完整覆盖。
+项目上下文由 Agent 在真实目录中按需读取，Proof 不再预先枚举并复制完整项目。所选 Diff 的 canonical patches 保留原始文件路径、侧和行号，供最终结果验证。
 
 
 ## 2026-09-15：Code Mode host 与分析结果状态
@@ -132,3 +132,5 @@ UI 覆盖显式触发、改名 / 移动 / 新建 / 取消分组、已有分组�
 回归同时覆盖原有直接 Shell 模式和使用本机 gpt-6-astra 目录元数据的 Code Mode exec → exec_command → manifest.json 读取。该测试使用本机模拟响应、合成快照和禁止远程网络的运行环境；没有访问真实模型或使用用户凭据。原来的 proof-fixture 模型名使用 fallback 工具元数据，不能覆盖 Code Mode-only 模型，这项证据限制已补齐。
 
 主动 Grouping / Review 的最终结构化输出必须包含 analysisStatus（completed / blocked）和 blockers。无法读取 manifest 或 canonical patches 时必须返回 blocked；后端返回 AI_ANALYSIS_BLOCKED，不保存为空的成功 Review、不应用分组。缺少状态或 completed 携带 blockers 都视为无效输出。CLI 流中已明确报告 Code Mode 不可用时，即使后续 turn.completed 也返回 AI_TOOL_UNAVAILABLE。历史报告结构不变。
+
+`AgentReadContext` 明确区分真实项目目录、不可写的任务证据目录与选定路径。Claude 仅为本次任务传入 `--add-dir`，Codewiz 仅允许该证据路径的 external_directory 读取；其他目录保持默认拒绝，macOS 沙箱对项目和证据的写入拒绝不变。真实 Codewiz 回归使用 Read 工具读取项目外的辅助清单、Bash 读取项目文件并尝试写入，同时在项目内放置可观察的插件，确认主动分析不会加载它。

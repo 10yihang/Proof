@@ -153,32 +153,32 @@ export function ObserverSettings({
       {status?.serviceError && (
         <p role="alert">{uiMessage(status.serviceError.message)}</p>
       )}
-      {(["codex", "claude"] as const).map((agent) => (
+      {locations.map((adapter) => (
         <AgentCard
-          key={agent}
-          agent={agent}
-          executable={
-            locations.find((l) => l.agent === agent)?.executablePath ?? ""
-          }
+          key={adapter.agent}
+          adapter={adapter}
+          executable={adapter.executablePath ?? ""}
           available={available}
           workspaces={catalog}
           workspaceId={workspaceId}
           status={status}
-          installation={status?.installations.find((i) => i.agent === agent)}
+          installation={status?.installations.find(
+            (i) => i.agent === adapter.agent,
+          )}
           onChanged={() => setRefresh((n) => n + 1)}
           onError={onError}
         />
       ))}
       <p className="inline-help">
         {t(
-          "Hook 只记录已授权的 Worktree。Codex Hook 不限定 CLI 版本；安装前检查配置， 安装后检查连接。Claude Code Hook 暂未开放安装。",
+          "Hook 只记录已授权的 Worktree。安装前预览修改，安装后检查连接；不会调用模型。",
         )}
       </p>
     </>
   );
 }
 function AgentCard({
-  agent,
+  adapter,
   executable,
   available,
   workspaces,
@@ -188,7 +188,7 @@ function AgentCard({
   onChanged,
   onError,
 }: {
-  agent: "codex" | "claude";
+  adapter: ObserverProgramLocation;
   executable: string;
   available: boolean;
   workspaces: Workspace[];
@@ -198,6 +198,7 @@ function AgentCard({
   onChanged: () => void;
   onError: (e: unknown) => void;
 }) {
+  const { agent, name, installationAvailable, unavailableReason } = adapter;
   const request = useRequest();
   const [path, setPath] = useState(executable),
     [edited, setEdited] = useState(false),
@@ -298,16 +299,13 @@ function AgentCard({
           : t("已暂停")
       : t("未接入");
   return (
-    <section
-      className="observer-version-card"
-      aria-label={`${agent === "codex" ? "Codex" : t("Claude Code")} Hook`}
-    >
+    <section className="observer-version-card" aria-label={`${name} Hook`}>
       <div className="agent-setting">
         <div className="agent-icon">
           <Plug size={20} />
         </div>
         <div>
-          <strong>{agent === "codex" ? "Codex" : t("Claude Code")}</strong>
+          <strong>{name}</strong>
           <small>
             {installation
               ? t("配置版本 {v0}", { v0: installation.agentVersion })
@@ -318,6 +316,16 @@ function AgentCard({
         </div>
         <span className="tag">{state}</span>
       </div>
+      {unavailableReason && (
+        <p className="inline-help">{uiMessage(unavailableReason)}</p>
+      )}
+      {agent === "codewiz" && (
+        <p className="inline-help">
+          {t(
+            "通过本地插件记录任务、文件操作和回复。安装后，重新打开 Codewiz 即可生效。",
+          )}
+        </p>
+      )}
       {!installation && (
         <>
           <label className="field-label" htmlFor={`agent-program-${agent}`}>
@@ -515,7 +523,7 @@ function AgentCard({
                 !available ||
                 busy ||
                 !trusted ||
-                agent !== "codex" ||
+                !installationAvailable ||
                 !probe?.profile
               }
               onClick={() =>

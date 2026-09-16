@@ -1,4 +1,5 @@
 pub mod bridge;
+pub mod codewiz;
 pub mod config;
 #[cfg(unix)]
 mod config_file;

@@ -71,8 +71,13 @@ impl Proof {
         let Some(path) = record.ownership["program"]["path"].as_str() else {
             return Ok(None);
         };
-        let Ok((resolved, mut origins)) =
-            crate::program::resolve_program_path(std::path::Path::new(path))
+        let agent: crate::ObserverAgent =
+            match serde_json::from_value(record.ownership["config"]["spec"]["agent"].clone()) {
+                Ok(agent) => agent,
+                Err(_) => return Ok(None),
+            };
+        let Ok((resolved, mut origins, identity)) =
+            crate::ai::resolve_agent_executable(agent.adapter().kind, std::path::Path::new(path))
         else {
             return Ok(None);
         };
@@ -86,7 +91,7 @@ impl Proof {
                 return Ok(None);
             }
         }
-        Ok(crate::program::program_identity(&resolved).ok())
+        Ok(Some(identity))
     }
     pub(crate) fn check_observer_hook_program(&self, id: &str) -> Result<bool> {
         let Some(record) = self

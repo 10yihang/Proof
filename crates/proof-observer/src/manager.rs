@@ -49,12 +49,14 @@ impl CaptureFields {
 pub struct AgentConfigPaths {
     pub codex: PathBuf,
     pub claude: PathBuf,
+    pub codewiz: PathBuf,
 }
 impl AgentConfigPaths {
     fn directory(&self, agent: ObserverAgent) -> &Path {
         match agent {
             ObserverAgent::Codex => &self.codex,
             ObserverAgent::Claude => &self.claude,
+            ObserverAgent::Codewiz => &self.codewiz,
         }
     }
 }
@@ -247,11 +249,11 @@ impl ObserverManager {
     ) -> Result<HookPreview> {
         // Keep the supported provider/platform boundary, not a CLI version pin.
         // Config parsing, preview, executable identity and bridge checks follow.
-        if !cfg!(target_os = "macos") || probe.agent != ObserverAgent::Codex {
+        if !probe.agent.adapter().hook_installation_available() {
             return Err(Error::new(
                 "OBSERVER_COMBINATION_UNVERIFIED",
                 "此 Agent 与平台组合尚未完成真实 Hook 验证。",
-                "Hook installation is currently available for Codex on macOS",
+                "This adapter has not enabled Hook installation on the current platform",
             ));
         }
         let workspace = proof
@@ -509,8 +511,11 @@ impl ObserverManager {
             })();
             Ok(HookActionResult {
                 installation_id,
-                message: "Proof Hook 已安装。请在 Codex 中运行 /hooks，确认此 Hook 后开始工作。"
-                    .into(),
+                message: match preview.agent {
+                    ObserverAgent::Codex => "Proof Hook 已安装。请在 Codex 中运行 /hooks，确认此 Hook 后开始工作。",
+                    ObserverAgent::Codewiz => "Proof Hook 已安装。下次启动 Codewiz 时加载插件；正在运行的 Session 保持不变。",
+                    ObserverAgent::Claude => "Proof Hook 已安装。",
+                }.into(),
                 observing_enabled: activation.is_ok(),
                 warning: activation
                     .err()
@@ -560,6 +565,7 @@ impl ObserverManager {
         self.paths.directory(agent).join(match agent {
             ObserverAgent::Codex => "hooks.json",
             ObserverAgent::Claude => "settings.json",
+            ObserverAgent::Codewiz => "plugins/proof-observer.js",
         })
     }
     fn installation_dir(&self, id: &str) -> PathBuf {
@@ -902,11 +908,20 @@ fn config_location(path: &Path) -> Result<(&Path, &str, &str)> {
         .parent()
         .ok_or_else(|| Error::new("OBSERVER_CONFIG_PATH", "配置路径无效。", "Missing parent"))?;
     let root = directory
-        .parent()
-        .ok_or_else(|| Error::new("OBSERVER_CONFIG_PATH", "配置路径无效。", "Missing root"))?;
+        .ancestors()
+        .skip(1)
+        .find(|path| path.is_dir())
+        .ok_or_else(|| {
+            Error::new(
+                "OBSERVER_CONFIG_PATH",
+                "配置目录不存在。",
+                "No existing config ancestor",
+            )
+        })?;
     let folder = directory
-        .file_name()
-        .and_then(|s| s.to_str())
+        .strip_prefix(root)
+        .ok()
+        .and_then(|path| path.to_str())
         .ok_or_else(|| {
             Error::new(
                 "OBSERVER_CONFIG_PATH",
@@ -917,7 +932,7 @@ fn config_location(path: &Path) -> Result<(&Path, &str, &str)> {
     let filename = path
         .file_name()
         .and_then(|s| s.to_str())
-        .filter(|s| ["hooks.json", "settings.json"].contains(s))
+        .filter(|s| ["hooks.json", "settings.json", "proof-observer.js"].contains(s))
         .ok_or_else(|| {
             Error::new(
                 "OBSERVER_CONFIG_PATH",

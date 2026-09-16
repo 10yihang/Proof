@@ -263,12 +263,16 @@ export interface DataDeletionResult {
   cleanup: DataCleanup;
   cleanupError: ProofError | null;
 }
+export type ObserverAgent = "codex" | "claude" | "codewiz";
 export interface ObserverProgramLocation {
-  agent: "codex" | "claude";
+  agent: ObserverAgent;
   executablePath: string | null;
+  name: string;
+  installationAvailable: boolean;
+  unavailableReason: string | null;
 }
 export interface ObserverProbe {
-  agent: "codex" | "claude";
+  agent: ObserverAgent;
   executablePath: string;
   executableIdentity: string;
   version: string;

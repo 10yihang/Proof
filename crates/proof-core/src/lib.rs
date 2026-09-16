@@ -1,4 +1,5 @@
 mod adapter;
+mod agents;
 mod ai;
 mod compare;
 mod context;
@@ -35,6 +36,7 @@ mod store;
 mod transient;
 
 pub use adapter::*;
+pub use agents::*;
 pub use ai::*;
 pub use compare::*;
 pub use context::*;

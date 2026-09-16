@@ -131,7 +131,7 @@ impl Proof {
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         let installations:Vec<_>=raw.iter().take(128).map(|(agent,version,adapter,state,count)|json!({
-            "agent":known(agent,&["codex","claude"]),"agentVersion":safe_version(version),"adapterVersion":safe_version(adapter),
+            "agent":known(agent,&["codex","claude","codewiz"]),"agentVersion":safe_version(version),"adapterVersion":safe_version(adapter),
             "state":known(state,&["configured_pending","receiving_unverified","helper_changed","revoked","active","paused","installed","uninstalled","invalidated","pending","config_changed","program_changed"]),"count":count
         })).collect();
         drop(statement);

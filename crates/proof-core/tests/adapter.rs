@@ -29,6 +29,8 @@ fn a_version_string_never_promotes_runtime_compatibility_or_grants_collection() 
         (ObserverAgent::Claude, "2.1.236 (Claude Code)"),
         (ObserverAgent::Codex, "codex-cli 9.9.9-alpha.2"),
         (ObserverAgent::Claude, "3.1.0 (Claude Code)"),
+        (ObserverAgent::Codewiz, "0.1.99"),
+        (ObserverAgent::Codewiz, "codewiz 9.9.0-preview.2"),
     ] {
         let f = Fixture::new(&format!(
             "#!/bin/sh\n[ \"$1\" = --version ] || exit 91\nprintf '%s\\n' '{output}'\n"
@@ -53,6 +55,45 @@ fn a_version_string_never_promotes_runtime_compatibility_or_grants_collection() 
     assert_eq!(result.version, "9.9.9");
     assert_eq!(result.status, "candidate_unverified");
     assert!(!result.profile.unwrap().runtime_verified);
+}
+
+#[test]
+fn every_registered_agent_exposes_active_and_passive_capabilities_from_one_adapter() {
+    for adapter in proof_core::AGENT_ADAPTERS {
+        assert_eq!(adapter.provider().kind(), adapter.kind);
+        assert_eq!(adapter.kind.adapter().observer, adapter.observer);
+        assert_eq!(adapter.observer.adapter().kind, adapter.kind);
+        assert!(!proof_core::observer_hook_events_v1(adapter.observer).is_empty());
+        assert_eq!(
+            adapter.hook_installation_available(),
+            adapter.hook_unavailable_reason().is_none()
+        );
+    }
+    let f = Fixture::new("#!/bin/sh\nprintf '0.1.99\\n'\n");
+    f.proof
+        .set_agent_settings(proof_core::AgentSettingsUpdate {
+            expected_revision: 0,
+            default_provider: proof_core::AgentKind::Codewiz,
+            codex: Default::default(),
+            claude_code: Default::default(),
+            codewiz: Some(proof_core::AgentOptions {
+                executable_path: Some(f.program.to_str().unwrap().into()),
+                model: None,
+            }),
+        })
+        .unwrap();
+    let active = f.proof.agent_providers().unwrap();
+    let hook = f.proof.observer_program_locations().unwrap();
+    let active = active
+        .iter()
+        .find(|item| item.id == proof_core::AgentKind::Codewiz)
+        .unwrap();
+    let hook = hook
+        .iter()
+        .find(|item| item.agent == ObserverAgent::Codewiz)
+        .unwrap();
+    assert_eq!(active.path, hook.executable_path);
+    assert_eq!(active.name, hook.name);
 }
 
 #[test]

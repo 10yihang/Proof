@@ -1682,7 +1682,6 @@ export default function App({
           className="toolbar-spacer window-drag-space"
           data-tauri-drag-region
         />
-        {changes && !diffWindow && gitActions.toolbar}
         {demo && <span className="demo-badge">{t("演示数据")}</span>}
         {changes && (
           <Button

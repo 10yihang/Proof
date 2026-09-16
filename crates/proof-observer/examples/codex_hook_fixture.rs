@@ -57,6 +57,7 @@ mod unix {
             AgentConfigPaths {
                 codex: config_dir.clone(),
                 claude: root.join("claude-config"),
+                codewiz: root.join("claude-config"),
             },
         );
         let probe = proof

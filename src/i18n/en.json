@@ -1530,5 +1530,18 @@
   "二进制内容已保存在恢复点，可恢复原文件；不提供文本预览或复制。": "Binary contents are saved in Recovery and can be restored. Text preview and copying are unavailable.",
   "恢复点已经保存。已跟踪文件会还原到 Index 版本，untracked 文件会移出 Worktree；均可从恢复点撤销。": "Recovery points are saved. Tracked files will return to their Index version and untracked files will be removed from the Worktree. Both can be undone from Recovery.",
   "{v0} 的目录操作": "Folder actions for {v0}",
-  "Discard 仅支持 32 MiB 以内、没有硬链接的普通文件。": "Discard supports regular files up to 32 MiB without hard links."
+  "Discard 仅支持 32 MiB 以内、没有硬链接的普通文件。": "Discard supports regular files up to 32 MiB without hard links.",
+  "正在准备项目上下文": "Preparing project context",
+  "点击后由 Agent 只读访问完整项目目录，使用其现有登录和额度。AI 结果不会标记为 Reviewed。": "The Agent can read the complete project directory using its existing login and quota. AI results never mark changes as Reviewed.",
+  "Hook 只记录已授权的 Worktree。安装前预览修改，安装后检查连接；不会调用模型。": "Hooks only record authorized Worktrees. Preview changes before installation and verify the connection afterwards; no model is called.",
+  "Claude Code Hook 暂未开放安装。": "Claude Code Hook installation is not available yet.",
+  "此平台暂不支持安装 Agent Hook。": "Agent Hook installation is not supported on this platform yet.",
+  "Proof Hook 已安装。": "Proof Hook installed.",
+  "Proof 的 Codewiz 插件文件已存在或被修改，请先核对文件。": "The Proof Codewiz plugin file already exists or was modified. Check the file first.",
+  "变更清单超过本机资源上限，请缩小范围。": "The change list exceeds local resource limits. Select a smaller scope.",
+  "项目目录不能位于可写运行目录内。": "The project directory cannot be inside the writable Agent runtime.",
+  "配置目录不存在。": "The configuration directory does not exist.",
+  "分析范围目录无法安全授权。": "The analysis evidence directory cannot be granted safely.",
+  "Proof Hook 已安装。下次启动 Codewiz 时加载插件；正在运行的 Session 保持不变。": "Proof Hook installed. The plugin loads the next time Codewiz starts; running Sessions are unchanged.",
+  "通过本地插件记录任务、文件操作和回复。安装后，重新打开 Codewiz 即可生效。": "A local plugin records tasks, file operations and replies. Reopen Codewiz after installation to load it."
 }

@@ -71,6 +71,7 @@ impl Fixture {
             AgentConfigPaths {
                 codex: root.path().join("user/.codex"),
                 claude: root.path().join("user/.claude"),
+                codewiz: root.path().join("user/codewiz"),
             },
         );
         Self {
@@ -108,6 +109,348 @@ impl Drop for Fixture {
         }
         let _ = self.manager.stop_owned_runtime(&self.proof);
     }
+}
+
+#[test]
+fn codewiz_plugin_installs_captures_native_turns_and_uninstalls_without_changing_user_config() {
+    let mut f = Fixture::new();
+    fs::write(&f.program, "#!/bin/sh\nprintf '0.1.99\\n'\n").unwrap();
+    let config = f.root.path().join("user/codewiz");
+    fs::create_dir_all(config.join("plugins")).unwrap();
+    let user_config = b"{ // preserve user settings\n \"plugin\": [\"company-plugin\"], \"model\": \"company/model\"\n}\n";
+    fs::write(config.join("codewiz.jsonc"), user_config).unwrap();
+    fs::write(
+        config.join("plugins/company.js"),
+        "// existing company plugin",
+    )
+    .unwrap();
+    fs::write(config.join("package.json"), r#"{"type":"module"}"#).unwrap();
+    let probe = f
+        .proof
+        .probe_observer(ObserverAgent::Codewiz, f.program.to_str().unwrap())
+        .unwrap();
+    let preview = f
+        .manager
+        .preview_install(
+            &f.proof,
+            &f.workspace.id,
+            f.program.to_str().unwrap(),
+            probe,
+            CaptureFields {
+                prompt: true,
+                command: true,
+                reply: true,
+                output: true,
+                background: true,
+            },
+        )
+        .unwrap();
+    assert!(!preview.requires_hook_trust);
+    assert!(preview.config_path.ends_with("plugins/proof-observer.js"));
+    assert!(
+        !Path::new(&preview.config_path).exists(),
+        "Preview must not write configuration"
+    );
+    let result = f.manager.apply(&f.proof, &preview.id).unwrap();
+    assert!(result.observing_enabled, "{:?}", result.warning);
+    let output = Command::new("node").args(["--input-type=module", "-e", r#"
+import { pathToFileURL } from 'node:url';
+import assert from 'node:assert/strict';
+const plugin = (await import(pathToFileURL(process.argv[1]))).default;
+const hooks = await plugin({directory: process.argv[2]});
+assert.deepEqual(Object.keys(hooks).sort(), ['chat.message', 'dispose', 'event']);
+const event = async (type, properties) => hooks.event({event:{type,properties}});
+await event('session.created', {info:{id:'session-native'}});
+const prompt = {message:{id:'user-native',sessionID:'session-native',role:'user'},parts:[{type:'text',text:'Review authentication'}]};
+const before = JSON.stringify(prompt);
+await hooks['chat.message']({sessionID:'session-native'}, prompt);
+assert.equal(JSON.stringify(prompt), before);
+const info = {id:'assistant-native',sessionID:'session-native',role:'assistant',parentID:'user-native'};
+await event('message.updated', {info});
+const read = {id:'part-read',messageID:info.id,sessionID:info.sessionID,type:'tool',tool:'read',callID:'read-native',state:{status:'completed',input:{filePath:process.argv[2]+'/code.txt'},output:'unchanged source'}};
+await event('message.part.updated', {part:read});
+await event('message.part.updated', {part:read});
+await event('message.part.updated', {part:{id:'part-bash',messageID:info.id,sessionID:info.sessionID,type:'tool',tool:'bash',callID:'bash-native',state:{status:'completed',input:{command:'git status --short'},output:'status result',metadata:{exit:0}}}});
+await event('message.part.updated', {part:{id:'part-text',messageID:info.id,sessionID:info.sessionID,type:'text',text:'Finished reviewing the file',time:{end:1}}});
+const finalReply = event('message.updated', {info:{...info,time:{completed:2},finish:'stop'}});
+await hooks.dispose();
+await finalReply;
+await event('message.updated', {info:{...info,time:{completed:2},finish:'stop'}});
+assert.equal(JSON.stringify(prompt), before);
+"#, &preview.config_path, &f.workspace.path]).output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.stdout.is_empty(),
+        "Passive plugin cannot emit model feedback"
+    );
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    let events = loop {
+        let events = f.proof.observer_events(&f.workspace.id, None, 0).unwrap();
+        if events.len() == 5 || std::time::Instant::now() >= until {
+            break events;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    assert_eq!(
+        events.len(),
+        5,
+        "{:?}",
+        events.iter().map(|e| &e.kind).collect::<Vec<_>>()
+    );
+    assert!(events.iter().all(|e| e.agent == ObserverAgent::Codewiz));
+    let read = events
+        .iter()
+        .find(|e| e.tool_ref.as_deref() == Some("read-native"))
+        .unwrap();
+    assert_eq!(read.paths, ["code.txt"]);
+    assert_eq!(read.turn_id.as_deref(), Some("user-native"));
+    let bash = events
+        .iter()
+        .find(|e| e.tool_ref.as_deref() == Some("bash-native"))
+        .unwrap();
+    assert_eq!(bash.command.as_deref(), Some("git status --short"));
+    assert_eq!(bash.exit_code, Some(0));
+    assert!(events
+        .iter()
+        .any(|e| e.reply.as_deref() == Some("Finished reviewing the file")));
+    assert_eq!(
+        f.proof
+            .context_overview(&f.workspace.id, "code.txt")
+            .unwrap()
+            .links[0]
+            .session
+            .agent,
+        Some(ObserverAgent::Codewiz)
+    );
+    let uninstall = f
+        .manager
+        .preview_uninstall(&f.proof, &result.installation_id)
+        .unwrap();
+    f.manager.apply(&f.proof, &uninstall.id).unwrap();
+    assert!(!Path::new(&preview.config_path).exists());
+    assert_eq!(fs::read(config.join("codewiz.jsonc")).unwrap(), user_config);
+    assert_eq!(
+        fs::read_to_string(config.join("plugins/company.js")).unwrap(),
+        "// existing company plugin"
+    );
+    assert_eq!(
+        git(Path::new(&f.workspace.path), &["status", "--porcelain"]),
+        ""
+    );
+}
+
+#[test]
+#[ignore = "Installed Codewiz with synthetic config and loopback HTTP only; no model calls or user sessions"]
+fn installed_codewiz_loads_the_plugin_and_delivers_native_session_events() {
+    use std::{
+        io::{Read, Write},
+        net::{TcpListener, TcpStream},
+        time::{Duration, Instant},
+    };
+    let mut f = Fixture::new();
+    let location = f
+        .proof
+        .observer_program_locations()
+        .unwrap()
+        .into_iter()
+        .find(|p| p.agent == ObserverAgent::Codewiz)
+        .expect("Codewiz installed");
+    let source = location.executable_path.unwrap();
+    let probe = f
+        .proof
+        .probe_observer(ObserverAgent::Codewiz, &source)
+        .unwrap();
+    let native = probe.executable_path.clone();
+    let version = probe.version.clone();
+    let config = f.root.path().join("user/codewiz");
+    fs::create_dir_all(&config).unwrap();
+    fs::write(config.join("codewiz.json"), r#"{"autoupdate":false,"share":"disabled","snapshot":false,"plugin":[],"mcp":{},"lsp":false,"formatter":false,"enabled_providers":[],"permission":"deny"}"#).unwrap();
+    let preview = f
+        .manager
+        .preview_install(
+            &f.proof,
+            &f.workspace.id,
+            &source,
+            probe,
+            CaptureFields {
+                background: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let installed = f.manager.apply(&f.proof, &preview.id).unwrap();
+    assert!(installed.observing_enabled, "{:?}", installed.warning);
+    // This plugin has no package dependencies. A read-only config directory
+    // prevents Codewiz's unrelated npm bootstrap in this offline native test.
+    struct ReadOnlyConfig(PathBuf);
+    impl Drop for ReadOnlyConfig {
+        fn drop(&mut self) {
+            let _ = fs::set_permissions(&self.0, fs::Permissions::from_mode(0o700));
+        }
+    }
+    fs::set_permissions(&config, fs::Permissions::from_mode(0o500)).unwrap();
+    let read_only_config = ReadOnlyConfig(config.clone());
+    for part in ["home", "cache", "state", "share", "bin"] {
+        fs::create_dir_all(f.root.path().join(part)).unwrap();
+    }
+    let ps = f.root.path().join("bin/ps");
+    fs::write(&ps, "#!/bin/sh\nprintf 'PID PPID ELAPSED COMMAND\\n'\n").unwrap();
+    fs::set_permissions(&ps, fs::Permissions::from_mode(0o700)).unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    let quote = |p: &Path| serde_json::to_string(&p.to_string_lossy()).unwrap();
+    let socket = proof_observer::runtime::socket_path(&f.root.path().join("data")).unwrap();
+    let profile = format!("(version 1)(allow default)(deny file-write*)(allow file-write* (subpath {})(literal \"/dev/null\"))(deny signal)(deny network-outbound)(allow network-outbound (remote ip \"localhost:*\")(remote unix-socket (literal {})))", quote(f.root.path()), quote(&socket));
+    let log_path = f.root.path().join("native-codewiz.log");
+    let log = fs::File::create(&log_path).unwrap();
+    let mut command = Command::new("/usr/bin/sandbox-exec");
+    command
+        .args([
+            "-p",
+            &profile,
+            &native,
+            "serve",
+            "--print-logs",
+            "--log-level",
+            "DEBUG",
+            "--hostname",
+            "127.0.0.1",
+            "--port",
+            &port.to_string(),
+        ])
+        .current_dir(&f.workspace.path)
+        .env_clear()
+        .env("APP_NAME", "codewiz")
+        .env("HOME", f.root.path().join("home"))
+        .env("OPENCODE_TEST_HOME", f.root.path().join("home"))
+        .env("OPENCODE_CONFIG_CONTENT", "{}")
+        .env(
+            "OPENCODE_TEST_MANAGED_CONFIG_DIR",
+            f.root.path().join("home/managed"),
+        )
+        .env("XDG_CONFIG_HOME", f.root.path().join("user"))
+        .env("XDG_CACHE_HOME", f.root.path().join("cache"))
+        .env("XDG_DATA_HOME", f.root.path().join("share"))
+        .env("XDG_STATE_HOME", f.root.path().join("state"))
+        .env("TMPDIR", f.root.path())
+        .env("LANG", "en_US.UTF-8")
+        .env(
+            "PATH",
+            format!(
+                "{}:/usr/bin:/bin:/opt/homebrew/bin",
+                f.root.path().join("bin").display()
+            ),
+        )
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .stdout(log.try_clone().unwrap())
+        .stderr(log);
+    for key in [
+        "OPENCODE_DISABLE_AUTOUPDATE",
+        "OPENCODE_DISABLE_MODELS_FETCH",
+        "OPENCODE_DISABLE_DEFAULT_PLUGINS",
+        "OPENCODE_DISABLE_PROJECT_CONFIG",
+        "OPENCODE_DISABLE_EXTERNAL_SKILLS",
+        "OPENCODE_DISABLE_LSP_DOWNLOAD",
+        "OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER",
+        "OPENCODE_DISABLE_FFF",
+    ] {
+        command.env(key, "true");
+    }
+    struct Server(std::process::Child);
+    impl Drop for Server {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let mut server = Server(command.spawn().unwrap());
+    let until = Instant::now() + Duration::from_secs(30);
+    let mut stream = loop {
+        if let Ok(stream) = TcpStream::connect(("127.0.0.1", port)) {
+            break stream;
+        }
+        if server.0.try_wait().unwrap().is_some() || Instant::now() >= until {
+            panic!(
+                "Codewiz startup: {}",
+                fs::read_to_string(&log_path).unwrap()
+            );
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    stream
+        .set_read_timeout(Some(Duration::from_secs(20)))
+        .unwrap();
+    let body = r#"{"title":"Proof Hook fixture; no model"}"#;
+    write!(stream, "POST /session?directory={} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", f.workspace.path, body.len()).unwrap();
+    let mut response = String::new();
+    if let Err(error) = stream.read_to_string(&mut response) {
+        assert!(
+            response.starts_with("HTTP/1.1 200"),
+            "HTTP read {error}: {response}; native log: {}",
+            fs::read_to_string(&log_path).unwrap()
+        );
+    }
+    assert!(
+        response.starts_with("HTTP/1.1 200"),
+        "Native session response: {response}; {}",
+        fs::read_to_string(&log_path).unwrap()
+    );
+    let until = Instant::now() + Duration::from_secs(5);
+    loop {
+        let events = f.proof.observer_events(&f.workspace.id, None, 0).unwrap();
+        if let Some(event) = events.iter().find(|e| e.kind == "SessionStart") {
+            assert_eq!(event.agent, ObserverAgent::Codewiz);
+            assert!(event.native_session_id.is_some());
+            println!("Codewiz {version}: native local plugin delivered SessionStart without a model call");
+            break;
+        }
+        assert!(
+            Instant::now() < until,
+            "No native plugin event: {}",
+            fs::read_to_string(&log_path).unwrap()
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    drop(server);
+    drop(read_only_config);
+    let uninstall = f
+        .manager
+        .preview_uninstall(&f.proof, &installed.installation_id)
+        .unwrap();
+    f.manager.apply(&f.proof, &uninstall.id).unwrap();
+}
+
+#[test]
+fn codewiz_missing_config_is_not_created_by_preview_and_symlink_replacement_is_rejected() {
+    let mut f = Fixture::new();
+    fs::write(&f.program, "#!/bin/sh\nprintf '0.1.99\\n'\n").unwrap();
+    let config = f.root.path().join("user/codewiz");
+    let outside = f.root.path().join("outside");
+    fs::create_dir(&outside).unwrap();
+    let probe = f
+        .proof
+        .probe_observer(ObserverAgent::Codewiz, f.program.to_str().unwrap())
+        .unwrap();
+    let preview = f
+        .manager
+        .preview_install(
+            &f.proof,
+            &f.workspace.id,
+            f.program.to_str().unwrap(),
+            probe,
+            CaptureFields::default(),
+        )
+        .unwrap();
+    assert!(!config.exists());
+    std::os::unix::fs::symlink(&outside, &config).unwrap();
+    assert!(f.manager.apply(&f.proof, &preview.id).is_err());
+    assert!(fs::read_dir(&outside).unwrap().next().is_none());
 }
 
 #[test]

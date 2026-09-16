@@ -121,7 +121,7 @@ impl DiagnosticMetrics {
         }
         if action == "probe_observer" {
             if let Some(value) = result {
-                if let (Some(agent @ ("codex" | "claude")), Some(version)) = (
+                if let (Some(agent @ ("codex" | "claude" | "codewiz")), Some(version)) = (
                     value["agent"].as_str(),
                     value["version"].as_str().and_then(safe_version),
                 ) {

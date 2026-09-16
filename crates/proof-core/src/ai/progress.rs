@@ -1,5 +1,6 @@
 use serde::Serialize;
 use serde_json::Value;
+use std::path::{Component, Path};
 
 /// Public activity only: never reasoning, prompts, tool output, or raw commands.
 #[derive(Debug, Clone, Serialize)]
@@ -33,6 +34,7 @@ pub(super) struct ActivityStream<'a> {
     pending: Vec<u8>,
     oversized: bool,
     paths: &'a [String],
+    project: Option<&'a Path>,
     emit: &'a dyn Fn(AiProgress),
 }
 impl<'a> ActivityStream<'a> {
@@ -41,7 +43,18 @@ impl<'a> ActivityStream<'a> {
             pending: Vec::new(),
             oversized: false,
             paths,
+            project: None,
             emit,
+        }
+    }
+    pub fn in_project(
+        paths: &'a [String],
+        project: &'a Path,
+        emit: &'a dyn Fn(AiProgress),
+    ) -> Self {
+        Self {
+            project: Some(project),
+            ..Self::new(paths, emit)
         }
     }
     pub fn feed(&mut self, bytes: &[u8]) {
@@ -78,17 +91,33 @@ impl<'a> ActivityStream<'a> {
             _ if command.contains("git ") => "git",
             _ => "tool",
         };
-        let reference = input["file_path"]
+        let file = input["file_path"]
             .as_str()
             .or_else(|| input["filePath"].as_str())
-            .or_else(|| input["path"].as_str())
-            .unwrap_or(command);
+            .or_else(|| input["path"].as_str());
+        let reference = file.unwrap_or(command);
         let path = self
             .paths
             .iter()
             .filter(|path| reference.contains(path.as_str()))
             .max_by_key(|path| path.len())
-            .cloned();
+            .cloned()
+            .or_else(|| {
+                let root = self.project?;
+                let file = file.filter(|file| {
+                    !file.is_empty() && file.len() <= 4096 && !file.chars().any(char::is_control)
+                })?;
+                let path = Path::new(file);
+                let relative = if path.is_absolute() {
+                    path.strip_prefix(root).ok()?
+                } else {
+                    path
+                };
+                relative
+                    .components()
+                    .all(|part| matches!(part, Component::Normal(_)))
+                    .then(|| relative.to_string_lossy().into_owned())
+            });
         (self.emit)(AiProgress {
             path,
             ..AiProgress::phase(phase)
@@ -147,6 +176,26 @@ impl<'a> ActivityStream<'a> {
 mod tests {
     use super::*;
     use std::cell::RefCell;
+    #[test]
+    fn project_context_progress_includes_related_files_but_not_outside_paths_or_raw_commands() {
+        let events = RefCell::new(Vec::new());
+        let emit = |event| events.borrow_mut().push(event);
+        let stream = ActivityStream::in_project(&[], Path::new("/repo"), &emit);
+        stream.tool(
+            "read",
+            &serde_json::json!({"filePath":"/repo/docs/contract.md"}),
+        );
+        stream.tool(
+            "read",
+            &serde_json::json!({"filePath":"/personal/private.txt"}),
+        );
+        stream.tool("read", &serde_json::json!({"path":"../private.txt"}));
+        stream.tool("bash", &serde_json::json!({"command":"rg private-query ."}));
+        let events = events.borrow();
+        assert_eq!(events[0].path.as_deref(), Some("docs/contract.md"));
+        assert!(events[1..].iter().all(|event| event.path.is_none()));
+        assert!(!serde_json::to_string(&*events).unwrap().contains("private"));
+    }
     #[test]
     fn fragmented_events_expose_actions_but_never_reasoning_or_command_secrets() {
         let events = RefCell::new(Vec::new());

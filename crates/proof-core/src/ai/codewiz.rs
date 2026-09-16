@@ -216,6 +216,29 @@ fn policy(reading: bool) -> Value {
     json!({"*":"deny", "read": access, "glob": access, "grep": access, "list": access, "bash": access})
 }
 
+/// Permit only this task's auxiliary evidence outside the project. Writes
+/// remain forbidden by the OS sandbox, including inside the evidence directory.
+pub(super) fn allow_evidence(command: &mut Command, runtime: &Path, evidence: &Path) -> Result<()> {
+    let evidence = fs::canonicalize(evidence)?;
+    let pattern = format!("{}/**", evidence.display());
+    if evidence
+        .to_string_lossy()
+        .contains(['*', '?', '[', ']', '{', '}'])
+    {
+        return Err(unsupported("分析范围目录无法安全授权。"));
+    }
+    let mut permission = policy(true);
+    permission["external_directory"] = json!({"*":"deny", pattern: "allow"});
+    let path = runtime.join("config/codewiz/codewiz.json");
+    let mut settings: Value =
+        serde_json::from_slice(&fs::read(&path)?).map_err(|_| config_error())?;
+    settings["permission"] = permission.clone();
+    settings["agent"]["proof"]["permission"] = permission.clone();
+    write_private(&path, &serde_json::to_vec(&settings)?)?;
+    command.env("OPENCODE_PERMISSION", permission.to_string());
+    Ok(())
+}
+
 #[cfg(target_os = "macos")]
 pub(super) fn configure(command: &mut Command, runtime: &Path, reading: bool) -> Result<()> {
     configure_from(

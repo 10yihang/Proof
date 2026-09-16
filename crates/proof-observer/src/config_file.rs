@@ -60,28 +60,37 @@ fn parent_identity(parent: &File) -> Result<String> {
     Ok(format!("{}:{}", meta.dev(), meta.ino()))
 }
 fn parent(root: &Path, folder: &str, create: bool) -> Result<Option<File>> {
-    if folder.is_empty() || [".", ".."].contains(&folder) || folder.contains(['/', '\0']) {
+    if folder.is_empty()
+        || folder.contains('\0')
+        || !Path::new(folder)
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
+    {
         return Err(Error::new(
             "OBSERVER_CONFIG_PATH",
             "Hook 配置目录无效。",
             "Unexpected provider directory",
         ));
     }
-    let root = directory(root)?;
-    if create {
-        let name = CString::new(folder).unwrap();
-        if unsafe { libc::mkdirat(root.as_raw_fd(), name.as_ptr(), 0o700) } != 0 {
-            let error = std::io::Error::last_os_error();
-            if error.kind() != std::io::ErrorKind::AlreadyExists {
-                return Err(error.into());
+    let mut bound = directory(root)?;
+    for folder in Path::new(folder).components() {
+        let folder = folder.as_os_str().to_str().unwrap();
+        if create {
+            let name = CString::new(folder).unwrap();
+            if unsafe { libc::mkdirat(bound.as_raw_fd(), name.as_ptr(), 0o700) } != 0 {
+                let error = std::io::Error::last_os_error();
+                if error.kind() != std::io::ErrorKind::AlreadyExists {
+                    return Err(error.into());
+                }
             }
         }
+        match child(&bound, folder, libc::O_RDONLY | libc::O_DIRECTORY, 0) {
+            Ok(file) => bound = file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        }
     }
-    match child(&root, folder, libc::O_RDONLY | libc::O_DIRECTORY, 0) {
-        Ok(file) => Ok(Some(file)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error.into()),
-    }
+    Ok(Some(bound))
 }
 fn capture_file(parent: &File, filename: &str) -> Result<ConfigSnapshot> {
     let parent_id = Some(parent_identity(parent)?);

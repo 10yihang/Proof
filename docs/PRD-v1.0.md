@@ -339,16 +339,15 @@ Monaco 等组件只负责展示和文本交互；Git patch 与 Hunk 身份由独
 **交给 Agent 修改：** AI Review 提供“导出给 Agent”。默认选择已采纳意见，用户可调整本次导出的选择、预览修改说明、一键复制或通过原生保存对话框保存 Markdown。说明包含 Worktree、当前 Branch、Review 时间、Provider、文件路径、引用版本及起止行、问题和建议；历史 Diff 必须保留完整 base / target OID，不能把历史比较误表述为当前未提交变化。过期报告可导出，但必须注明重新核对代码与位置。仅导出所选 Findings，不把报告内其他建议隐式变成修改任务。导出不调用模型、不改变采纳状态、人工 Reviewed 或 Git 状态。单栏和并排 Diff 中，评论滚出视口再返回时必须恢复；隐藏评论产生的零尺寸不能清除其占位。
 
 ## AI-03｜本机 Coding Agent Provider · P0
-统一 AgentProvider，首版实现 CodexProvider 与 ClaudeCodeProvider。Proof 不接 OpenAI / Anthropic / Gemini 模型 API，不保存 / 要求 API Key，也不安装或内置 Agent。仅在用户主动点击后启动本机已安装、已登录的 Codex CLI / Claude Code，使用其正常登录及额度；界面在动作旁说明 Diff 会交给所选 CLI。
+统一 AgentAdapter 能力登记，列出每个 Agent 的主动 Provider、程序发现与被动 Hook 接入能力；主动调用实现 CodexProvider、ClaudeCodeProvider 和 CodewizProvider。Proof 不接 OpenAI / Anthropic / Gemini 模型 API，不保存 / 要求 API Key，也不安装或内置 Agent。仅在用户主动点击后启动本机已安装、已登录的 Codex CLI / Claude Code，使用其正常登录及额度；界面在动作旁说明 Diff 会交给所选 CLI。
 Settings → AI Agents 提供默认 Provider、CLI 路径、可选模型和 Test CLI。自动发现仅检查程序位置；用户点击 Test CLI 后检查版本、只读参数和本地登录状态，不启动模型。设置仅保存在 Proof，不修改 CLI 全局配置；实际运行前检查隔离参数支持，不限制固定 CLI 版本，缺失能力时列出具体参数。新任务不 resume / continue / attach 用户原 Session，不改变任何全局 CLI 配置。取消只结束 Proof 所拥有的进程组。
 **验收：** CLI 缺失、未登录、额度不足、版本不兼容、超时及用户取消均不影响 Git、Diff、Stage、Commit 和人工 Review。主动 AI 与 Passive Agent Observer 的安装、授权、生命周期、存储完全独立。
 
 ## AI-04｜只读执行与数据边界 · P0
-代码、注释、路径和 Patch 均为不可信数据，不能作为执行指令。Proof 向 Agent 提供任务、选定范围、输出 Schema 和磁盘快照入口；Agent 自行读取 Diff、搜索关联实现和测试。范围决定哪些变更需要 Review，不限制为理解它们而读取快照中的其他代码。Grouping 同样按需探索，并由 Proof 校验所有选定路径恰好归属一次。被动 Observer 会话不作为主动分析输入。
-快照使用独立临时目录，保存 canonical Git patches、manifest，以及 base / index / workspace 的代码视图。History 对应冻结的两个 OID（支持根 Commit 的 empty base）；Local 分离 HEAD、Index 和 Worktree，捕获前后核对版本，不创建原仓库的 Worktree、Commit 或 Git 对象。二进制、非 UTF-8、符号链接、子模块和过大的完整上下文明确列入 manifest 的不可用清单，不能假装已经分析。
-macOS 使用进程级只读沙箱，CLI 及所有子进程仅能写本次私有运行目录，不能写代码快照、源仓库、Git、其他 Session 或全局配置，也不能发送外部进程信号。允许受控的文件读取、搜索和 Git 查询程序，禁用用户 Hooks、MCP、Plugins、浏览器和其他扩展。保留模型所需的 Code Mode host，只允许所选 CLI 同一安装目录中的配套程序，并校验身份及符号链接来源。Codex 的工具执行由外层沙箱统一约束，避免 macOS 双重 sandbox_apply 失败；该模式必须与强制外层沙箱成对使用，不能单独执行。正常 CLI 登录和独立运行目录沿用既有实现，不要求 API Key，不 resume / attach 用户 Session。
-取消总 Patch 1 MiB / 500 文件的提示词门槛。磁盘快照保留本机资源保护：最多 20,000 个文件侧、128 MiB canonical patches、256 MiB 快照、100,000 个上下文路径；单份完整上下文超过 4 MiB 会明确列为不可用。现有单文件 Diff 读取上限继续适用。CLI 流式输出有 32 MiB 上限，推理没有固定时限，直到 Agent 完成或用户主动取消。stderr 不保存原始内容，错误摘要仍脱敏和限长。
-快照预算优先保留选中路径及旧路径的上下文，为 base / index / workspace 分别预留空间，并为全部 canonical patches 预留独立容量。其余上下文超出预算时进入 manifest 不可用清单，不因此拒绝小范围 Review，也不静默宣称完整覆盖。
+代码、注释、路径和 Patch 均为不可信数据，不能改变只读任务权限。Review 与 Grouping 的 CLI 工作目录直接指向当前真实项目目录，Agent 可以按需搜索完整实现、调用方、测试、文档与配置；不复制项目，不因 ignored、大文件或上下文数量而裁剪可读目录。任务范围决定哪些变更需要分析，不限制为理解它们而读取项目内其他文件。被动 Observer 会话不作为主动分析输入。
+Proof 通过 stdin 提供任务说明、范围和输出 Schema，并在独立临时目录保存范围清单与 canonical Git patches，作为定位和校验结果的辅助证据。这些 Patch 冻结本次选定 Diff，不替代完整项目上下文。Local 区分 HEAD / Index / Worktree；Agent 可以使用只读 git show / diff / log 查询对应版本。历史比较固定 base / target OID（支持根 Commit 的 empty base），不能将当前 Worktree 当成历史版本。项目文件实时可见，结果注明实时上下文可能变化；Diff 版本不匹配时沿用过期标记和定位保护。
+macOS 使用进程级只读沙箱，CLI 及所有子进程仅能写本次私有运行目录，不能写辅助证据、源仓库、Git、其他 Session 或全局配置，也不能发送外部进程信号。允许受控的文件读取、搜索和 Git 查询程序，主动调用禁用用户 Hooks、MCP、Plugins、浏览器和其他扩展；Git 查询关闭 fsmonitor、Git Hooks 和可选 Index 写入。保留模型所需 Code Mode host，验证同安装目录来源。正常 CLI 登录和独立运行目录沿用既有实现，不要求 API Key，不 resume / attach 用户 Session。
+辅助 Diff 证据保留本机资源保护：最多 20,000 个文件侧、128 MiB canonical patches；现有单文件 Diff 读取上限继续适用。取消原项目快照的 256 MiB / 100,000 路径 / 单文件 4 MiB 上下文复制限制。CLI 流式输出有 32 MiB 上限，推理没有固定时限，直到 Agent 完成或用户主动取消。stderr 不保存原始内容，错误摘要仍脱敏和限长。工具无法读取必需内容时返回 blocked，不能把缺失上下文解释为审查通过。
 **验收：** 故障夹具尝试改源文件、index / HEAD、其他 Agent Session 和发送终止信号均失败；超时 / 取消不遗留进程；删除 Proof 本地数据后迟到结果不能重新写入分组。
 
 ## AI-05｜UI 与来源真值 · P0
@@ -817,7 +816,7 @@ Local changes 和历史 Diff 复用同一 Files / Change groups、Diff、Context
 ## 0.1.1：Codewiz 与在线更新
 
 - 在本机 PATH、常见安装目录或已配置的路径中检测到有效 Codewiz 可执行文件后，才显示 Codewiz 的 Agent 设置和选择项。没有 Codewiz 时隐藏，已有 Codex / Claude Code 与普通 Git 能力不受影响。
-- CodewizProvider 通过 Codewiz 的非交互 JSON CLI 完成主动 Grouping 和 Review，复用统一的只读快照、结果校验、进度、取消和持久化协议。模型配置读取 `~/.config/codewiz`，登录复制到每次任务的私有运行目录；不读取其他 Session，不加载用户 MCP / 插件 / 自定义 Agent 指令。
+- CodewizProvider 通过 Codewiz 的非交互 JSON CLI 完成主动 Grouping 和 Review，直接只读访问真实项目目录，复用范围证据、结果校验、进度、取消和持久化协议。模型配置读取 `~/.config/codewiz`，登录复制到每次任务的私有运行目录；不读取其他 Session，不加载用户 MCP / 插件 / 自定义 Agent 指令。
 - 「设置 → 软件更新」手动检查 GitHub Releases，展示版本说明和下载进度；完成签名校验后由用户点击安装并重启。Git 操作或 AI 分析进行期间阻止安装。失败保持可重试，缺失更新清单不能显示为“已是最新版本”。
 - 0.1.1 内置更新器，后续版本使用同一签名密钥发布。0.1.0 首次升级仍需手动安装。发布清单和签名安装包一同发布到 GitHub Release；私钥不得进入源码或安装包。
 
@@ -828,10 +827,18 @@ Local changes 和历史 Diff 复用同一 Files / Change groups、Diff、Context
 
 ## GIT-12｜日常 Git 操作入口 · 0.1.2
 
-- 顶部 Git 工具栏在 Local Changes、Commit、History 与 Branches 中共用，提供 Fetch、Pull、Push、创建 Branch、Stash 与 Discard 恢复点。使用同一个操作控制器和预览确认框；进行中的动作不能重复执行。
+- Git 工具栏位于 History 内部，提供 Fetch、Pull、Push、创建 Branch、Stash 与 Discard 恢复点。全局标题栏、Local Changes、Commit 和 Diff 不占用这排工具栏。使用同一个操作控制器和预览确认框；进行中的动作不能重复执行。
 - 当前 Branch 旁有可见的操作菜单；分支下拉列表、History Branch 列表共用 Switch、Merge、Rebase、Rename、Delete、Push、复制 Branch 名称、完整 Ref 与 Commit SHA。Push 可以指定其他本地 Branch，无需先 Switch；预填该 Branch 自己的 upstream，预览清楚显示本地来源和远程目标。默认普通 Push，拒绝 non-fast-forward，不自动 Force Push。
 - 文件树、文件列表与 AI Change Groups 共享文件操作菜单；提供 Stage / Unstage、Discard、相对路径 / 绝对路径 / 文件名复制以及恢复点入口。文件树支持多选和目录范围，菜单始终显示实际文件范围。历史 Diff 仅提供复制等只读动作。
 - Stash 管理支持保存（可选说明、可选包含 untracked）、Apply、Pop、Drop；恢复时可选恢复 Stage 状态。Pop 遇到冲突保留 Stash；Drop 要求明确确认。操作绑定预览时的 Stash selector 与对象 ID，并校验完整 Stash reflog，禁止因序号移动误操作其他 Stash。
-- Discard 全部文件后，顶部恢复入口仍可用。二进制备份明确标为二进制，不显示有损文本，也不提供伪造的文本复制。所有手动 Git 操作独立于 AI Review，不会自动标记人工 Review 完成。
+- Discard 全部文件后，History 中的恢复入口仍可用。二进制备份明确标为二进制，不显示有损文本，也不提供伪造的文本复制。所有手动 Git 操作独立于 AI Review，不会自动标记人工 Review 完成。
 
 交互参考：[Fork 分支菜单与 Push 更新记录](https://git-fork.com/releasenotes)、[GitKraken 工具栏](https://help.gitkraken.com/gitkraken-desktop/interface/)、[GitKraken Stash](https://help.gitkraken.com/gitkraken-desktop/stashing/)。
+
+## OBS-13｜Codewiz 本地插件与统一能力登记
+
+Codewiz 接入主动 AI 和被动 Hook 两种能力。AgentAdapter 统一登记程序名称、主动 Provider、Observer 类型与 Hook 接入方式，程序发现和设置页读取该登记；两种能力仍保留独立的进程、授权、生命周期和存储。未检测到 Codewiz 时不显示新接入项；已安装 Hook 的记录即使 CLI 暂时不可用也保留管理入口。显式配置的 CLI 路径由主动设置与 Hook 检测共用。
+
+Agent Hook 设置支持 Codewiz 的检测、安装预览、安装、按 Worktree 授权、暂停与卸载。只新增用户配置目录下的 plugins/proof-observer.js，不改 Codewiz JSON / JSONC、已有插件、工具、提示词或权限。安装在下次启动 Codewiz 时生效，不向已有 Session 注入或发信号。被动插件通过原生事件记录 Session、任务、已完成工具调用、失败和最终回复，使用原生 Session / Message / Call ID 关联与去重；内容字段沿用用户单独授权和保留期。插件不调用模型、不注册工具、不改输入输出，桥接失败不给模型反馈。
+
+安装与卸载沿用现有的预览、备份、原子写入、并发变化检查与所有权收据。发现同名用户文件或插件被手动修改时拒绝覆盖 / 删除；Codewiz 配置与其他插件保持原样。参考 [OpenCode 本地插件及事件接口](https://dev.opencode.ai/docs/plugins/)，运行兼容性以本机 CLI 测试为准。

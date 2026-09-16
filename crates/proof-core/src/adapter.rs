@@ -1,4 +1,4 @@
-use crate::program::{program_identity, resolve_program_path, trusted_program_workspace};
+use crate::program::trusted_program_workspace;
 use crate::{now, process, Error, ObserverAgent, Proof, Result};
 use serde::Serialize;
 use std::{
@@ -16,6 +16,14 @@ const CODEX_EVENTS: &[&str] = &[
     "Stop",
     "SessionEnd",
     "Interrupt",
+];
+const CODEWIZ_EVENTS: &[&str] = &[
+    "session.created",
+    "chat.message",
+    "message.updated",
+    "message.part.updated",
+    "session.error",
+    "session.deleted",
 ];
 const CLAUDE_EVENTS: &[&str] = &[
     "SessionStart",
@@ -51,6 +59,7 @@ pub fn observer_adapter_profile(
     let events = match agent {
         ObserverAgent::Codex => CODEX_EVENTS,
         ObserverAgent::Claude => CLAUDE_EVENTS,
+        ObserverAgent::Codewiz => CODEWIZ_EVENTS,
     };
     Some(ObserverAdapterProfile {
         adapter_version: crate::OBSERVER_ADAPTER_VERSION.into(),
@@ -66,6 +75,7 @@ pub fn observer_hook_events_v1(agent: ObserverAgent) -> &'static [&'static str] 
     match agent {
         ObserverAgent::Codex => CODEX_EVENTS,
         ObserverAgent::Claude => CLAUDE_EVENTS,
+        ObserverAgent::Codewiz => CODEWIZ_EVENTS,
     }
 }
 
@@ -86,39 +96,54 @@ pub struct ObserverProbe {
 pub struct ObserverProgramLocation {
     pub agent: ObserverAgent,
     pub executable_path: Option<String>,
+    pub name: &'static str,
+    pub installation_available: bool,
+    pub unavailable_reason: Option<&'static str>,
 }
 
 pub fn observer_program_locations() -> Vec<ObserverProgramLocation> {
-    let mut folders = vec![
-        std::path::PathBuf::from("/opt/homebrew/bin"),
-        std::path::PathBuf::from("/usr/local/bin"),
-        std::path::PathBuf::from("/usr/bin"),
-    ];
-    if let Some(path) = std::env::var_os("PATH") {
-        folders.extend(std::env::split_paths(&path).filter(|p| p.is_absolute()));
-    }
-    [ObserverAgent::Claude, ObserverAgent::Codex]
-        .into_iter()
-        .map(|agent| {
-            let name = if cfg!(windows) {
-                format!("{}.exe", agent.as_str())
-            } else {
-                agent.as_str().into()
-            };
-            let executable_path = folders
-                .iter()
-                .map(|dir| dir.join(&name))
-                .find(|path| path.is_file())
-                .and_then(|path| path.to_str().map(String::from));
-            ObserverProgramLocation {
-                agent,
-                executable_path,
+    observer_locations(&crate::AgentSettings::default(), &[])
+}
+fn observer_locations(
+    settings: &crate::AgentSettings,
+    installed: &[crate::ObserverInstallation],
+) -> Vec<ObserverProgramLocation> {
+    crate::AGENT_ADAPTERS
+        .iter()
+        .filter_map(|adapter| {
+            let path = settings
+                .options(adapter.kind)
+                .executable_path
+                .as_ref()
+                .map(PathBuf::from)
+                .filter(|path| crate::ai::resolve_agent_executable(adapter.kind, path).is_ok())
+                .or_else(|| crate::ai::locate_agent(adapter.kind));
+            if adapter.installed_only
+                && path.is_none()
+                && !installed
+                    .iter()
+                    .any(|item| item.agent == adapter.observer && item.state != "revoked")
+            {
+                return None;
             }
+            Some(ObserverProgramLocation {
+                agent: adapter.observer,
+                executable_path: path.map(|p| p.to_string_lossy().into_owned()),
+                name: adapter.name,
+                installation_available: adapter.hook_installation_available(),
+                unavailable_reason: adapter.hook_unavailable_reason(),
+            })
         })
         .collect()
 }
 
 impl Proof {
+    pub fn observer_program_locations(&self) -> Result<Vec<ObserverProgramLocation>> {
+        Ok(observer_locations(
+            &self.agent_settings()?,
+            &self.observer_installations()?,
+        ))
+    }
     /// A fixed --version query. This does not create a registration, grant a
     /// workspace, run a model, or write a hook configuration.
     pub fn probe_observer(&self, agent: ObserverAgent, path: &str) -> Result<ObserverProbe> {
@@ -137,13 +162,22 @@ impl Proof {
                 "Executable path must be absolute",
             ));
         }
-        let (executable, mut origins) = resolve_program_path(requested).map_err(|_| {
-            Error::new(
-                "OBSERVER_PROGRAM_MISSING",
-                "找不到所选 Agent 程序。",
-                "Executable is unavailable",
-            )
-        })?;
+        let (executable, mut origins, before) =
+            crate::ai::resolve_agent_executable(agent.adapter().kind, requested).map_err(
+                |error| {
+                    if matches!(
+                        error.code.as_str(),
+                        "OBSERVER_PROGRAM_PERMISSION" | "OBSERVER_PROGRAM_TYPE"
+                    ) {
+                        return error;
+                    }
+                    Error::new(
+                        "OBSERVER_PROGRAM_MISSING",
+                        "找不到所选 Agent 程序。",
+                        "Executable is unavailable",
+                    )
+                },
+            )?;
         if executable.to_str().is_none() {
             return Err(Error::new(
                 "OBSERVER_PROGRAM_PATH",
@@ -166,9 +200,9 @@ impl Proof {
                 }
             }
         }
-        let before = program_identity(&executable)?;
         Ok(ObserverProbeRequest {
             agent,
+            source: requested.to_owned(),
             executable,
             working_directory: self.data_dir.clone(),
             before,
@@ -181,6 +215,7 @@ impl Proof {
 /// the GUI's Git mutex. File identity is a change guard, not a binary signature.
 pub struct ObserverProbeRequest {
     agent: ObserverAgent,
+    source: PathBuf,
     executable: PathBuf,
     working_directory: PathBuf,
     before: String,
@@ -190,6 +225,7 @@ impl ObserverProbeRequest {
     pub fn run(self) -> Result<ObserverProbe> {
         let Self {
             agent,
+            source,
             executable,
             working_directory,
             before,
@@ -207,7 +243,7 @@ impl ObserverProbeRequest {
                 }
             }
         }
-        if before != program_identity(&executable)? {
+        if before != crate::ai::resolve_agent_executable(agent.adapter().kind, &source)?.2 {
             return Err(Error::new(
                 "OBSERVER_PROGRAM_CHANGED",
                 "所选程序已变化，请重新检测。",
@@ -231,7 +267,7 @@ impl ObserverProbeRequest {
                 "Version output was not recognized",
             )
         })?;
-        if before != program_identity(&executable)? {
+        if before != crate::ai::resolve_agent_executable(agent.adapter().kind, &source)?.2 {
             return Err(Error::new(
                 "OBSERVER_PROGRAM_CHANGED",
                 "检测期间 Agent 程序发生变化，请重新检测。",
@@ -261,6 +297,7 @@ fn parse_version(agent: ObserverAgent, bytes: &[u8]) -> Option<String> {
     let version = match agent {
         ObserverAgent::Codex => text.strip_prefix("codex-cli ")?,
         ObserverAgent::Claude => text.strip_suffix(" (Claude Code)")?,
+        ObserverAgent::Codewiz => text.strip_prefix("codewiz ").unwrap_or(text),
     };
     valid_version(version).then(|| version.into())
 }

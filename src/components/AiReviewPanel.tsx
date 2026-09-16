@@ -88,7 +88,7 @@ export function AiReviewPanel({
         {demo
           ? t("演示模式不调用本机 Agent。")
           : t(
-              "点击后由 Agent 按需读取只读代码快照，使用其现有登录和额度。AI 结果不会标记为 Reviewed。",
+              "点击后由 Agent 只读访问完整项目目录，使用其现有登录和额度。AI 结果不会标记为 Reviewed。",
             )}
       </p>
       {!demo &&

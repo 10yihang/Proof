@@ -8,7 +8,7 @@ import type { AiActivity } from "../ai-progress";
 function label(event: AiActivity) {
   const labels = {
     preparing: "正在收集变更",
-    snapshot: "正在准备只读代码快照",
+    context: "正在准备项目上下文",
     starting: "正在启动 Agent",
     reading: "正在读取文件",
     searching: "正在搜索代码",

@@ -324,8 +324,8 @@ fn dispatch_with_progress(
         return serde_json::to_value(result).map_err(Error::from);
     }
     if command == "observer_program_locations" {
-        drop(session(core, data_epoch)?);
-        return serde_json::to_value(proof_core::observer_program_locations()).map_err(Error::from);
+        return serde_json::to_value(session(core, data_epoch)?.observer_program_locations()?)
+            .map_err(Error::from);
     }
     if command == "editor_applications" {
         drop(session(core, data_epoch)?);

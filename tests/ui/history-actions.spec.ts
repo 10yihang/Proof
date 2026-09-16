@@ -127,7 +127,24 @@ test.beforeEach(() =>
   ),
 );
 
-test("Git basics: Local changes exposes sync controls, branch copy and Push for a different branch", async ({ page, context }) => {
+test("Git controls belong to History and do not occupy the app header or Local Changes", async ({ page }) => {
+  const f = await fixture(page);
+  try {
+    await f.invoke("set_ui_language", { language: "en" });
+    await f.open(false);
+    await expect(page.locator(".branch-picker")).toBeVisible();
+    await expect(page.locator(".app-header").getByLabel("Git actions", { exact: true })).toHaveCount(0);
+    await expect(page.getByLabel("Git actions", { exact: true })).not.toBeVisible();
+    await page.getByRole("tab", { name: "History", exact: true }).click();
+    const toolbar = page.locator(".repository-view").getByLabel("Git actions", { exact: true });
+    for (const name of ["Fetch", "Pull", "Push", "Stash"])
+      await expect(toolbar.getByRole("button", { name, exact: true })).toBeVisible();
+    await page.getByRole("tab", { name: /^Commit/ }).click();
+    await expect(toolbar).not.toBeVisible();
+  } finally { f.close(); }
+});
+
+test("Git basics: History exposes sync controls, branch copy and Push for a different branch", async ({ page, context }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   const f = await fixture(page);
   try {
@@ -138,13 +155,14 @@ test("Git basics: Local changes exposes sync controls, branch copy and Push for 
     const feature = f.git("rev-parse", "HEAD");
     f.git("switch", "main");
     await f.open(false);
-    const toolbar = page.getByLabel("Git actions", { exact: true });
+    await page.getByRole("tab", { name: "History", exact: true }).click();
+    const toolbar = page.locator(".repository-view").getByLabel("Git actions", { exact: true });
     for (const name of ["Fetch", "Pull", "Push", "Stash"]) await expect(toolbar.getByRole("button", { name, exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Current Branch actions", exact: true }).click();
     await page.getByRole("menuitem", { name: "Copy Branch name", exact: true }).click();
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("main");
     await page.getByRole("combobox", { name: "Switch Branch, current main", exact: true }).click();
-    await page.getByRole("button", { name: "Branch actions for feature/ui", exact: true }).click();
+    await page.getByRole("listbox", { name: "Branches", exact: true }).getByRole("button", { name: "Branch actions for feature/ui", exact: true }).click();
     await page.getByRole("menuitem", { name: "Push", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Push", exact: true });
     await expect(dialog.getByLabel("Remote Branch", { exact: true })).toHaveValue("feature/ui");
@@ -186,6 +204,7 @@ test("Git basics: file menus copy paths and batch Discard is confirmed, cancella
     expect(readFileSync(join(f.repo, "code.txt"), "utf8")).toBe("initial\n");
     expect(existsSync(join(f.repo, "new.txt"))).toBe(false);
     expect(f.git("diff", "--cached", "--name-only")).toBe("");
+    await page.getByRole("tab", { name: "History", exact: true }).click();
     await page.getByRole("button", { name: "Recover discarded changes…", exact: true }).click();
     const recovery = page.getByRole("dialog", { name: "Discard recovery points", exact: true });
     await recovery.locator("article").filter({ hasText: "new.txt" }).getByRole("button", { name: "Undo discard", exact: true }).click();
@@ -201,7 +220,7 @@ test("Git basics: Stash saves untracked files, Apply keeps the entry and Drop ne
     await f.invoke("set_ui_language", { language: "en" });
     writeFileSync(join(f.repo, "code.txt"), "saved local work\n");
     writeFileSync(join(f.repo, "new.txt"), "saved new file\n");
-    await f.open(false);
+    await f.open();
     await page.getByRole("button", { name: "Stash", exact: true }).click();
     const manager = page.getByRole("dialog", { name: "Stashes", exact: true });
     await manager.getByRole("button", { name: "Stash changes…", exact: true }).click();
@@ -234,7 +253,7 @@ test("Git basics: Stash saves untracked files, Apply keeps the entry and Drop ne
 
 test("Git basics: toolbar and file actions remain readable in light, dark and narrow layouts", async ({ page }) => {
   const f = await fixture(page);
-  const shots = resolve(".artifacts/git-basics-0.1.2");
+  const shots = resolve(".artifacts/agent-integration");
   mkdirSync(shots, { recursive: true });
   try {
     await f.invoke("set_ui_language", { language: "en" });
@@ -253,7 +272,9 @@ test("Git basics: toolbar and file actions remain readable in light, dark and na
       await page.screenshot({ path: join(shots, `git-actions-${theme}.png`) });
       await page.keyboard.press("Escape");
     }
+    await page.getByRole("tab", { name: "History", exact: true }).click();
     await page.setViewportSize({ width: 760, height: 820 });
+    await expect(page.locator(".graph-row").first()).toBeVisible();
     await expect(page.getByLabel("Git actions", { exact: true }).getByRole("button", { name: "Push", exact: true })).toBeInViewport();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await page.screenshot({ path: join(shots, "git-actions-narrow.png") });

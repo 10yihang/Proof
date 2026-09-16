@@ -1,7 +1,7 @@
 export interface AiActivity {
   phase:
     | "preparing"
-    | "snapshot"
+    | "context"
     | "starting"
     | "reading"
     | "searching"
@@ -44,7 +44,7 @@ export function advanceAiProgress(
   const repeat =
     last?.phase === event.phase &&
     (event.phase === "preparing" ||
-      event.phase === "snapshot" ||
+      event.phase === "context" ||
       last.path === event.path);
   return {
     ...state,

@@ -37,7 +37,7 @@ fn installed_codewiz_probe_detects_the_existing_installation() {
 
 #[test]
 #[ignore = "Installed Codewiz, loopback model only; no credentials or quota"]
-fn installed_codewiz_reads_snapshot_and_cannot_modify_it() {
+fn installed_codewiz_reads_project_and_external_evidence_without_modifying_either() {
     let (executable, _, _) = resolve_executable(
         AgentKind::Codewiz,
         &locate(AgentKind::Codewiz).expect("Codewiz installed"),
@@ -46,12 +46,21 @@ fn installed_codewiz_reads_snapshot_and_cannot_modify_it() {
     let temp = tempfile::tempdir().unwrap();
     let root = fs::canonicalize(temp.path()).unwrap();
     let runtime = root.join("runtime");
-    let snapshot = root.join("snapshot");
+    let snapshot = root.join("project");
+    let evidence = root.join("evidence");
     let config = root.join("fixture-config");
-    for path in [&runtime, &snapshot, &config] {
+    for path in [&runtime, &snapshot, &config, &evidence] {
         fs::create_dir(path).unwrap();
     }
-    fs::write(snapshot.join("manifest.json"), "proof-codewiz-read-marker").unwrap();
+    fs::write(snapshot.join("contract.txt"), "proof-codewiz-read-marker").unwrap();
+    fs::write(
+        evidence.join("manifest.json"),
+        "proof-codewiz-evidence-marker",
+    )
+    .unwrap();
+    let evidence_file = evidence.join("manifest.json");
+    fs::create_dir_all(snapshot.join(".codewiz/plugins")).unwrap();
+    fs::write(snapshot.join(".codewiz/plugins/unwanted.js"), format!("import fs from 'node:fs'; export default async () => {{ fs.writeFileSync({}, 'plugin-ran'); return {{}}; }}", serde_json::to_string(&runtime.join("plugin-ran")).unwrap())).unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let address = listener.local_addr().unwrap();
@@ -64,6 +73,7 @@ fn installed_codewiz_reads_snapshot_and_cannot_modify_it() {
     let server = std::thread::spawn(move || {
         let until = Instant::now() + Duration::from_secs(45);
         let mut saw_read = false;
+        let mut saw_evidence = false;
         let mut saw_protection = false;
         let mut calls = 0;
         while !stopped.load(Ordering::Relaxed) && Instant::now() < until {
@@ -104,11 +114,14 @@ fn installed_codewiz_reads_snapshot_and_cannot_modify_it() {
                 .map(ToString::to_string)
                 .collect::<String>();
             saw_read |= content.contains("proof-codewiz-read-marker");
+            saw_evidence |= content.contains("proof-codewiz-evidence-marker");
             saw_protection |= content.to_lowercase().contains("operation not permitted")
                 || content.to_lowercase().contains("read-only file system")
                 || content.to_lowercase().contains("permission denied");
-            let delta = if saw_read {
+            let delta = if saw_read && saw_protection && saw_evidence {
                 serde_json::json!({"content":"{\"ok\":true}"})
+            } else if !saw_evidence {
+                serde_json::json!({"tool_calls":[{"index":0,"id":"call_evidence","type":"function","function":{"name":"read","arguments":serde_json::json!({"filePath":evidence_file}).to_string()}}]})
             } else {
                 let tools = body["tools"].as_array().expect("Read tools present");
                 assert!(tools.iter().any(|v| v["function"]["name"] == "bash"));
@@ -116,14 +129,21 @@ fn installed_codewiz_reads_snapshot_and_cannot_modify_it() {
                     v["function"]["name"].as_str(),
                     Some("edit" | "write" | "task")
                 )));
-                serde_json::json!({"tool_calls":[{"index":0,"id":"call_read","type":"function","function":{"name":"bash","arguments":serde_json::json!({"command":"cat manifest.json; printf forbidden > manifest.json", "description":"Read snapshot and check write protection"}).to_string()}}]})
+                serde_json::json!({"tool_calls":[{"index":0,"id":"call_read","type":"function","function":{"name":"bash","arguments":serde_json::json!({"command":"cat contract.txt; printf forbidden > contract.txt", "description":"Read the real project and check write protection"}).to_string()}}]})
             };
             let mut response = String::new();
             for (delta, reason) in [
                 (delta, Value::Null),
                 (
                     serde_json::json!({}),
-                    Value::String(if saw_read { "stop" } else { "tool_calls" }.into()),
+                    Value::String(
+                        if saw_read && saw_protection && saw_evidence {
+                            "stop"
+                        } else {
+                            "tool_calls"
+                        }
+                        .into(),
+                    ),
                 ),
             ] {
                 response.push_str(&format!("data: {}\n\n", serde_json::json!({"id":format!("chat-{calls}"),"object":"chat.completion.chunk","created":1,"model":"test","choices":[{"index":0,"delta":delta,"finish_reason":reason}]})));
@@ -131,7 +151,7 @@ fn installed_codewiz_reads_snapshot_and_cannot_modify_it() {
             response.push_str("data: [DONE]\n\n");
             write!(connection, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", response.len(), response).unwrap();
         }
-        (saw_read, saw_protection)
+        (saw_read && saw_evidence, saw_protection)
     });
     // Build the shared OS profile without importing ANY real CLI login/config.
     let mut command = isolated_command_options(
@@ -143,6 +163,7 @@ fn installed_codewiz_reads_snapshot_and_cannot_modify_it() {
     )
     .unwrap();
     codewiz::configure_from(&mut command, &runtime, true, Some(&config), None, None).unwrap();
+    codewiz::allow_evidence(&mut command, &runtime, &evidence).unwrap();
     // Deny every external network endpoint for this opt-in fixture.
     let args: Vec<_> = command
         .get_args()
@@ -162,10 +183,10 @@ fn installed_codewiz_reads_snapshot_and_cannot_modify_it() {
         .env_clear()
         .envs(env);
     let events = std::cell::RefCell::new(Vec::new());
-    let paths = vec!["manifest.json".into()];
+    let paths = vec!["contract.txt".into()];
     let emit = |event| events.borrow_mut().push(event);
     let mut activity = super::super::progress::ActivityStream::new(&paths, &emit);
-    let output = process::run_observed(command, Some(codewiz::prompt("Read manifest.json; report JSON.", &serde_json::json!({"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"]})).as_bytes()), Duration::from_secs(40), &mut |bytes| activity.feed(bytes));
+    let output = process::run_observed(command, Some(codewiz::prompt("Read the task evidence and project contract; report JSON.", &serde_json::json!({"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"]})).as_bytes()), Duration::from_secs(40), &mut |bytes| activity.feed(bytes));
     done.store(true, Ordering::Relaxed);
     let (read, protection) = server.join().unwrap();
     let output = output.unwrap();
@@ -182,8 +203,16 @@ fn installed_codewiz_reads_snapshot_and_cannot_modify_it() {
         "Native read and write-denial evidence required"
     );
     assert_eq!(
-        fs::read_to_string(snapshot.join("manifest.json")).unwrap(),
+        fs::read_to_string(snapshot.join("contract.txt")).unwrap(),
         "proof-codewiz-read-marker"
+    );
+    assert_eq!(
+        fs::read_to_string(evidence.join("manifest.json")).unwrap(),
+        "proof-codewiz-evidence-marker"
+    );
+    assert!(
+        !runtime.join("plugin-ran").exists(),
+        "Project plugins must not run during active analysis"
     );
     assert!(!events.borrow().is_empty());
 }

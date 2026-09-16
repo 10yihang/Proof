@@ -9,11 +9,35 @@ fn spec(agent: Agent) -> HookSpec {
         agent_version: match agent {
             Agent::Codex => "0.153.4",
             Agent::Claude => "2.1.236",
+            Agent::Codewiz => "0.1.99",
         }
         .into(),
         helper_path: "/private/proof/helpers/revision-1/proof-observer".into(),
         registration_path: format!("/private/proof/installs/{id}/registration.json"),
     }
+}
+
+#[test]
+fn codewiz_owns_one_plugin_and_never_overwrites_foreign_or_edited_files() {
+    let spec = spec(Agent::Codewiz);
+    let plan = install_plan(None, &spec, None).unwrap();
+    let plugin = plan.after.as_ref().unwrap();
+    assert!(plugin.contains("export default async function ProofObserver"));
+    assert!(plugin.contains(&spec.registration_path));
+    assert!(!plugin.contains("__PROOF_"));
+    assert!(
+        !install_plan(Some(plugin.as_bytes()), &spec, Some(&plan.ownership))
+            .unwrap()
+            .changed
+    );
+    assert!(uninstall_plan(Some(plugin.as_bytes()), &plan.ownership)
+        .unwrap()
+        .after
+        .is_none());
+    let edited = format!("{plugin}\n// user change\n");
+    assert!(install_plan(Some(edited.as_bytes()), &spec, Some(&plan.ownership)).is_err());
+    assert!(uninstall_plan(Some(edited.as_bytes()), &plan.ownership).is_err());
+    assert!(install_plan(Some(b"export default userPlugin"), &spec, None).is_err());
 }
 const EXISTING:&str="{\r\n  \"permissions\" : {\"deny\": [\"Bash(rm *)\"]},\r\n  \"model\": \"unchanged-model\",\r\n  \"hooks\": {\r\n    \"PreToolUse\": [ {\"matcher\":\"Bash\", \"hooks\":[{\"type\":\"command\",\"command\":\"existing-security-policy\"}]} ],\r\n    \"PostToolUse\": [ {\"matcher\":\"Write\", \"hooks\":[{\"type\":\"command\",\"command\":\"existing-formatter\"}]} ],\r\n    \"Stop\": []\r\n  },\r\n  \"escaped\": \"literal \\\"quote\\\", \\u4e2d\\u6587, [brace}]\"\r\n}\r\n";
 

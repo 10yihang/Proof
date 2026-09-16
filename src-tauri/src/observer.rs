@@ -42,9 +42,26 @@ impl ObserverState {
         let claude = std::env::var_os("PROOF_CLAUDE_CONFIG_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|| home.join(".claude"));
+        let codewiz = std::env::var_os("PROOF_CODEWIZ_CONFIG_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                std::env::var_os("XDG_CONFIG_HOME")
+                    .map(PathBuf::from)
+                    .filter(|p| p.is_absolute())
+                    .unwrap_or_else(|| home.join(".config"))
+                    .join("codewiz")
+            });
         Ok(Self {
             inner: Arc::new(Mutex::new(NativeObserver {
-                manager: ObserverManager::new(data, helper, AgentConfigPaths { codex, claude }),
+                manager: ObserverManager::new(
+                    data,
+                    helper,
+                    AgentConfigPaths {
+                        codex,
+                        claude,
+                        codewiz,
+                    },
+                ),
                 deletions: HashMap::new(),
                 last_error: None,
             })),

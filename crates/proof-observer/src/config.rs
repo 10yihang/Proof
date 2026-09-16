@@ -114,6 +114,9 @@ pub fn install_plan(
             ));
         }
     }
+    if spec.agent == Agent::Codewiz {
+        return crate::codewiz::install(before, spec, previous);
+    }
     let before = before.map(decode).transpose()?;
     let mut document = Document::parse(before.clone().unwrap_or_else(|| "{}\n".into()))?;
     validate_existing_definition(
@@ -198,6 +201,9 @@ pub fn install_plan(
 
 pub fn uninstall_plan(before: Option<&[u8]>, ownership: &ConfigOwnership) -> Result<ConfigPlan> {
     validate_ownership(ownership)?;
+    if ownership.spec.agent == Agent::Codewiz {
+        return crate::codewiz::uninstall(before, ownership);
+    }
     let before = before.map(decode).transpose()?;
     let mut document = Document::parse(before.clone().unwrap_or_else(|| "{}\n".into()))?;
     remove_owned(&mut document, ownership, true)?;

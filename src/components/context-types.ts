@@ -10,7 +10,7 @@ export interface AssociationEvidence {
 }
 export interface ContextSession {
   id: string;
-  agent: "codex" | "claude" | null;
+  agent: "codex" | "claude" | "codewiz" | null;
   nativeSessionId: string | null;
   nativeAgentId: string | null;
   firstReceivedAt: number | null;
@@ -102,7 +102,9 @@ export function agentName(session: ContextSession) {
     ? "Codex"
     : session.agent === "claude"
       ? "Claude Code"
-      : t("原始会话已清理");
+      : session.agent === "codewiz"
+        ? "Codewiz"
+        : t("原始会话已清理");
 }
 export function fieldState(status: string) {
   return (

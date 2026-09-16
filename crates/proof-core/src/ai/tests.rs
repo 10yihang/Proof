@@ -888,7 +888,7 @@ fn active_tasks_capture_interface_language_without_rerunning_or_changing_diff() 
         .prompt()
         .unwrap()
         .contains("Use concise English explanations"));
-    assert!(job.validate(review()).unwrap().limitations[0].starts_with("Captured Git Diff"));
+    assert!(job.validate(review()).unwrap().limitations[0].starts_with("The Agent could read"));
     proof.set_ui_language(crate::UiLanguage::Chinese).unwrap();
     assert!(job
         .prompt()
@@ -905,7 +905,7 @@ fn active_tasks_capture_interface_language_without_rerunning_or_changing_diff() 
 }
 
 #[test]
-fn agent_reads_frozen_code_and_large_patches_from_disk_not_from_prompt() {
+fn agent_reads_the_actual_project_including_ignored_context_without_copying_it() {
     let (_temp, mut proof, workspace) = fixture();
     let repo = Path::new(&workspace.path);
     let large = (0..20_000)
@@ -914,6 +914,18 @@ fn agent_reads_frozen_code_and_large_patches_from_disk_not_from_prompt() {
     fs::write(repo.join("auth.rs"), &large).unwrap();
     git(repo, &["add", "auth.rs"]);
     fs::write(repo.join("auth.rs"), format!("{large}// still editing\n")).unwrap();
+    fs::write(repo.join(".git/info/exclude"), "project-context/\n").unwrap();
+    fs::create_dir(repo.join("project-context")).unwrap();
+    fs::write(
+        repo.join("project-context/design.txt"),
+        "full project contract",
+    )
+    .unwrap();
+    fs::write(
+        repo.join("project-context/large.txt"),
+        vec![b'x'; 5 * 1024 * 1024],
+    )
+    .unwrap();
     let head = git(repo, &["rev-parse", "HEAD"]);
     let index = fs::read(repo.join(".git/index")).unwrap();
     let job = proof
@@ -922,29 +934,42 @@ fn agent_reads_frozen_code_and_large_patches_from_disk_not_from_prompt() {
     assert!(job.diffs.iter().map(|d| d.patch.len()).sum::<usize>() > 1024 * 1024);
     assert!(job.prompt().unwrap().len() < 8000);
     assert!(!job.prompt().unwrap().contains("fn changed_19999"));
+    assert_eq!(job.input.project, fs::canonicalize(repo).unwrap());
     assert_eq!(
-        fs::read_to_string(job.snapshot.root.join("index/auth.rs")).unwrap(),
-        large
+        fs::read_to_string(job.input.project.join("project-context/design.txt")).unwrap(),
+        "full project contract"
     );
-    assert!(
-        fs::read_to_string(job.snapshot.root.join("workspace/auth.rs"))
+    assert_eq!(
+        fs::metadata(job.input.project.join("project-context/large.txt"))
             .unwrap()
-            .ends_with("// still editing\n")
+            .len(),
+        5 * 1024 * 1024
     );
-    assert!(fs::read_to_string(job.snapshot.root.join("base/auth.rs"))
+    assert_eq!(git(&job.input.project, &["show", ":auth.rs"]), large.trim());
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&job.input.manifest).unwrap()).unwrap();
+    let patch_path = manifest["files"]
+        .as_array()
         .unwrap()
-        .contains("allow(false)"));
+        .iter()
+        .find(|file| file["path"] == "auth.rs" && file["side"] == "staged")
+        .unwrap()["patchFile"]
+        .as_str()
+        .unwrap();
+    let patch = fs::read_to_string(patch_path).unwrap();
+    assert!(patch.contains("fn changed_19999"));
     fs::write(repo.join("auth.rs"), "new external version").unwrap();
-    assert!(
-        !fs::read_to_string(job.snapshot.root.join("workspace/auth.rs"))
-            .unwrap()
-            .contains("new external version")
+    assert_eq!(
+        fs::read_to_string(job.input.project.join("auth.rs")).unwrap(),
+        "new external version"
     );
+    assert_eq!(fs::read_to_string(patch_path).unwrap(), patch);
     assert_eq!(git(repo, &["rev-parse", "HEAD"]), head);
     assert_eq!(fs::read(repo.join(".git/index")).unwrap(), index);
-    let root = job.snapshot.root.clone();
+    let evidence = job.input.manifest.clone();
     drop(job);
-    assert!(!root.exists());
+    assert!(!evidence.exists());
+    assert!(repo.join("project-context/design.txt").exists());
 }
 
 #[test]
@@ -966,11 +991,13 @@ fn historical_root_commit_and_unselected_context_are_available_without_checkout(
         })
         .unwrap();
     assert_eq!(job.diffs.len(), 1);
-    assert!(job.snapshot.root.join("workspace/pool.rs").is_file());
+    assert!(job.input.project.join("pool.rs").is_file());
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&job.input.manifest).unwrap()).unwrap();
+    assert_eq!(manifest["scope"]["base"], "empty");
+    assert_eq!(manifest["scope"]["target"], head);
     assert!(
-        fs::read_to_string(job.snapshot.root.join("workspace/auth.rs"))
-            .unwrap()
-            .contains("allow(false)")
+        git(&job.input.project, &["show", &format!("{head}:auth.rs")]).contains("allow(false)")
     );
     assert!(fs::read_to_string(repo.join("auth.rs"))
         .unwrap()
