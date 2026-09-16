@@ -1,5 +1,5 @@
 import { PointerActivationConstraints } from "@dnd-kit/dom";
-import { useId, type RefObject } from "react";
+import { useId, useLayoutEffect, useRef, type RefObject } from "react";
 import { Tabs } from "@base-ui/react/tabs";
 import { DragDropProvider, DragOverlay, PointerSensor } from "@dnd-kit/react";
 import { useSortable, isSortable } from "@dnd-kit/react/sortable";
@@ -47,6 +47,21 @@ export function WorkspaceTabs({
   onReorder: (source: string, target: string) => void;
 }) {
   const group = useId();
+  const root = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const nav = root.current;
+    if (!nav) return;
+    const reveal = () => {
+      const tab = nav.querySelector<HTMLElement>('[aria-current="page"]');
+      // Include the close button, and reveal it again when the window narrows.
+      const item = tab?.closest<HTMLElement>(".diff-tab-item") ?? tab;
+      item?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    };
+    reveal();
+    const observer = new ResizeObserver(reveal);
+    observer.observe(nav);
+    return () => observer.disconnect();
+  }, [active, comparisons.length]);
   const reduced = useReducedMotion();
   const views = [
     {
@@ -71,7 +86,7 @@ export function WorkspaceTabs({
     />
   );
   return (
-    <nav className="workspace-tabs" aria-label={t("Worktree")}>
+    <nav ref={root} className="workspace-tabs" aria-label={t("Worktree")}>
       <LayoutGroup id={group}>
         <DragDropProvider
           sensors={[tabPointer]}

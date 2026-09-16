@@ -292,7 +292,14 @@ export function RepositoryView({
             <CommitHistory
               actions={actions}
               branches={branches}
-              onBranchMenu={branchContext}
+              branchNavigation={{
+                selected: branchAnchor,
+                compare: compareBranches,
+                show: (branch) => {
+                  chooseBranch(branch, false);
+                  onSection("history");
+                },
+              }}
               changes={changes}
               demo={demo}
               onOpenDiff={onOpenDiff}

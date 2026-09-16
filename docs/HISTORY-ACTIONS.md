@@ -2,6 +2,8 @@
 
 History is the entry point for repository, Branch and Commit actions. The graph and ref sidebar use the same action menu and native preview/execute service. Clicking a Branch badge opens its menu; the sidebar also offers a visible more button and double-click to Switch. The selected Commit has a visible more button, and the graph supports the context-menu key or Shift+F10. Menu arrow keys, Home/End and Escape work without a mouse. Comparing versions still opens a separate Diff tab.
 
+Within the graph, clicking a Branch badge and right-clicking its Commit row now open one combined Git menu. The header names the Branch and Commit SHA; Branch actions use that named ref, while Tag, Cherry-pick, Revert, Reset and detached Checkout use the actual Commit and parent metadata. A row with several refs defaults to the current Branch, then a local Branch; clicking a specific badge selects that Branch explicitly. Rows without a ref offer Commit actions. The ref sidebar remains a Branch scope, with its existing compare and history navigation commands.
+
 | Entry | Operations |
 | --- | --- |
 | History toolbar | Fetch, Pull, Push, create Branch |

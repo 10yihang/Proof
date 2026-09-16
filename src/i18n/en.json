@@ -1543,5 +1543,6 @@
   "配置目录不存在。": "The configuration directory does not exist.",
   "分析范围目录无法安全授权。": "The analysis evidence directory cannot be granted safely.",
   "Proof Hook 已安装。下次启动 Codewiz 时加载插件；正在运行的 Session 保持不变。": "Proof Hook installed. The plugin loads the next time Codewiz starts; running Sessions are unchanged.",
-  "通过本地插件记录任务、文件操作和回复。安装后，重新打开 Codewiz 即可生效。": "A local plugin records tasks, file operations and replies. Reopen Codewiz after installation to load it."
+  "通过本地插件记录任务、文件操作和回复。安装后，重新打开 Codewiz 即可生效。": "A local plugin records tasks, file operations and replies. Reopen Codewiz after installation to load it.",
+  "⌘/Ctrl 点击多选": "⌘/Ctrl-click to select"
 }

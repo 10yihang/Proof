@@ -2350,8 +2350,9 @@ test("Changes focuses on Diff while Commit keeps staging and the draft in its ow
     .filter({ hasText: "response.ts" })
     .first();
   await file.click();
-  await page.getByRole("button", { name: "查看 Diff", exact: true }).click();
   await expect(page.locator(".diff-file-header")).toContainText("response.ts");
+  await expect(page.getByRole("tab", { name: /^Commit/ })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByLabel("Commit message")).toBeVisible();
   expect(
     await page.evaluate(() =>
       (window as any).fixture.actions.filter((a: any) =>
@@ -2500,9 +2501,8 @@ test("branch dropdown switches in place and ignores IME confirmation", async ({
     .filter({ hasText: "feature/ui" })
     .click();
   await expect(page.locator(".branch-picker")).toContainText("feature/ui");
-  await expect(
-    page.locator(".workspace-page").filter({ visible: true }),
-  ).toContainText("本地变更");
+  await expect(page.locator(".commit-workspace")).toBeVisible();
+  await expect(page.getByRole("tab", { name: /^Commit/ })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByLabel("Commit message")).toHaveValue(
     "Keep this draft",
   );
@@ -3937,7 +3937,8 @@ test("Desktop chrome reserves native controls and supports document tab shortcut
   const navigation = page.getByRole("navigation", { name: "Worktree" });
   const toolbarBox = (await toolbar.boundingBox())!;
   const tabsBox = (await navigation.boundingBox())!;
-  expect(tabsBox.y).toBeGreaterThanOrEqual(toolbarBox.y + toolbarBox.height);
+  expect(tabsBox.y).toBeGreaterThanOrEqual(toolbarBox.y);
+  expect(tabsBox.y + tabsBox.height).toBeLessThanOrEqual(toolbarBox.y + toolbarBox.height);
   expect(
     (await toolbar.locator(".brand").boundingBox())!.x,
   ).toBeGreaterThanOrEqual(88);

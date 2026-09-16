@@ -1,8 +1,8 @@
 /* Git workflow controls share Proof's native surfaces and branch colors. */
 .commit-workspace {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   flex: 1;
-  grid-template-columns: minmax(300px, 1fr) minmax(320px, 420px);
   align-self: stretch;
   min-width: 0;
   min-height: 0;
@@ -14,60 +14,46 @@
   min-height: 0;
   min-width: 0;
   overflow: hidden;
-  border-right: 1px solid var(--border);
-}
-.commit-file-inspector {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 16px;
-  border-top: 1px solid var(--border);
-  color: var(--muted);
-  font-size: 12px;
-}
-.commit-file-inspector > span {
   flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+.local-files-pane,
+.commit-files-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.local-files-pane[hidden],
+.commit-files-pane[hidden] {
+  display: none;
 }
 .commit-details {
+  flex: 0 0 auto;
   overflow: auto;
+  max-height: 48%;
   min-width: 0;
+  border-top: 1px solid var(--border);
 }
 .commit-workspace .commit-composer {
   border-top: 0;
-  padding: 26px;
+  padding: 12px;
 }
 .commit-workspace .composer-heading {
-  font-size: 15px;
-  margin-bottom: 20px;
+  font-size: 13px;
+  margin-bottom: 10px;
 }
 .commit-workspace .commit-composer textarea {
-  min-height: 220px;
-  max-height: 50vh;
+  min-height: 96px;
+  max-height: 30vh;
   font-size: 13px;
   padding: 12px;
 }
 .commit-workspace .composer-options {
-  margin: 16px 0;
+  margin: 4px 0;
 }
 .commit-workspace .composer-submit {
-  margin-top: 22px;
-}
-@media (max-width: 780px) {
-  .commit-workspace {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(240px, 45vh) auto;
-    overflow: auto;
-  }
-  .commit-stage-files {
-    border-right: 0;
-    border-bottom: 1px solid var(--border);
-  }
-  .commit-details {
-    overflow: visible;
-  }
+  margin-top: 4px;
 }
 .branch-switcher {
   position: relative;
@@ -168,8 +154,8 @@
 .file-tree-row {
   display: flex;
   align-items: center;
-  gap: 3px;
-  padding-right: 4px;
+  gap: 5px;
+  padding-right: 6px;
   border-radius: 4px;
   min-width: 0;
 }
@@ -181,8 +167,8 @@
   background: var(--hover);
 }
 .file-tree-row.is-selected {
-  background: var(--accent-soft);
-  box-shadow: inset 2px 0 var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
 }
 .file-tree-row .tree-file,
 .file-tree-row .tree-folder,
@@ -195,19 +181,28 @@
   border-radius: 0;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  font-size: 13px;
 }
 .file-tree-row .tree-file:hover {
   background: transparent;
+}
+.file-tree-row .tree-filename {
+  font-size: 13px;
+}
+.file-tree-row.is-selected .tree-file,
+.file-tree-row.is-selected .tree-filename {
+  color: var(--on-accent);
 }
 .file-tree-row .tree-file > svg {
   flex-shrink: 0;
 }
 .file-tree-row .tree-folder {
-  font-size: 11px;
+  font-size: 13px;
+  font-weight: 500;
 }
 .file-tree-row .tree-group {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
 }
 .file-tree-row .tree-group > span,
@@ -228,6 +223,32 @@
   margin: 0 1px 0 0;
   flex-shrink: 0;
   accent-color: var(--accent);
+  position: absolute;
+  left: 6px;
+  opacity: 0;
+}
+.file-tree-row:hover .file-check,
+.file-tree-row:focus-within .file-check,
+.file-check[aria-checked="true"] {
+  opacity: 1;
+}
+.file-tree-row:is(.file, .folder) > .row-stage,
+.file-tree-row:is(.file, .folder) > .history-more-button {
+  position: absolute;
+  right: 4px;
+  opacity: 0;
+  background: var(--hover);
+}
+.file-tree-row:is(.file, .folder) > .row-stage {
+  right: 31px;
+}
+.file-tree-row:is(:hover, :focus-within) > .row-stage,
+.file-tree-row:is(:hover, :focus-within) > .history-more-button {
+  opacity: 1;
+}
+.file-tree-row.is-selected > .row-stage,
+.file-tree-row.is-selected > .history-more-button {
+  background: var(--accent);
 }
 .row-stage {
   height: 24px;
@@ -256,12 +277,15 @@
 .file-selection-actions {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
+  flex: 0 0 36px;
+  min-height: 36px;
+  flex-wrap: nowrap;
   gap: 6px;
-  padding: 7px 12px;
+  padding: 4px 10px;
   border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-  font-size: 10px;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow-x: auto;
 }
 .file-selection-actions span {
   flex: 1;
@@ -273,6 +297,45 @@
   gap: 2px;
   padding: 3px;
   color: var(--accent);
+}
+.file-selection-actions small {
+  color: var(--faint);
+  font-size: 10px;
+}
+.file-tree-row.group {
+  background: var(--surface-2);
+  border-radius: 0;
+}
+.file-tree-row .tree-folder > svg:nth-child(2) {
+  color: var(--accent);
+}
+.file-tree-row .file-status {
+  order: -1;
+  flex: 0 0 17px;
+  margin: 0;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 3px;
+}
+.file-tree-row .status-M {
+  color: var(--lane-2);
+  background: color-mix(in srgb, var(--lane-2) 14%, transparent);
+}
+.file-tree-row :is(.status-A, .status-new) {
+  color: var(--add);
+  background: var(--add-bg);
+}
+.file-tree-row .status-D {
+  color: var(--del);
+  background: var(--del-bg);
+}
+.file-tree-row.is-selected
+  :is(.file-status, .review-check, .row-stage, .history-more-button) {
+  color: var(--on-accent);
+}
+.file-tree-row.is-selected .file-status {
+  background: color-mix(in srgb, var(--on-accent) 14%, transparent);
 }
 .commit-composer {
   position: relative;

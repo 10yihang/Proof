@@ -1,6 +1,6 @@
 import { Button, Input } from "./ui/controls";
 import { t } from "../i18n";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   CaretDown,
@@ -67,6 +67,7 @@ export function FileTree({
   });
   const [collapsed, setCollapsed] = useState(new Set<string>());
   const [checked, setChecked] = useState(new Set<string>());
+  const selectionAnchor = useRef<string | null>(null);
   const [focusKey, setFocusKey] = useState<string | null>(null);
   const [menu, setMenu] = useState<{
     files: ChangedFile[];
@@ -91,7 +92,7 @@ export function FileTree({
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => parent.current,
-    estimateSize: (i) => (rows[i].kind === "group" ? 34 : 28),
+    estimateSize: (i) => (rows[i].kind === "group" ? 36 : 32),
     getItemKey: (i) => rows[i].key,
     overscan: 14,
   });
@@ -147,12 +148,62 @@ export function FileTree({
     if (row.kind === "file") onSelect(row.file);
     else toggle(row.key);
   }
+  function selectFile(
+    file: ChangedFile,
+    event: Pick<MouseEvent, "metaKey" | "ctrlKey" | "shiftKey">,
+  ) {
+    const key = fileKey(file);
+    if (!readOnly) {
+      if (event.shiftKey) {
+        const anchor = rows.findIndex(
+          (row) => row.key === (selectionAnchor.current ?? selected),
+        );
+        const end = rows.findIndex((row) => row.key === key);
+        const range = rows.slice(
+          Math.min(anchor < 0 ? end : anchor, end),
+          Math.max(anchor, end) + 1,
+        );
+        setChecked(
+          new Set(
+            range.filter((row) => row.kind === "file").map((row) => row.key),
+          ),
+        );
+      } else if (event.metaKey || event.ctrlKey) {
+        setChecked((previous) => {
+          const next = new Set(
+            previous.size ? previous : selected ? [selected] : [],
+          );
+          if (next.has(key)) next.delete(key);
+          else next.add(key);
+          return next;
+        });
+        selectionAnchor.current = key;
+      } else {
+        setChecked(new Set());
+        selectionAnchor.current = key;
+      }
+    }
+    onSelect(file);
+  }
   return (
     <>
-      <div className="sidebar-heading file-heading">
-        <strong>{readOnly ? t("Changed files") : t("Local changes")}</strong>
-        <span className="count-badge">{files.length}</span>
-        <span className="toolbar-spacer" />
+      <div
+        className="sidebar-heading file-heading"
+        role="group"
+        aria-label={readOnly ? t("Changed files") : t("Local changes")}
+      >
+        <div className="file-search">
+          <MagnifyingGlass size={15} />
+          <Input
+            id={searchId}
+            aria-label={t("搜索变化文件")}
+            placeholder={t("Filter files…")}
+            value={search}
+            onChange={(event) => onSearch(event.target.value)}
+          />
+          {!readOnly && <kbd>{t("⌘ P")}</kbd>}
+        </div>
+
         <Button
           className="icon-button"
           aria-label={t("文件树视图")}
@@ -172,17 +223,6 @@ export function FileTree({
           <List size={16} />
         </Button>
       </div>
-      <div className="file-search">
-        <MagnifyingGlass size={15} />
-        <Input
-          id={searchId}
-          aria-label={t("搜索变化文件")}
-          placeholder={t("Filter files…")}
-          value={search}
-          onChange={(event) => onSearch(event.target.value)}
-        />
-        {!readOnly && <kbd>{t("⌘ P")}</kbd>}
-      </div>
       {!readOnly && (
         <div className="file-filters" role="group" aria-label={t("比较范围")}>
           {(
@@ -200,53 +240,6 @@ export function FileTree({
               {label}
             </Button>
           ))}
-        </div>
-      )}
-      {!readOnly && selectedFiles.length > 0 && (
-        <div className="file-selection-actions">
-          <span>
-            {selectedFiles.length} {t(" selected")}
-          </span>
-          {(["unstaged", "staged"] as const).map((side) => {
-            const batch = selectedFiles.filter((file) => file.side === side);
-            return (
-              !!batch.length && (
-                <Button
-                  key={side}
-                  disabled={disabled}
-                  onClick={() => {
-                    onStage(batch, side);
-                  }}
-                  aria-label={t("{v0} selected files", {
-                    v0: side === "staged" ? "Unstage" : "Stage",
-                  })}
-                >
-                  {side === "staged" ? <Minus size={13} /> : <Plus size={13} />}{" "}
-                  {side === "staged" ? "Unstage" : "Stage"} {batch.length}
-                </Button>
-              )
-            );
-          })}
-          {onDiscard &&
-            selectedFiles.some((file) => file.side === "unstaged") && (
-              <Button
-                className="danger-text"
-                disabled={
-                  disabled ||
-                  selectedFiles.some(
-                    (file) => file.side === "unstaged" && file.conflicted,
-                  )
-                }
-                onClick={() =>
-                  onDiscard(
-                    selectedFiles.filter((file) => file.side === "unstaged"),
-                  )
-                }
-              >
-                {t("Discard…")}
-              </Button>
-            )}
-          <Button onClick={() => setChecked(new Set())}>{t("清除")}</Button>
         </div>
       )}
       <div
@@ -336,10 +329,11 @@ export function FileTree({
                 style={{
                   position: "absolute",
                   top: 0,
-                  width: "100%",
+                  width: "max-content",
+                  minWidth: "100%",
                   transform: `translateY(${item.start}px)`,
                   height: item.size,
-                  paddingLeft: 6 + (row.depth - 1) * 12,
+                  paddingLeft: 8 + (row.depth - 1) * 20,
                 }}
               >
                 {row.kind === "file" ? (
@@ -347,26 +341,27 @@ export function FileTree({
                     {!readOnly && (
                       <Input
                         type="checkbox"
-                        className="file-check"
+                        className="file-check absolute left-1.5 after:-inset-1"
                         aria-label={t("选择 {v0} ({v1})", {
                           v0: row.file.path,
                           v1: row.side,
                         })}
                         checked={checked.has(row.key)}
-                        onChange={(event) =>
+                        onChange={(event) => {
+                          selectionAnchor.current = row.key;
                           setChecked((previous) => {
                             const next = new Set(previous);
                             if (event.target.checked) next.add(row.key);
                             else next.delete(row.key);
                             return next;
-                          })
-                        }
+                          });
+                        }}
                       />
                     )}
                     <Button
                       className="tree-file"
                       tabIndex={-1}
-                      onClick={() => onSelect(row.file)}
+                      onClick={(event) => selectFile(row.file, event)}
                       title={
                         readOnly
                           ? row.file.path
@@ -433,9 +428,9 @@ export function FileTree({
                       )}{" "}
                       {row.kind === "folder" &&
                         (row.expanded ? (
-                          <FolderOpen size={15} />
+                          <FolderOpen size={17} weight="duotone" />
                         ) : (
-                          <Folder size={15} />
+                          <Folder size={17} weight="duotone" />
                         ))}
                       <span>
                         {readOnly && row.kind === "group"
@@ -485,6 +480,65 @@ export function FileTree({
           </p>
         )}
       </div>
+      {!readOnly && (
+        <div className="file-selection-actions">
+          <span>
+            {selectedFiles.length ? (
+              <>
+                {selectedFiles.length} {t(" selected")}
+              </>
+            ) : (
+              <>
+                {files.length} {t(" files")}
+              </>
+            )}
+          </span>
+          {(["unstaged", "staged"] as const).map((side) => {
+            const batch = selectedFiles.filter((file) => file.side === side);
+            return (
+              !!batch.length && (
+                <Button
+                  key={side}
+                  disabled={disabled}
+                  onClick={() => {
+                    onStage(batch, side);
+                  }}
+                  aria-label={t("{v0} selected files", {
+                    v0: side === "staged" ? "Unstage" : "Stage",
+                  })}
+                >
+                  {side === "staged" ? <Minus size={13} /> : <Plus size={13} />}{" "}
+                  {side === "staged" ? "Unstage" : "Stage"} {batch.length}
+                </Button>
+              )
+            );
+          })}
+          {onDiscard &&
+            selectedFiles.some((file) => file.side === "unstaged") && (
+              <Button
+                className="danger-text"
+                disabled={
+                  disabled ||
+                  selectedFiles.some(
+                    (file) => file.side === "unstaged" && file.conflicted,
+                  )
+                }
+                onClick={() =>
+                  onDiscard(
+                    selectedFiles.filter((file) => file.side === "unstaged"),
+                  )
+                }
+              >
+                {t("Discard…")}
+              </Button>
+            )}
+          {selectedFiles.length > 0 ? (
+            <Button onClick={() => setChecked(new Set())}>{t("清除")}</Button>
+          ) : (
+            <small>{t("⌘/Ctrl 点击多选")}</small>
+          )}
+        </div>
+      )}
       {menu && (
         <GitContextMenu
           x={menu.x}

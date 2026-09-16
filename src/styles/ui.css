@@ -125,7 +125,7 @@
   min-height: 0;
   overflow: hidden;
 }
-.proof-panel-slot > .files-panel,
+.proof-panel-slot .files-panel,
 .proof-panel-slot > .context-panel,
 .proof-panel-slot > .inspector {
   position: relative;
@@ -134,10 +134,10 @@
   flex: 1;
   height: 100%;
 }
-.proof-panel-slot > .files-panel[hidden] {
+.proof-panel-slot .files-panel[hidden] {
   display: none;
 }
-.proof-panel-slot > .files-drawer {
+.proof-panel-slot .files-drawer {
   position: absolute;
   inset: 0 auto 0 0;
   width: min(320px, calc(100% - 32px));
@@ -177,7 +177,9 @@
 }
 .workspace-tab-list {
   height: 100%;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
 }
 .workspace-tabs .view-tab,
 .workspace-tabs .diff-tab-item {

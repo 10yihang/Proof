@@ -638,6 +638,10 @@
   margin: 4px 3px;
 }
 .history-menu-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   padding: 6px 10px 8px;
   color: var(--muted);
   font-size: 11px;

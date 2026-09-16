@@ -18,7 +18,7 @@ import {
 import { asError, useRequest } from "../api";
 import { t, uiMessage } from "../i18n";
 import { publishDiffEvent } from "../diff-events";
-import type { Changes, ProofError } from "../types";
+import type { BranchEntry, Changes, ProofError } from "../types";
 import {
   actionVerbs,
   actionExplanation,
@@ -912,17 +912,19 @@ export function GitContextMenu({
 
 export function HistoryTargetActions({
   target,
+  relatedBranch,
   actions,
   changes,
   onClose,
 }: {
   target: HistoryTarget;
+  relatedBranch?: BranchEntry;
   actions: HistoryActions;
   changes: Changes;
   onClose: () => void;
 }) {
-  const branch = target.type === "branch" ? target.branch : null;
-  const items: HistoryActionKind[] = branch
+  const branch = target.type === "branch" ? target.branch : relatedBranch;
+  const branchItems: HistoryActionKind[] = branch
     ? [
         "switch",
         "createBranch",
@@ -937,20 +939,28 @@ export function HistoryTargetActions({
             ] as const)
           : []),
       ]
-    : [
-        "checkoutCommit",
-        "createBranch",
-        "createTag",
-        "cherryPick",
-        "revert",
-        "rebase",
-        "reset",
-      ];
+    : [];
+  const commitItems: HistoryActionKind[] =
+    target.type === "commit"
+      ? [
+          "checkoutCommit",
+          "createBranch",
+          "createTag",
+          "cherryPick",
+          "revert",
+          "rebase",
+          "reset",
+        ]
+      : [];
+  const items = [...new Set([...branchItems, ...commitItems])];
   return (
     <>
       <div className="history-menu-label">
         {branch?.name ??
           (target.type === "commit" ? target.commit.oid.slice(0, 8) : "")}
+        {branch && target.type === "commit" && (
+          <code>{target.commit.oid.slice(0, 8)}</code>
+        )}
       </div>
       {items.map((kind) => (
         <MenuItem
@@ -970,10 +980,17 @@ export function HistoryTargetActions({
               ["merge", "rebase", "cherryPick", "revert", "reset"].includes(
                 kind,
               )) ||
-            (!!branch?.remote && branch.name.endsWith("/HEAD"))
+            (!!branch?.remote &&
+              branch.name.endsWith("/HEAD") &&
+              branchItems.includes(kind))
           }
           onClick={() => {
-            actions.open(kind, target);
+            actions.open(
+              kind,
+              branch && branchItems.includes(kind)
+                ? { type: "branch", branch }
+                : target,
+            );
             onClose();
           }}
         >

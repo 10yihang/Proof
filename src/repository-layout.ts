@@ -2,7 +2,7 @@ import type { ProofError, RepositoryLayout } from "./types";
 import { asError } from "./api";
 
 export const defaultRepositoryLayout: RepositoryLayout = {
-  sidebarWidth: 240,
+  sidebarWidth: 320,
   contextWidth: 300,
   sidebarOpen: true,
   contextOpen: null,

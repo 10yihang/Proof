@@ -5,7 +5,7 @@
   min-width: 0;
 }
 .branch-control {
-  max-width: 260px;
+  max-width: var(--branch-control-width, 260px);
   flex-shrink: 1;
 }
 .branch-control .branch-picker {
@@ -50,8 +50,8 @@
 .file-tree-row:focus-within > .history-more-button {
   color: var(--text);
 }
-.file-selection-actions {
-  flex-wrap: wrap;
+.file-tree-row.is-selected > .history-more-button {
+  color: var(--on-accent);
 }
 .danger-text {
   color: var(--del);
@@ -123,11 +123,6 @@
   display: flex;
   gap: 4px;
   flex-shrink: 0;
-}
-@media (max-width: 1180px) {
-  .branch-control {
-    max-width: 190px;
-  }
 }
 @media (max-width: 780px) {
   .commit-history .history-git-toolbar {

@@ -1527,6 +1527,13 @@ export default function App({
     );
   }
   function showFileSearch() {
+    if (tab === "commit") {
+      setFocused(false);
+      requestAnimationFrame(() =>
+        document.getElementById("commit-file-search")?.focus(),
+      );
+      return;
+    }
     ai.setView("files");
     setFocused(false);
     setTab("changes");
@@ -1678,6 +1685,28 @@ export default function App({
             actions={gitActions}
           />
         )}
+        {changes && !diffWindow && (
+          <WorkspaceTabs
+            onReorder={(source, target) =>
+              setDiffTabs((tabs) => reorderComparisonTabs(tabs, source, target))
+            }
+            active={
+              tab === "repository"
+                ? repositorySection === "history"
+                  ? "history"
+                  : "branches"
+                : tab
+            }
+            changesCount={changes.files.length}
+            stagedCount={stagedCount}
+            comparisons={diffTabs.filter(
+              (item) => item.workspaceId === changes.workspace.id,
+            )}
+            historyRef={historyTab}
+            onSelect={selectWorkspaceView}
+            onClose={closeDiffTab}
+          />
+        )}
         <div
           className="toolbar-spacer window-drag-space"
           data-tauri-drag-region
@@ -1724,28 +1753,6 @@ export default function App({
       </header>
       {changes && !diffWindow && gitActions.feedback}
       {changes && !diffWindow && gitActions.dialog}
-      {changes && !diffWindow && (
-        <WorkspaceTabs
-          onReorder={(source, target) =>
-            setDiffTabs((tabs) => reorderComparisonTabs(tabs, source, target))
-          }
-          active={
-            tab === "repository"
-              ? repositorySection === "history"
-                ? "history"
-                : "branches"
-              : tab
-          }
-          changesCount={changes.files.length}
-          stagedCount={stagedCount}
-          comparisons={diffTabs.filter(
-            (item) => item.workspaceId === changes.workspace.id,
-          )}
-          historyRef={historyTab}
-          onSelect={selectWorkspaceView}
-          onClose={closeDiffTab}
-        />
-      )}
       {changes ? (
         <>
           {demo && (
@@ -2008,122 +2015,130 @@ export default function App({
           </Tabs.Panel>
           <Tabs.Panel
             keepMounted
-            hidden={tab !== "commit"}
-            value={"commit"}
-            className="workspace-page"
-          >
-            {(commitVisited || tab === "commit") && (
-              <CommitWorkspace
-                key={changes.workspace.id}
-                changes={changes}
-                loaded={loaded}
-                disabled={
-                  busy ||
-                  demo ||
-                  !changes.workspace.trusted ||
-                  !!changes.operation
-                }
-                onStage={(files, side) => void stageFiles(files, side)}
-                onDiscard={(files) => void prepareDiscardFiles(files)}
-                onRecovery={() => setDialog("recovery")}
-                onOpenDiff={(file) => {
-                  setTab("changes");
-                  void loadFile(file);
-                }}
-              >
-                <CommitComposer
-                  message={draft}
-                  onMessage={editDraft}
-                  amend={!!amendTarget}
-                  onAmend={(value) => void toggleAmend(value)}
-                  head={changes.head}
-                  branch={changes.branch}
-                  staged={stagedCount}
-                  unstaged={
-                    changes.files.filter((file) => file.side === "unstaged")
-                      .length
-                  }
-                  busy={busy}
-                  disabled={
-                    demo || !changes.workspace.trusted || !!changes.operation
-                  }
-                  demo={demo}
-                  strictReview={preferences.strictReview}
-                  onReviewSettings={() => openSettings("review")}
-                  onCommit={(all) => void quickCommit(all)}
-                />
-              </CommitWorkspace>
-            )}
-          </Tabs.Panel>
-          <Tabs.Panel
-            keepMounted
-            hidden={tab !== "changes"}
-            value={"changes"}
+            hidden={tab !== "changes" && tab !== "commit"}
+            value={tab === "commit" ? "commit" : "changes"}
             className="workspace-page"
           >
             <ResizableWorkbench
               layout={repositoryLayout.value}
               scopeKey={repositoryLayout.scopeKey}
               enabled={repositoryLayout.ready}
-              active={tab === "changes" && dialog === null}
-              sidebarVisible={sidebarVisible && !compact}
-              contextDocked={contextOpen && !narrow}
+              active={
+                (tab === "changes" || tab === "commit") && dialog === null
+              }
+              sidebarVisible={
+                tab === "commit" ? !focused : sidebarVisible && !compact
+              }
+              contextDocked={tab !== "commit" && contextOpen && !narrow}
               onChange={(partial) => {
                 void repositoryLayout.update(partial);
               }}
-              onCollapse={(side) =>
-                side === "sidebarWidth" ? closeFiles() : closeContext()
-              }
+              onCollapse={(side) => {
+                if (tab === "commit" && side === "sidebarWidth")
+                  setFocused(true);
+                else if (side === "sidebarWidth") closeFiles();
+                else closeContext();
+              }}
               sidebar={
-                <DiffFilePane
-                  ai={ai}
-                  token={changes.token}
-                  scopeKey={changes.workspace.id}
-                  containerProps={{
-                    id: "files-panel",
-                    "aria-label": t("变化文件"),
-                    hidden: !sidebarVisible,
-                    className: compact ? "files-drawer" : "",
-                    onBlurCapture: (event) => {
-                      if (compact && shouldDismissDrawer(event))
-                        setFilesDrawer(false);
-                    },
-                  }}
-                  onClose={closeFiles}
-                  closeDisabled={!compact && !repositoryLayout.ready}
-                  disabled={
-                    busy ||
-                    demo ||
-                    !changes.workspace.trusted ||
-                    !!changes.operation
-                  }
-                  onStage={(files, side) => void stageFiles(files, side)}
-                  onDiscard={(files) => void prepareDiscardFiles(files)}
-                  onRecovery={() => setDialog("recovery")}
-                  workspacePath={changes.workspace.path}
-                  files={changes.files}
-                  selected={selected}
-                  onSelect={(file) => {
-                    void loadFile(file);
-                    if (compact) {
-                      setFilesDrawer(false);
-                      requestAnimationFrame(() =>
-                        document
-                          .querySelector<HTMLElement>(
-                            ".workspace-page:not([hidden]) .diff-scroll",
-                          )
-                          ?.focus(),
-                      );
-                    }
-                  }}
-                  search={search}
-                  onSearch={setSearch}
-                  loaded={loaded}
-                  scope={scope}
-                  onScope={setScope}
-                />
+                <>
+                  <div className="local-files-pane" hidden={tab === "commit"}>
+                    <DiffFilePane
+                      ai={ai}
+                      token={changes.token}
+                      scopeKey={changes.workspace.id}
+                      containerProps={{
+                        id: "files-panel",
+                        "aria-label": t("变化文件"),
+                        hidden: !sidebarVisible,
+                        className: compact ? "files-drawer" : "",
+                        onBlurCapture: (event) => {
+                          if (compact && shouldDismissDrawer(event))
+                            setFilesDrawer(false);
+                        },
+                      }}
+                      onClose={closeFiles}
+                      closeDisabled={!compact && !repositoryLayout.ready}
+                      disabled={
+                        busy ||
+                        demo ||
+                        !changes.workspace.trusted ||
+                        !!changes.operation
+                      }
+                      onStage={(files, side) => void stageFiles(files, side)}
+                      onDiscard={(files) => void prepareDiscardFiles(files)}
+                      onRecovery={() => setDialog("recovery")}
+                      workspacePath={changes.workspace.path}
+                      files={changes.files}
+                      selected={selected}
+                      onSelect={(file) => {
+                        void loadFile(file);
+                        if (compact) {
+                          setFilesDrawer(false);
+                          requestAnimationFrame(() =>
+                            document
+                              .querySelector<HTMLElement>(
+                                ".workspace-page:not([hidden]) .diff-scroll",
+                              )
+                              ?.focus(),
+                          );
+                        }
+                      }}
+                      search={search}
+                      onSearch={setSearch}
+                      loaded={loaded}
+                      scope={scope}
+                      onScope={setScope}
+                    />
+                  </div>
+                  <div className="commit-files-pane" hidden={tab !== "commit"}>
+                    {(commitVisited || tab === "commit") && (
+                      <CommitWorkspace
+                        key={changes.workspace.id}
+                        changes={changes}
+                        loaded={loaded}
+                        disabled={
+                          busy ||
+                          demo ||
+                          !changes.workspace.trusted ||
+                          !!changes.operation
+                        }
+                        onStage={(files, side) => void stageFiles(files, side)}
+                        onDiscard={(files) => void prepareDiscardFiles(files)}
+                        onRecovery={() => setDialog("recovery")}
+                        selected={selected}
+                        onSelect={(file) => void loadFile(file)}
+                      >
+                        <CommitComposer
+                          message={draft}
+                          onMessage={editDraft}
+                          amend={!!amendTarget}
+                          onAmend={(value) => void toggleAmend(value)}
+                          head={changes.head}
+                          branch={changes.branch}
+                          staged={stagedCount}
+                          unstaged={
+                            changes.files.filter(
+                              (file) => file.side === "unstaged",
+                            ).length
+                          }
+                          busy={busy}
+                          disabled={
+                            demo ||
+                            !changes.workspace.trusted ||
+                            !!changes.operation
+                          }
+                          demo={demo}
+                          strictReview={preferences.strictReview}
+                          onReviewSettings={() => openSettings("review")}
+                          onCommit={(all) => void quickCommit(all)}
+                        />
+                      </CommitWorkspace>
+                    )}
+                  </div>
+                </>
               }
               context={
+                tab !== "commit" &&
                 contextOpen && (
                   <ContextInspector
                     activeTab={inspectorTab}

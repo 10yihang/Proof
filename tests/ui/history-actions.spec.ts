@@ -127,6 +127,167 @@ test.beforeEach(() =>
   ),
 );
 
+test("Workspace density: selecting files keeps the tree anchored", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const f = await fixture(page);
+  try {
+    await f.invoke("set_ui_language", { language: "en" });
+    writeFileSync(join(f.repo, "code.txt"), "local modification\n");
+    await f.open(false);
+    const tree = page.getByRole("tree", { name: "Changed file tree", exact: true });
+    const row = tree.locator('[data-tree-key="unstaged:code.txt"]');
+    await expect(row).toBeVisible();
+    const before = (await tree.boundingBox())!;
+    await row.getByRole("button", { name: "code.txt M", exact: true }).click();
+    await expect(row.getByRole("checkbox")).not.toBeChecked();
+    await row.locator(".file-status").click();
+    await expect(row.getByRole("checkbox")).not.toBeChecked();
+    await row.getByRole("checkbox").check();
+    await page.locator("#file-search").click();
+    await expect(row.getByRole("checkbox")).toHaveCSS("opacity", "1");
+    await expect(page.getByRole("button", { name: "Stage selected files", exact: true })).toBeVisible();
+    expect((await tree.boundingBox())!.y).toBe(before.y);
+    await page.getByRole("button", { name: "Clear", exact: true }).click();
+    expect((await tree.boundingBox())!.y).toBe(before.y);
+  } finally { f.close(); }
+});
+
+test("Workspace density: repository controls and tabs share one stable row", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const f = await fixture(page);
+  try {
+    await f.invoke("set_ui_language", { language: "en" });
+    await f.open(false);
+    const header = (await page.locator(".app-header").boundingBox())!;
+    const tabs = (await page.locator(".workspace-tabs").boundingBox())!;
+    expect(tabs.y).toBeGreaterThanOrEqual(header.y);
+    expect(tabs.y + tabs.height).toBeLessThanOrEqual(header.y + header.height);
+    for (const width of [1024, 760]) {
+      await page.setViewportSize({ width, height: 820 });
+      for (const name of [/Local changes/, /^Commit/, /^History$/, /^Branches$/])
+        await expect(page.getByRole("tab", { name })).toBeInViewport();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    }
+  } finally { f.close(); }
+});
+
+test("Workspace density: modifier selection stages only the chosen file range", async ({ page }) => {
+  const f = await fixture(page);
+  try {
+    await f.invoke("set_ui_language", { language: "en" });
+    for (const name of ["a.txt", "b.txt", "c.txt"]) writeFileSync(join(f.repo, name), name + "\n");
+    await f.open(false);
+    await page.getByRole("button", { name: "a.txt U", exact: true }).click();
+    await page.getByRole("button", { name: "b.txt U", exact: true }).click({ modifiers: ["Meta"] });
+    const tree = page.getByRole("tree", { name: "Changed file tree", exact: true });
+    await expect(tree.getByRole("checkbox", { checked: true })).toHaveCount(2);
+    await page.getByRole("button", { name: "c.txt U", exact: true }).click({ modifiers: ["Shift"] });
+    await expect(tree.locator('[data-tree-key="unstaged:a.txt"]').getByRole("checkbox")).not.toBeChecked();
+    await expect(tree.getByRole("checkbox", { checked: true })).toHaveCount(2);
+    const stage = page.getByRole("button", { name: "Stage selected files", exact: true });
+    await expect(stage).toBeEnabled();
+    await stage.click();
+    await expect.poll(() => f.git("diff", "--cached", "--name-only")).toBe("b.txt\nc.txt");
+    expect(f.git("ls-files", "--others", "--exclude-standard")).toBe("a.txt");
+  } finally { f.close(); }
+});
+
+test("Workspace density: Branch labels and their Commit row share the same Git menu", async ({ page }) => {
+  const f = await fixture(page);
+  try {
+    await f.invoke("set_ui_language", { language: "en" });
+    await f.open();
+    const row = page.locator(".graph-row").first();
+    await row.getByRole("button", { name: "Branch actions for main", exact: true }).click();
+    const menu = page.getByRole("menu", { name: "Git actions", exact: true });
+    await expect(menu.getByRole("menuitem", { name: "Copy Branch name", exact: true })).toBeVisible();
+    await expect(menu.getByRole("menuitem", { name: "Cherry-pick", exact: true })).toBeVisible();
+    const fromBranch = await menu.getByRole("menuitem").allTextContents();
+    await page.keyboard.press("Escape");
+    await row.click({ button: "right", position: { x: 5, y: 16 } });
+    await expect(menu).toBeVisible();
+    expect(await menu.getByRole("menuitem").allTextContents()).toEqual(fromBranch);
+    await expect(menu.locator(".history-menu-label")).toContainText("main");
+  } finally { f.close(); }
+});
+
+test("Workspace density: Commit shows files, message and the same live Diff together", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const f = await fixture(page);
+  const shots = resolve(".artifacts/workspace-density");
+  mkdirSync(shots, { recursive: true });
+  try {
+    await f.invoke("set_ui_language", { language: "en" });
+    mkdirSync(join(f.repo, "src/agent/pool"), { recursive: true });
+    mkdirSync(join(f.repo, "src/auth"), { recursive: true });
+    const pool = "export function connect() {\n  const connection = pool.acquire();\n  return connection;\n}\n";
+    writeFileSync(join(f.repo, "src/agent/pool/connection.ts"), pool);
+    writeFileSync(join(f.repo, "src/auth/token.ts"), "export const tokenExpiry = 3600;\n");
+    f.git("add", "src"); f.git("commit", "-m", "Add connection and authentication");
+    writeFileSync(join(f.repo, "src/agent/pool/connection.ts"), pool.replace("  return connection;", "  connection.onError(() => connection.close());\n  return connection;"));
+    writeFileSync(join(f.repo, "src/auth/token.ts"), "export const tokenExpiry = 1800;\n");
+    writeFileSync(join(f.repo, "src/agent/pool/connection.test.ts"), "it('releases the connection on error', () => expect(connection.closed).toBe(true));\n");
+    f.git("add", "src/auth/token.ts");
+    for (const theme of ["light", "dark"]) {
+      const preferences = await f.invoke("preferences");
+      await f.invoke("set_preferences", { preferences: { ...preferences, theme } });
+      await f.open(false);
+      await page.getByRole("button", { name: "connection.ts M", exact: true }).click();
+      await expect(page.locator(".diff-scroll")).toContainText("onError");
+      await page.screenshot({ path: join(shots, `local-${theme}.png`) });
+      await page.evaluate(() => { (window as any).sharedDiffNode = document.querySelector(".center-panel .diff-panel"); });
+      await page.getByRole("tab", { name: /^Commit/ }).click();
+      await expect(page.locator(".commit-workspace")).toBeVisible();
+      await expect(page.locator(".diff-scroll")).toContainText("onError");
+      expect(await page.evaluate(() => (window as any).sharedDiffNode === document.querySelector(".center-panel .diff-panel"))).toBe(true);
+      const sidebar = (await page.locator(".commit-workspace").boundingBox())!;
+      const diff = (await page.locator(".center-panel").boundingBox())!;
+      expect(diff.width).toBeGreaterThan(sidebar.width * 1.5);
+      await page.getByLabel("Commit message", { exact: true }).fill("Handle connection errors");
+      await expect(page.getByLabel("Commit message", { exact: true })).toBeInViewport();
+      await page.screenshot({ path: join(shots, `commit-${theme}.png`) });
+      await page.locator(".commit-workspace").getByRole("button", { name: "token.ts M", exact: true }).click();
+      await expect(page.locator(".diff-scroll")).toContainText("1800");
+      await expect(page.getByRole("tab", { name: /^Commit/ })).toHaveAttribute("aria-selected", "true");
+      await page.getByRole("tab", { name: /Local changes/ }).click();
+      await page.getByRole("tab", { name: /^Commit/ }).click();
+      await expect(page.getByLabel("Commit message", { exact: true })).toHaveValue("Handle connection errors");
+    }
+    await page.setViewportSize({ width: 1024, height: 720 });
+    await expect(page.getByLabel("Commit message", { exact: true })).toBeInViewport();
+    await expect(page.locator(".commit-workspace").getByRole("button", { name: "Commit", exact: false }).first()).toBeInViewport();
+    await page.screenshot({ path: join(shots, "commit-narrow.png") });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await f.invoke("set_ui_language", { language: "zh-CN" });
+    await f.open(false);
+    await page.getByRole("button", { name: "connection.ts M", exact: true }).click();
+    await page.getByRole("tab", { name: /^Commit/ }).click();
+    await page.locator("#quick-commit-message").fill("fix: release connection on error");
+    await expect(page.locator(".diff-scroll")).toContainText("onError");
+    await page.screenshot({ path: join(shots, "commit-zh-dark.png") });
+  } finally { f.close(); }
+});
+
+test("Workspace density: combined History menu retains selected Branch comparison", async ({ page }) => {
+  const f = await fixture(page);
+  try {
+    await f.invoke("set_ui_language", { language: "en" });
+    f.git("switch", "feature/ui");
+    writeFileSync(join(f.repo, "feature.txt"), "feature change\n");
+    f.git("add", "feature.txt"); f.git("commit", "-m", "Feature comparison");
+    f.git("switch", "main");
+    await f.open();
+    await page.locator(".repository-refs .repo-ref").filter({ hasText: "feature/ui" }).click();
+    await page.locator(".graph-row").getByRole("button", { name: "Branch actions for main", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Compare with selected Branch", exact: true }).click();
+    const comparison = page.locator(".diff-tab-page:not([hidden])");
+    await expect(comparison).toBeVisible();
+    await expect(comparison).toContainText("feature.txt");
+    expect(f.git("branch", "--show-current")).toBe("main");
+    expect(f.git("status", "--porcelain")).toBe("");
+  } finally { f.close(); }
+});
+
 test("Git controls belong to History and do not occupy the app header or Local Changes", async ({ page }) => {
   const f = await fixture(page);
   try {
@@ -441,7 +602,7 @@ test("History menus support keyboard, clipboard, real Branch switching and renam
       .getByRole("button", { name: "所选 Commit 的操作", exact: true })
       .click();
     const commits = page.getByRole("menu", {
-      name: "Commit 操作",
+      name: "Git 操作",
       exact: true,
     });
     await commits

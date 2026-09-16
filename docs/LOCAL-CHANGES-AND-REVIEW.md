@@ -2,6 +2,10 @@
 
 本轮按用户要求调整现有 Diff 阅读器。未提交页面命名为 **Local changes**；Commit/Amend 保持独立页面，历史比较仍从 History 选择后打开独立 Diff tab。
 
+Commit 工作区左栏组合文件树与紧凑的提交表单，右侧直接查看与 Stage 当前 Diff。它与 Local changes 共用已挂载的 Diff 阅读器、文件选择和缓存，切页不重新创建编辑器；提交草稿独立保存。普通点击仅查看文件，勾选、⌘/Ctrl 点击和 Shift 范围选择用于批量操作。底部操作栏保留固定高度，选择和清除不会推动文件树。
+
+这次交互参考用户提供的 Fork 文件树截图，以及 [GitKraken 的文件 Stage 工作流](https://help.gitkraken.com/gitkraken-desktop/staging/)：文件、Hunk 操作与提交说明同时可达。
+
 ## 阅读交互
 
 上下文按钮常驻 Diff 工具栏：`−`、当前行数、`+`，每次一行；默认 3，最少 0。独立 `Full file` 按钮显示完整内容，再次点击恢复此前行数。在全文状态点击增减则基于此前行数调整一行。范围读取中禁用重复操作，失败或取消保留实际已加载范围。

@@ -1,10 +1,7 @@
-import { Button } from "./ui/controls";
 import { t } from "../i18n";
 import { useState, type ReactNode } from "react";
-import { ArrowRight, FileCode } from "@phosphor-icons/react";
 import { FileTree } from "./FileTree";
 import {
-  fileKey,
   type ChangedFile,
   type Changes,
   type FileDiff,
@@ -18,7 +15,8 @@ export function CommitWorkspace({
   onStage,
   onDiscard,
   onRecovery,
-  onOpenDiff,
+  selected,
+  onSelect,
   children,
 }: {
   changes: Changes;
@@ -27,20 +25,19 @@ export function CommitWorkspace({
   onStage: (files: ChangedFile[], side: Side) => void;
   onDiscard: (files: ChangedFile[]) => void;
   onRecovery: () => void;
-  onOpenDiff: (file: ChangedFile) => void;
+  selected: string | null;
+  onSelect: (file: ChangedFile) => void;
   children: ReactNode;
 }) {
   const [search, setSearch] = useState("");
   const [scope, setScope] = useState<"all" | Side>("all");
-  const [selected, setSelected] = useState<string | null>(null);
-  const selectedFile = changes.files.find((file) => fileKey(file) === selected);
   return (
-    <main className="commit-workspace" aria-label={t("Commit 工作区")}>
+    <section className="commit-workspace" aria-label={t("Commit 工作区")}>
       <section className="commit-stage-files" aria-label={t("选择提交文件")}>
         <FileTree
           files={changes.files}
           selected={selected}
-          onSelect={(file) => setSelected(fileKey(file))}
+          onSelect={onSelect}
           search={search}
           onSearch={setSearch}
           searchId="commit-file-search"
@@ -53,22 +50,10 @@ export function CommitWorkspace({
           onRecovery={onRecovery}
           workspacePath={changes.workspace.path}
         />
-        <div className="commit-file-inspector">
-          <FileCode size={16} />
-          <span>{selectedFile?.path ?? t("选择文件以查看 Diff")}</span>
-          <Button
-            className="button compact"
-            disabled={!selectedFile}
-            onClick={() => selectedFile && onOpenDiff(selectedFile)}
-          >
-            {t("查看 Diff ")}
-            <ArrowRight size={14} />
-          </Button>
-        </div>
       </section>
       <aside className="commit-details" aria-label={t("提交说明与选项")}>
         {children}
       </aside>
-    </main>
+    </section>
   );
 }

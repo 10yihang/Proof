@@ -309,7 +309,7 @@ pub struct RepositoryLayout {
 impl Default for RepositoryLayout {
     fn default() -> Self {
         Self {
-            sidebar_width: 240,
+            sidebar_width: 320,
             context_width: 300,
             sidebar_open: true,
             context_open: None,

@@ -48,11 +48,15 @@ export function CommitHistory({
   requestedComparison,
   actions,
   branches,
-  onBranchMenu,
+  branchNavigation,
 }: {
   actions: HistoryActions;
   branches: BranchEntry[];
-  onBranchMenu: (event: React.MouseEvent, branch: BranchEntry) => void;
+  branchNavigation: {
+    selected: BranchEntry | null;
+    compare: (base: BranchEntry, target: BranchEntry) => void;
+    show: (branch: BranchEntry) => void;
+  };
   changes: Changes;
   demo: boolean;
   scope: string;
@@ -72,9 +76,33 @@ export function CommitHistory({
   const [parent, setParent] = useState(0);
   const [menu, setMenu] = useState<{
     commit: CommitEntry;
+    branch?: BranchEntry;
     x: number;
     y: number;
   } | null>(null);
+  const menuBranches = menu
+    ? branches.filter((branch) => branch.oid === menu.commit.oid)
+    : [];
+  const menuBranch =
+    menu?.branch ??
+    menuBranches.find((branch) => branch.current) ??
+    menuBranches.find((branch) => !branch.remote) ??
+    menuBranches[0];
+  function branchContext(
+    event: React.MouseEvent,
+    branch: BranchEntry,
+    commit: CommitEntry,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = event.currentTarget.getBoundingClientRect();
+    setMenu({
+      commit,
+      branch,
+      x: event.type === "contextmenu" ? event.clientX : rect.left,
+      y: event.type === "contextmenu" ? event.clientY : rect.bottom + 4,
+    });
+  }
   useEffect(() => {
     setBranchComparison(requestedComparison ?? null);
   }, [requestedComparison]);
@@ -597,12 +625,12 @@ export function CommitHistory({
                           })}
                           onClick={(event) => {
                             event.stopPropagation();
-                            onBranchMenu(event, branch);
+                            branchContext(event, branch, commit);
                           }}
                           onDoubleClick={(event) => event.stopPropagation()}
                           onContextMenu={(event) => {
                             event.stopPropagation();
-                            onBranchMenu(event, branch);
+                            branchContext(event, branch, commit);
                           }}
                         >
                           <GitBranch size={12} />
@@ -775,14 +803,58 @@ export function CommitHistory({
           x={menu.x}
           y={menu.y}
           onClose={() => setMenu(null)}
-          label={t("Commit 操作")}
+          label={t("Git 操作")}
         >
           <HistoryTargetActions
             target={{ type: "commit", commit: menu.commit }}
+            relatedBranch={menuBranch}
             actions={actions}
             changes={changes}
             onClose={() => setMenu(null)}
           />
+          {menuBranch && (
+            <>
+              <MenuItem
+                disabled={!changes.head}
+                onClick={() => {
+                  branchNavigation.compare(menuBranch, {
+                    name: changes.branch ?? "HEAD",
+                    oid: changes.head!,
+                    current: true,
+                    remote: false,
+                  });
+                  setMenu(null);
+                }}
+              >
+                {t("与当前 Branch 比较")}
+              </MenuItem>
+              <MenuItem
+                disabled={
+                  !branchNavigation.selected ||
+                  (branchNavigation.selected.name === menuBranch.name &&
+                    branchNavigation.selected.remote === menuBranch.remote)
+                }
+                onClick={() => {
+                  if (branchNavigation.selected)
+                    branchNavigation.compare(
+                      branchNavigation.selected,
+                      menuBranch,
+                    );
+                  setMenu(null);
+                }}
+              >
+                {t("与所选 Branch 比较")}
+              </MenuItem>
+              <MenuItem
+                onClick={() => {
+                  branchNavigation.show(menuBranch);
+                  setMenu(null);
+                }}
+              >
+                {t("查看此 Branch 的历史")}
+              </MenuItem>
+            </>
+          )}
           <MenuItem
             role="menuitem"
             disabled={!selected || selected.oid === menu.commit.oid}

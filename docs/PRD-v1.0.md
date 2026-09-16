@@ -827,6 +827,8 @@ Local changes 和历史 Diff 复用同一 Files / Change groups、Diff、Context
 
 ## GIT-12｜日常 Git 操作入口 · 0.1.2
 
+工作区布局补充：仓库、Branch 与页面 / Diff tabs 合并为一条标题栏；文件树采用 32px 行高和 20px 层级缩进，默认宽度 320px，已有自定义宽度保留。普通点击查看 Diff，勾选或修饰键用于多选，固定底栏承载批量操作。Commit 页以左侧文件树与提交说明、右侧共享 Diff 组成；切换到 Local changes 保持同一阅读器和当前文件。History 图中的 Branch 标签与同一 Commit 行右键使用统一菜单，明确当前 Branch 与 Commit 操作目标。
+
 - Git 工具栏位于 History 内部，提供 Fetch、Pull、Push、创建 Branch、Stash 与 Discard 恢复点。全局标题栏、Local Changes、Commit 和 Diff 不占用这排工具栏。使用同一个操作控制器和预览确认框；进行中的动作不能重复执行。
 - 当前 Branch 旁有可见的操作菜单；分支下拉列表、History Branch 列表共用 Switch、Merge、Rebase、Rename、Delete、Push、复制 Branch 名称、完整 Ref 与 Commit SHA。Push 可以指定其他本地 Branch，无需先 Switch；预填该 Branch 自己的 upstream，预览清楚显示本地来源和远程目标。默认普通 Push，拒绝 non-fast-forward，不自动 Force Push。
 - 文件树、文件列表与 AI Change Groups 共享文件操作菜单；提供 Stage / Unstage、Discard、相对路径 / 绝对路径 / 文件名复制以及恢复点入口。文件树支持多选和目录范围，菜单始终显示实际文件范围。历史 Diff 仅提供复制等只读动作。

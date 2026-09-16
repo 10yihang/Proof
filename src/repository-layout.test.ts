@@ -42,7 +42,7 @@ describe("repository layouts", () => {
       contextWidth: 520,
     });
     expect(fitPanels(1440, defaults, true, true)).toEqual({
-      sidebarWidth: 240,
+      sidebarWidth: 320,
       contextWidth: 300,
     });
   });
