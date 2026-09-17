@@ -1,12 +1,20 @@
 import { DropdownMenuItem as MenuItem } from "./ui/dropdown-menu";
 import { Input, Button, Select } from "./ui/controls";
 import { uiMessage, t, getLanguage } from "../i18n";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
 import {
   ArrowClockwise,
   ArrowDown,
   ArrowUp,
+  Crosshair,
   GitBranch,
   GitCommit,
   GitMerge,
@@ -67,6 +75,7 @@ export function CommitHistory({
   requestedComparison?: HistoryComparison | null;
 }) {
   const request = useRequest();
+  const currentBranchLabel = useId();
   const [page, setPage] = useState<CommitGraphPage | null>(null);
   const [commits, setCommits] = useState<CommitEntry[]>([]);
   const [selected, setSelected] = useState<CommitEntry | null>(null);
@@ -113,6 +122,10 @@ export function CommitHistory({
   const [search, setSearch] = useState("");
   const sequence = useRef(0);
   const scroll = useRef<HTMLDivElement>(null);
+  const locateAfterLoad = useRef<string | null>(null);
+  useEffect(() => {
+    locateAfterLoad.current = null;
+  }, [changes.workspace.id]);
   const columnHeader = useRef<HTMLDivElement>(null);
   const viewIdentity = useRef("");
   const loadedCommits = useRef(commits);
@@ -133,7 +146,8 @@ export function CommitHistory({
   useEffect(() => {
     const generation = ++sequence.current;
     const identity = `${changes.workspace.id}:${scope}:${demo}`;
-    const preserve = viewIdentity.current === identity;
+    const preserve =
+      viewIdentity.current === identity && loadedCommits.current.length > 0;
     viewIdentity.current = identity;
     setBusy(true);
     setError(null);
@@ -183,13 +197,29 @@ export function CommitHistory({
               offset: top % GRAPH_ROW_HEIGHT,
               top,
             };
-        } else scroll.current?.scrollTo({ top: 0, left: 0 });
+        } else {
+          scroll.current?.scrollTo({ top: 0, left: 0 });
+          const head = value.commits.find(
+            (commit) => commit.oid === value.head,
+          );
+          if (head) {
+            scrollAnchor.current = {
+              oid: head.oid,
+              offset: -Math.max(
+                0,
+                ((scroll.current?.clientHeight ?? 0) - GRAPH_ROW_HEIGHT) / 2,
+              ),
+              top: 0,
+            };
+          }
+        }
         setPage(value);
         setCommits(value.commits);
         setSelected(
           (previous) =>
             (preserve &&
               value.commits.find((commit) => commit.oid === previous?.oid)) ||
+            value.commits.find((commit) => commit.oid === value.head) ||
             value.commits[0] ||
             null,
         );
@@ -202,7 +232,10 @@ export function CommitHistory({
         onBranches(value.branches);
       })
       .catch((cause) => {
-        if (sequence.current === generation) setError(asError(cause));
+        if (sequence.current === generation) {
+          locateAfterLoad.current = null;
+          setError(asError(cause));
+        }
       })
       .finally(() => {
         if (sequence.current === generation) setBusy(false);
@@ -308,6 +341,38 @@ export function CommitHistory({
       if (generation === sequence.current) setBusy(false);
     }
   }
+  function focusHead(index: number) {
+    select(index);
+    virtualizer.scrollToIndex(index, { align: "center" });
+    scroll.current?.focus({ preventScroll: true });
+  }
+  function locateHead() {
+    setSearch("");
+    const index = commits.findIndex((commit) => commit.oid === changes.head);
+    if (index >= 0 && page?.head === changes.head) {
+      focusHead(index);
+    } else {
+      // A focused history starts at HEAD even when thousands of other commits
+      // precede it in --all. Do not walk an unbounded number of graph pages.
+      locateAfterLoad.current = changes.workspace.id;
+      if (scope === "current") setRevision((value) => value + 1);
+      else onScope("current");
+    }
+  }
+  useLayoutEffect(() => {
+    if (
+      busy ||
+      !page ||
+      page.head !== changes.head ||
+      page.scope !== scope ||
+      locateAfterLoad.current !== changes.workspace.id
+    )
+      return;
+    const index = commits.findIndex((commit) => commit.oid === page.head);
+    if (index < 0) return;
+    locateAfterLoad.current = null;
+    focusHead(index);
+  }, [commits, page, busy, scope, changes.head, changes.workspace.id]);
   const scopeName =
     scope === "all"
       ? t("所有分支")
@@ -351,11 +416,23 @@ export function CommitHistory({
       {actions.toolbar}
       <header className="graph-toolbar">
         <div className="graph-heading">
-          <GitBranch size={21} />
-          <h2>{t("提交图")}</h2>
-          <span className="graph-loaded">
-            {commits.length} {t(" 条")}
-          </span>
+          <Button
+            className="graph-head-location"
+            aria-label={t("定位 HEAD")}
+            aria-describedby={currentBranchLabel}
+            title={`${t("定位 HEAD · {v0}", { v0: changes.branch ?? "Detached HEAD" })}\n${t("HEAD 尚未加载时，显示当前分支历史。")}`}
+            disabled={busy || !changes.head}
+            onClick={locateHead}
+          >
+            <Crosshair size={19} aria-hidden="true" />
+            <span className="graph-head-label" id={currentBranchLabel}>
+              <small>{changes.branch ? t("当前分支") : "Detached HEAD"}</small>
+              <strong>
+                {changes.branch ?? changes.head?.slice(0, 8) ?? t("尚无提交")}
+              </strong>
+            </span>
+            {changes.branch && <code>{changes.head?.slice(0, 7) ?? "—"}</code>}
+          </Button>
         </div>
         <div className="graph-search">
           <MagnifyingGlass size={16} />
@@ -527,8 +604,11 @@ export function CommitHistory({
                 <div
                   key={commit.oid}
                   id={`graph-commit-${page?.snapshotId}-${commit.oid}`}
-                  className={`graph-row ${selectedRow ? "is-active" : ""} ${query && !matching.has(item.index) ? "is-dimmed" : ""}`}
+                  className={`graph-row ${selectedRow ? "is-active" : ""} ${commit.oid === changes.head ? "is-head" : ""} ${query && !matching.has(item.index) ? "is-dimmed" : ""}`}
                   role="option"
+                  aria-current={
+                    commit.oid === changes.head ? "true" : undefined
+                  }
                   aria-selected={selectedRow}
                   aria-posinset={item.index + 1}
                   aria-setsize={commits.length}
@@ -610,6 +690,18 @@ export function CommitHistory({
                     />
                   </svg>
                   <span className="graph-subject">
+                    {commit.oid === changes.head && (
+                      <span
+                        className="graph-head-badge"
+                        title={
+                          changes.branch
+                            ? t("当前分支 · {v0}", { v0: changes.branch })
+                            : "Detached HEAD"
+                        }
+                      >
+                        HEAD
+                      </span>
+                    )}
                     {commit.boundary === "shallow" && (
                       <span className="graph-boundary">{t("历史边界")}</span>
                     )}
@@ -618,7 +710,7 @@ export function CommitHistory({
                       .map((branch) => (
                         <Button
                           key={`${branch.remote}:${branch.name}`}
-                          className="graph-ref"
+                          className={`graph-ref ${branch.current ? "is-current" : branch.remote ? "is-remote" : ""}`}
                           title={branch.name}
                           aria-label={t("{v0} 的 Branch 操作", {
                             v0: branch.name,
@@ -646,6 +738,7 @@ export function CommitHistory({
                         </span>
                       ))}
                     {commit.refs &&
+                      commit.refs !== "HEAD" &&
                       !branches.some((branch) => branch.oid === commit.oid) &&
                       !commit.refs.includes("tag: ") && (
                         <span className="graph-ref" title={commit.refs}>

@@ -462,11 +462,13 @@ function HistoryActionDialog({
   const [mode, setMode] = useState(
     kind === "pull"
       ? "ff-only"
-      : kind === "stash"
-        ? "tracked"
-        : kind.startsWith("stash")
-          ? "worktree"
-          : "mixed",
+      : kind === "push"
+        ? "normal"
+        : kind === "stash"
+          ? "tracked"
+          : kind.startsWith("stash")
+            ? "worktree"
+            : "mixed",
   );
   const [mainline, setMainline] = useState(1);
   const [prepared, setPrepared] = useState<{
@@ -563,7 +565,11 @@ function HistoryActionDialog({
       const value: HistoryActionRequest = { kind, target: requestTarget };
       if (named) value.name = name;
       if (network) value.remote = remote;
-      if (["pull", "reset", "stash", "stashApply", "stashPop"].includes(kind))
+      if (
+        ["pull", "push", "reset", "stash", "stashApply", "stashPop"].includes(
+          kind,
+        )
+      )
         value.mode = mode;
       if ((kind === "cherryPick" || kind === "revert") && parents.length > 1)
         value.mainline = mainline;
@@ -734,6 +740,19 @@ function HistoryActionDialog({
               </Select>
             </label>
           )}
+          {kind === "push" && (
+            <label className="field-label">
+              {t("Push 方式")}
+              <Select
+                aria-label={t("Push 方式")}
+                value={mode}
+                onChange={(event) => setMode(event.target.value)}
+              >
+                <option value="normal">Push</option>
+                <option value="force-with-lease">Force Push with Lease</option>
+              </Select>
+            </label>
+          )}
           {kind === "reset" && (
             <label className="field-label">
               {t("Reset 方式")}
@@ -778,9 +797,27 @@ function HistoryActionDialog({
                     </dd>
                     {preview.targetOid && (
                       <>
-                        <dt>{t("目标 Commit")}</dt>
+                        <dt>
+                          {kind === "push"
+                            ? t("本地 Commit")
+                            : t("目标 Commit")}
+                        </dt>
                         <dd>
                           <code>{preview.targetOid.slice(0, 12)}</code>
+                        </dd>
+                      </>
+                    )}
+                    {kind === "push" && mode === "force-with-lease" && (
+                      <>
+                        <dt>{t("确认的远程 Commit")}</dt>
+                        <dd>
+                          {preview.expectedRemoteOid ? (
+                            <code title={preview.expectedRemoteOid}>
+                              {preview.expectedRemoteOid.slice(0, 12)}
+                            </code>
+                          ) : (
+                            t("新建远程 Branch")
+                          )}
                         </dd>
                       </>
                     )}
@@ -842,7 +879,12 @@ function HistoryActionDialog({
             >
               {busy
                 ? t("Git 操作进行中…")
-                : t("执行 {v0}", { v0: actionVerbs[kind] })}
+                : t("执行 {v0}", {
+                    v0:
+                      kind === "push" && mode === "force-with-lease"
+                        ? "Force Push with Lease"
+                        : actionVerbs[kind],
+                  })}
             </Button>
           </div>
         </Fieldset.Root>

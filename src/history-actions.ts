@@ -41,6 +41,7 @@ export interface HistoryActionPreview {
   branch: string | null;
   targetOid: string | null;
   remoteBranch: string | null;
+  expectedRemoteOid: string | null;
   dirtyFiles: number;
   affectedCommits: number;
   operation: string | null;
@@ -195,9 +196,13 @@ export function actionExplanation(kind: HistoryActionKind, mode?: string) {
             )
           : t("获取远程 Branch，仅允许 fast-forward；存在分叉时停止。");
     case "push":
-      return t(
-        "把所选本地 Branch 推送到远程 Branch，并设置 upstream。远程不允许 fast-forward 时停止。",
-      );
+      return mode === "force-with-lease"
+        ? t(
+            "用本地 Branch 的历史更新远程 Branch。仅当远程仍指向下方确认的 Commit 时执行；远程发生变化则停止。",
+          )
+        : t(
+            "把所选本地 Branch 推送到远程 Branch，并设置 upstream。远程不允许 fast-forward 时停止。",
+          );
     case "stash":
       return t(
         "保存本地修改并清理对应的 Worktree 内容，可稍后从 Stash 恢复。忽略的文件会保留。",

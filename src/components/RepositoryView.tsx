@@ -191,7 +191,7 @@ export function RepositoryView({
               .map((branch) => (
                 <div className="repo-ref-wrap" key={branch.name}>
                   <Button
-                    className={`repo-ref ${historyRef === `${branch.remote ? "remote" : "local"}:${branch.name}` ? "active" : ""}`}
+                    className={`repo-ref ${branch.current ? "is-current" : ""} ${historyRef === `${branch.remote ? "remote" : "local"}:${branch.name}` ? "active" : ""}`}
                     title={t("查看 {v0} 的历史", { v0: branch.name })}
                     onClick={(event) =>
                       chooseBranch(
@@ -209,9 +209,11 @@ export function RepositoryView({
                     <span>{branch.name}</span>
                     {branch.current && (
                       <span
-                        className="current-ref-dot"
+                        className="current-ref-badge"
                         aria-label={t("当前分支")}
-                      />
+                      >
+                        HEAD
+                      </span>
                     )}
                   </Button>
                   <HistoryMoreButton

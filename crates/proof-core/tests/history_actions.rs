@@ -687,6 +687,159 @@ fn pull_strategies_stop_divergence_or_merge_or_rebase_as_selected() {
     }
 }
 #[test]
+fn force_with_lease_rewrites_only_the_confirmed_remote_branch() {
+    let mut f = Fixture::new();
+    f.remote();
+    let published = f.commit("local", "Published work");
+    git(&f.repo, &["push", "origin", "main"]);
+    git(&f.repo, &["branch", "keep-original"]);
+    git(&f.repo, &["push", "origin", "keep-original"]);
+    git(&f.repo, &["commit", "--amend", "-m", "Rewritten work"]);
+    let rewritten = f.head();
+    let mut request = action(Kind::Push, Some("refs/heads/main"));
+    request.remote = Some("origin".into());
+    request.name = Some("main".into());
+    request.mode = Some("force-with-lease".into());
+    let preview = f.prepare(request).unwrap();
+    assert!(preview
+        .arguments
+        .contains(&format!("--force-with-lease=refs/heads/main:{published}")));
+    assert!(preview.destructive);
+    assert!(!preview.arguments.contains(&"--force".into()));
+    let result = f
+        .proof
+        .execute_history_action(&f.workspace.id, &preview.id)
+        .unwrap();
+    assert!(result.ok, "{}", result.detail);
+    let remote = f.temp.path().join("remote.git");
+    assert_eq!(git(&remote, &["rev-parse", "main"]), rewritten);
+    assert_eq!(git(&remote, &["rev-parse", "keep-original"]), published);
+    assert_eq!(f.head(), rewritten);
+}
+
+#[test]
+fn force_with_lease_rejects_remote_updates_after_preview_even_with_background_fetch() {
+    for fetch_after_preview in [false, true] {
+        let mut f = Fixture::new();
+        let peer = f.remote();
+        git(&f.repo, &["commit", "--amend", "-m", "Rewritten initial"]);
+        let local = f.head();
+        let mut request = action(Kind::Push, None);
+        request.remote = Some("origin".into());
+        request.name = Some("main".into());
+        request.mode = Some("force-with-lease".into());
+        let preview = f.prepare(request).unwrap();
+        git(
+            &peer,
+            &["commit", "--allow-empty", "-m", "Someone else's work"],
+        );
+        git(&peer, &["push", "origin", "main"]);
+        let other = git(&peer, &["rev-parse", "HEAD"]);
+        if fetch_after_preview {
+            git(&f.repo, &["fetch", "origin"]);
+        }
+        let result = f.proof.execute_history_action(&f.workspace.id, &preview.id);
+        if fetch_after_preview {
+            assert_eq!(result.unwrap_err().code, "STALE_CONTENT");
+        } else {
+            let result = result.unwrap();
+            assert!(!result.ok);
+            assert!(result.detail.contains("stale info"), "{}", result.detail);
+        }
+        assert_eq!(
+            git(&f.temp.path().join("remote.git"), &["rev-parse", "main"]),
+            other
+        );
+        assert_eq!(f.head(), local);
+        assert!(f
+            .proof
+            .execute_history_action(&f.workspace.id, &preview.id)
+            .is_err());
+    }
+}
+
+#[test]
+fn force_with_lease_reads_the_push_destination_and_protects_absent_branches() {
+    let mut f = Fixture::new();
+    f.remote();
+    let initial = f.head();
+    let push_remote = f.temp.path().join("push.git");
+    fs::create_dir(&push_remote).unwrap();
+    git(&push_remote, &["init", "--bare", "-b", "main"]);
+    git(
+        &f.repo,
+        &[
+            "config",
+            "remote.origin.pushurl",
+            push_remote.to_str().unwrap(),
+        ],
+    );
+    let mut request = action(Kind::Push, None);
+    request.remote = Some("origin".into());
+    request.name = Some("main".into());
+    request.mode = Some("force-with-lease".into());
+    let preview = f.prepare(request.clone()).unwrap();
+    assert!(preview.expected_remote_oid.is_none());
+    assert!(preview
+        .arguments
+        .contains(&"--force-with-lease=refs/heads/main:".into()));
+    // The fetch destination has main, but the actual push destination does not.
+    git(&f.repo, &["push", "origin", "main"]);
+    let local = f.commit("local", "Local only");
+    // Preparing again freezes the actual push remote's old Commit.
+    let current = f.prepare(request.clone()).unwrap();
+    assert_eq!(
+        current.expected_remote_oid.as_deref(),
+        Some(initial.as_str())
+    );
+    assert!(current
+        .arguments
+        .contains(&format!("--force-with-lease=refs/heads/main:{initial}")));
+    assert!(f
+        .proof
+        .execute_history_action(&f.workspace.id, &preview.id)
+        .is_err());
+    assert!(
+        f.proof
+            .execute_history_action(&f.workspace.id, &current.id)
+            .unwrap()
+            .ok
+    );
+    assert_eq!(git(&push_remote, &["rev-parse", "main"]), local);
+    assert_eq!(
+        git(&f.temp.path().join("remote.git"), &["rev-parse", "main"]),
+        initial
+    );
+    for mode in ["force", "--force", "+", "invalid"] {
+        request.mode = Some(mode.into());
+        assert!(f.prepare(request.clone()).is_err());
+    }
+}
+
+#[test]
+fn force_with_lease_does_not_overwrite_a_concurrently_created_branch() {
+    let mut f = Fixture::new();
+    f.remote();
+    let initial = f.head();
+    f.commit("local", "Local only");
+    let mut request = action(Kind::Push, None);
+    request.remote = Some("origin".into());
+    request.name = Some("new-branch".into());
+    request.mode = Some("force-with-lease".into());
+    let preview = f.prepare(request).unwrap();
+    assert!(preview.expected_remote_oid.is_none());
+    let remote = f.temp.path().join("remote.git");
+    git(&remote, &["update-ref", "refs/heads/new-branch", &initial]);
+    let result = f
+        .proof
+        .execute_history_action(&f.workspace.id, &preview.id)
+        .unwrap();
+    assert!(!result.ok);
+    assert!(result.detail.contains("stale info"), "{}", result.detail);
+    assert_eq!(git(&remote, &["rev-parse", "new-branch"]), initial);
+}
+
+#[test]
 fn push_rejection_keeps_remote_history() {
     let mut f = Fixture::new();
     let peer = f.remote();

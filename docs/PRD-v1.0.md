@@ -841,7 +841,7 @@ Local changes 和历史 Diff 复用同一 Files / Change groups、Diff、Context
 工作区布局补充：仓库、Branch 与页面 / Diff tabs 合并为一条标题栏；文件树采用 32px 行高和 20px 层级缩进，默认宽度 320px，已有自定义宽度保留。普通点击查看 Diff，勾选或修饰键用于多选，固定底栏承载批量操作。Commit 页以左侧文件树与提交说明、右侧共享 Diff 组成；切换到 Local changes 保持同一阅读器和当前文件。History 图中的 Branch 标签与同一 Commit 行右键使用统一菜单，明确当前 Branch 与 Commit 操作目标。
 
 - Git 工具栏位于 History 内部，提供 Fetch、Pull、Push、创建 Branch、Stash 与 Discard 恢复点。全局标题栏、Local Changes、Commit 和 Diff 不占用这排工具栏。使用同一个操作控制器和预览确认框；进行中的动作不能重复执行。
-- 当前 Branch 旁有可见的操作菜单；分支下拉列表、History Branch 列表共用 Switch、Merge、Rebase、Rename、Delete、Push、复制 Branch 名称、完整 Ref 与 Commit SHA。Push 可以指定其他本地 Branch，无需先 Switch；预填该 Branch 自己的 upstream，预览清楚显示本地来源和远程目标。默认普通 Push，拒绝 non-fast-forward，不自动 Force Push。
+- 当前 Branch 旁有可见的操作菜单；分支下拉列表、History Branch 列表共用 Switch、Merge、Rebase、Rename、Delete、Push、复制 Branch 名称、完整 Ref 与 Commit SHA。Push 可以指定其他本地 Branch，无需先 Switch；预填该 Branch 自己的 upstream，预览清楚显示本地来源和远程目标。默认普通 Push，拒绝 non-fast-forward；Push 对话框可主动选择 Force Push with Lease。预览从实际 Push URL 读取并固定远程 Branch 的 Commit，显示本地来源、远程目标与预期 Commit，确认后只对该 Branch 执行显式 lease；远程变化时拒绝推送，后台 Fetch 不得悄悄推进已确认的 lease，不提供无条件 Force Push。
 - 文件树、文件列表与 AI Change Groups 共享文件操作菜单；提供 Stage / Unstage、Discard、相对路径 / 绝对路径 / 文件名复制以及恢复点入口。文件树支持多选和目录范围，菜单始终显示实际文件范围。历史 Diff 仅提供复制等只读动作。
 - Stash 管理支持保存（可选说明、可选包含 untracked）、Apply、Pop、Drop；恢复时可选恢复 Stage 状态。Pop 遇到冲突保留 Stash；Drop 要求明确确认。操作绑定预览时的 Stash selector 与对象 ID，并校验完整 Stash reflog，禁止因序号移动误操作其他 Stash。
 - Discard 全部文件后，History 中的恢复入口仍可用。二进制备份明确标为二进制，不显示有损文本，也不提供伪造的文本复制。所有手动 Git 操作独立于 AI Review，不会自动标记人工 Review 完成。
@@ -855,3 +855,5 @@ Codewiz 接入主动 AI 和被动 Hook 两种能力。AgentAdapter 统一登记�
 Agent Hook 设置支持 Codewiz 的检测、安装预览、安装、按 Worktree 授权、暂停与卸载。只新增用户配置目录下的 plugins/proof-observer.js，不改 Codewiz JSON / JSONC、已有插件、工具、提示词或权限。安装在下次启动 Codewiz 时生效，不向已有 Session 注入或发信号。被动插件通过原生事件记录 Session、任务、已完成工具调用、失败和最终回复，使用原生 Session / Message / Call ID 关联与去重；内容字段沿用用户单独授权和保留期。插件不调用模型、不注册工具、不改输入输出，桥接失败不给模型反馈。
 
 安装与卸载沿用现有的预览、备份、原子写入、并发变化检查与所有权收据。发现同名用户文件或插件被手动修改时拒绝覆盖 / 删除；Codewiz 配置与其他插件保持原样。参考 [OpenCode 本地插件及事件接口](https://dev.opencode.ai/docs/plugins/)，运行兼容性以本机 CLI 测试为准。
+
+History 定位补充：工具栏固定显示当前本地 Branch 与 HEAD，可点击定位；图中 HEAD 标签和侧栏 HEAD 标记独立于正在选中的 Commit / 历史范围。HEAD 不在当前范围或已加载页面时，定位切到当前 Branch 历史。首次进入优先选中并显示已加载的 HEAD，后续刷新保留阅读位置；Detached HEAD 显示 Commit ID，尚无 Commit 的 Branch 禁用定位。

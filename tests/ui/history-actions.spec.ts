@@ -127,6 +127,137 @@ test.beforeEach(() =>
   ),
 );
 
+test("History push offers Force Push with Lease", async ({ page }) => {
+  const f = await fixture(page);
+  try {
+    await f.invoke("set_ui_language", { language: "en" });
+    const previous = f.git("rev-parse", "HEAD");
+    f.git("commit", "--amend", "-m", "Amended local work");
+    await f.open();
+    await page.getByRole("button", { name: "Push", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Push", exact: true });
+    await expect(dialog.getByLabel("Push mode", { exact: true })).toBeVisible();
+    await chooseOption(dialog.getByLabel("Push mode", { exact: true }), "force-with-lease");
+    const execute = dialog.getByRole("button", { name: "Run Force Push with Lease", exact: true });
+    const acknowledge = dialog.getByRole("checkbox", { name: "I have checked the target and impact.", exact: true });
+    await expect(acknowledge).toBeVisible();
+    await expect(dialog.locator(".history-action-preview")).toContainText(previous.slice(0, 12));
+    await expect(execute).toBeDisabled();
+    await page.screenshot({ path: resolve(".artifacts/history-lease-head/force-lease.png") });
+    await acknowledge.check();
+    await expect(execute).toBeEnabled();
+    // Changing mode must discard the acknowledgment and its old lease preview.
+    await chooseOption(dialog.getByLabel("Push mode", { exact: true }), "normal");
+    await expect(acknowledge).not.toBeVisible();
+    await chooseOption(dialog.getByLabel("Push mode", { exact: true }), "force-with-lease");
+    await expect(acknowledge).not.toBeChecked();
+    await acknowledge.check();
+    await execute.click();
+    await expect(dialog).not.toBeVisible();
+    expect(execFileSync("git", ["-C", f.remote, "rev-parse", "main"], { encoding: "utf8" }).trim()).toBe(f.git("rev-parse", "HEAD"));
+  } finally { f.close(); }
+});
+
+test("History locates HEAD outside loaded pages and keeps the branch visible while filtering", async ({ page }) => {
+  const f = await fixture(page);
+  const shots = resolve(".artifacts/history-lease-head");
+  mkdirSync(shots, { recursive: true });
+  try {
+    await f.invoke("set_ui_language", { language: "en" });
+    const head = f.git("rev-parse", "HEAD");
+    const tree = f.git("rev-parse", "HEAD^{tree}");
+    let tip = head;
+    for (let i = 0; i < 115; i++) tip = f.git("commit-tree", tree, "-p", tip, "-m", `Other branch work ${i}`);
+    f.git("update-ref", "refs/heads/feature/ui", tip);
+    await f.open();
+    const locate = page.getByRole("button", { name: "Locate HEAD", exact: true });
+    await expect(locate).toContainText("main");
+    await expect(page.locator('.graph-row[aria-current="true"]')).toHaveCount(0);
+    await page.getByRole("textbox", { name: "Search loaded Commits", exact: true }).fill("Other branch");
+    await locate.click();
+    await expect(page.getByRole("textbox", { name: "Search loaded Commits", exact: true })).toHaveValue("");
+    await expect(page.locator('.graph-row[aria-current="true"]')).toHaveAttribute("aria-selected", "true");
+    await expect(page.locator('.graph-row[aria-current="true"]')).toBeInViewport();
+    // Explicitly inspect another Branch; the checked-out Branch stays main.
+    await page.locator('.repository-refs .repo-ref').filter({ hasText: "feature/ui" }).click();
+    await expect(page.locator('.graph-row').first()).toContainText("Other branch work 114");
+    await expect(locate).toContainText("main");
+    await locate.click();
+    await expect(page.locator('.graph-row[aria-current="true"]')).toBeInViewport();
+    for (const theme of ["light", "dark"]) {
+      const preferences = await f.invoke("preferences");
+      await f.invoke("set_preferences", { preferences: { ...preferences, theme } });
+      await f.open();
+      await locate.click();
+      await expect(page.locator('.graph-row[aria-current="true"]')).toBeInViewport();
+      for (const width of [1440, 1024]) {
+        await page.setViewportSize({ width, height: 900 });
+        await expect(locate).toBeInViewport();
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        await page.screenshot({ path: join(shots, `head-${theme}-${width}.png`) });
+      }
+    }
+  } finally { f.close(); }
+});
+
+test("History labels detached HEAD without claiming a current local Branch", async ({ page }) => {
+  const f = await fixture(page);
+  try {
+    await f.invoke("set_ui_language", { language: "en" });
+    f.git("checkout", "--detach", "HEAD");
+    await f.open();
+    const locate = page.getByRole("button", { name: "Locate HEAD", exact: true });
+    await expect(locate).toContainText("Detached HEAD");
+    await expect(locate).toContainText(f.git("rev-parse", "--short=8", "HEAD"));
+    await expect(page.locator('.repository-refs .current-ref-badge')).toHaveCount(0);
+    await locate.click();
+    await expect(page.locator('.graph-row[aria-current="true"]')).toHaveAttribute("aria-selected", "true");
+  } finally { f.close(); }
+});
+
+test("History initially reveals HEAD when newer branch commits precede it", async ({ page }) => {
+  const f = await fixture(page);
+  try {
+    await f.invoke("set_ui_language", { language: "en" });
+    let tip = f.git("rev-parse", "HEAD");
+    const tree = f.git("rev-parse", "HEAD^{tree}");
+    for (let i = 0; i < 42; i++) tip = f.git("commit-tree", tree, "-p", tip, "-m", `Recent branch work ${i}`);
+    f.git("update-ref", "refs/heads/feature/ui", tip);
+    await f.open();
+    const head = page.locator('.graph-row[aria-current="true"]');
+    await expect(head).toHaveAttribute("aria-selected", "true");
+    await expect(head).toBeInViewport();
+    // Refresh should preserve the commit the user subsequently chose.
+    await page.locator('.graph-scroll').press("ArrowUp");
+    await expect(head).toHaveAttribute("aria-selected", "false");
+    const selected = await page.locator('.graph-row[aria-selected="true"]').getAttribute("id");
+    const selectedHash = selected?.split("-").at(-1);
+    await page.getByRole("button", { name: "Refresh Commit graph", exact: true }).click();
+    await expect(page.locator('.graph-row[aria-selected="true"]')).not.toHaveAttribute("id", selected!);
+    await expect(page.locator('.graph-row[aria-selected="true"]')).toHaveAttribute("id", new RegExp(`${selectedHash}$`));
+  } finally { f.close(); }
+});
+
+test("History distinguishes HEAD from the selected commit and can locate it", async ({ page }) => {
+  const f = await fixture(page);
+  try {
+    await f.invoke("set_ui_language", { language: "en" });
+    f.git("commit", "--allow-empty", "-m", "Current local tip");
+    await f.open();
+    const locate = page.getByRole("button", { name: "Locate HEAD", exact: true });
+    await expect(locate).toBeVisible();
+    await expect(locate).toContainText("main");
+    const head = page.locator('.graph-row[aria-current="true"]');
+    await expect(head).toContainText("Current local tip");
+    await expect(head).toContainText("HEAD");
+    await page.locator(".graph-row").filter({ hasText: "Initial change" }).click();
+    await expect(head).toHaveAttribute("aria-selected", "false");
+    await locate.click();
+    await expect(head).toHaveAttribute("aria-selected", "true");
+    await expect(head).toBeInViewport();
+  } finally { f.close(); }
+});
+
 test("Workspace density: selecting files keeps the tree anchored", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   const f = await fixture(page);

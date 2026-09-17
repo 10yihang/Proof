@@ -6,15 +6,21 @@ Within the graph, clicking a Branch badge and right-clicking its Commit row now 
 
 | Entry | Operations |
 | --- | --- |
-| History toolbar | Fetch, Pull, Push, create Branch |
+| History toolbar | Fetch, Pull, Push / Force Push with Lease, create Branch |
 | Local Branch | Switch, create Branch here, Merge into current, Rebase current onto target, rename, delete, copy name, compare |
 | Remote Branch | Create and Switch to a local tracking Branch, create Branch here, Merge, Rebase, copy name, compare |
 | Commit | Detached checkout, create Branch / lightweight Tag, Cherry-pick, Revert, Rebase, Reset soft/mixed/hard, copy full SHA / full message, compare |
 | In-progress operation | Stage each conflict resolution, Continue, Abort for Merge, Rebase, Cherry-pick and Revert |
 
-Pull offers an explicit Remote, remote Branch and fast-forward-only / Merge / Rebase strategy. Its default is fast-forward-only; divergence produces an actionable Git failure, not an implicit Merge or Rebase. Push uses one explicit local-to-remote Branch refspec, updates upstream on success, and never forces. Configured mirror, follow-tags and extra push refspecs cannot broaden this action. Multiple push URLs require using a Remote with a single destination. Fetch updates remote-tracking Branches without checking out files, pruning refs or fetching tags. Network credentials come from existing Git configuration; Proof does not collect a token or wait for terminal prompts.
+Pull offers an explicit Remote, remote Branch and fast-forward-only / Merge / Rebase strategy. Its default is fast-forward-only; divergence produces an actionable Git failure, not an implicit Merge or Rebase. Push uses one explicit local-to-remote Branch refspec, updates upstream on success, and defaults to a normal fast-forward Push. Its dialog also offers **Force Push with Lease**, with an explicit confirmation of the local source, Remote, remote Branch and expected remote Commit. The native preview reads the single configured push URL (which may differ from the fetch URL), captures its advertised Branch OID, and uses `--force-with-lease=refs/heads/<branch>:<expected-oid>`. A missing Branch uses an empty expectation so concurrent creation is rejected. A later remote update is rejected by Git; a local ref/config change, including background Fetch, invalidates the prepared action. Lease expectations are never advanced or retried automatically, and there is no unrestricted `--force` mode. Configured mirror, follow-tags and extra push refspecs cannot broaden this action. Multiple push URLs require using a Remote with a single destination. Fetch updates remote-tracking Branches without checking out files, pruning refs or fetching tags. Network credentials come from existing Git configuration; Proof does not collect a token or wait for terminal prompts.
 
 Merge, Rebase, Cherry-pick, Revert and Pull require a clean Index and Worktree. No implicit Stash is created. Switch lets Git preserve non-conflicting edits and reject overwrites. Branch deletion uses `git branch --delete`, so Git retains unmerged or checked-out Branches. Rebase disables automatic updates of other Branch refs. Merge-Commit Cherry-pick/Revert explicitly selects a mainline parent. Reset and Abort describe their effects and require acknowledgment; Hard Reset explicitly warns about overwritten uncommitted and obstructing untracked files.
+
+## Current Branch and HEAD
+
+The History header always names the checked-out local Branch and HEAD SHA, independently of the history scope and selected Commit. Its **Locate HEAD** button clears search and comparison selection and centers the current Commit. If HEAD is outside the scope or loaded pages, it switches to current-Branch history, which begins at HEAD, instead of walking potentially thousands of pages. Initial graph entry selects and reveals HEAD when it is already in the first page; refresh retains the existing browsing position.
+
+The graph carries a persistent HEAD badge and emphasizes the current local Branch separately from remote refs and row selection. The local Branch sidebar also displays a textual HEAD badge. Detached HEAD shows the Commit ID instead of claiming a local Branch; an unborn Branch keeps its name and disables location until its first Commit.
 
 ## Native boundary
 
@@ -22,7 +28,7 @@ Merge, Rebase, Cherry-pick, Revert and Pull require a clean Index and Worktree. 
 
 Execution re-reads the workspace identity/trust and checks the Worktree token, refs, Git configuration and sequencer state before consuming the native-owned argument vector. A changed target, config, Index, Worktree or operation invalidates the preview. Git still owns its locks: the final check is not a global lock against other terminals. Git hooks and signing remain the user's configured behavior. Commands run in an owned process group with a bounded output buffer and a 180-second timeout; terminal credential prompts are disabled and editor steps accept the prepared Git message. No Coding Agent is involved.
 
-After execution, including failures and timeouts, Proof reads the actual HEAD, Branch, operation and conflicted paths. Successful ref operations verify the resulting refs; an unexpected hook-induced result is shown as incomplete. There is no automatic retry, rollback, force push, forced Branch deletion or conflict choice. History and Local changes refresh; a cross-window invalidation causes peers to read Git again. Only the action kind and observed outcome are recorded in SQLite, not command output or potentially credential-bearing Remote URLs.
+After execution, including failures and timeouts, Proof reads the actual HEAD, Branch, operation and conflicted paths. Successful ref operations verify the resulting refs; an unexpected hook-induced result is shown as incomplete. There is no automatic retry, rollback, unrestricted force push, forced Branch deletion or conflict choice. History and Local changes refresh; a cross-window invalidation causes peers to read Git again. Only the action kind and observed outcome are recorded in SQLite, not command output or potentially credential-bearing Remote URLs.
 
 Conflicts remain visible in a History banner. Clicking a conflicted path opens that file in Local changes. Users edit the file with their editor, then explicitly Stage its current contents and Continue, or Abort with a preview. A staged resolution is a user decision, not AI Review. Existing immutable Diff tabs and human Review semantics are retained.
 

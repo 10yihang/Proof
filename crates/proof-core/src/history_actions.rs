@@ -52,6 +52,7 @@ pub struct HistoryActionPreview {
     pub branch: Option<String>,
     pub target_oid: Option<String>,
     pub remote_branch: Option<String>,
+    pub expected_remote_oid: Option<String>,
     pub dirty_files: usize,
     pub affected_commits: usize,
     pub operation: Option<String>,
@@ -345,9 +346,11 @@ impl Proof {
         let mut args: Vec<String> = Vec::new();
         let mut target_oid = None;
         let mut remote_branch = None;
+        let mut expected_remote_oid = None;
         let mut affected_commits = 0;
         let destructive = matches!(request.kind, Rebase | Reset | Abort | StashDrop)
-            || request.kind == Pull && request.mode.as_deref() == Some("rebase");
+            || request.kind == Pull && request.mode.as_deref() == Some("rebase")
+            || request.kind == Push && request.mode.as_deref() == Some("force-with-lease");
         let needs_target = matches!(
             request.kind,
             Switch
@@ -574,15 +577,12 @@ impl Proof {
                         args.extend(words(&["--", remote, &format!("refs/heads/{branch}")]));
                     } else {
                         // Multiple push URLs would send one click to multiple servers.
-                        if text(
+                        let push_url = text(
                             &git,
                             &workspace,
                             &["remote", "get-url", "--push", "--all", remote],
-                        )?
-                        .lines()
-                        .count()
-                            != 1
-                        {
+                        )?;
+                        if push_url.lines().count() != 1 {
                             return Err(invalid("Select a remote with exactly one push URL"));
                         }
                         args = words(&[
@@ -593,10 +593,47 @@ impl Proof {
                             "--no-follow-tags",
                             "--recurse-submodules=no",
                             "--set-upstream",
+                        ]);
+                        match request.mode.as_deref().unwrap_or("normal") {
+                            "normal" => {}
+                            "force-with-lease" => {
+                                // Read the actual push destination (which may differ from
+                                // the fetch URL), then freeze an explicit lease. Background
+                                // fetches must never silently move the confirmed baseline.
+                                let remote_ref = format!("refs/heads/{branch}");
+                                let advertised = text(
+                                    &git,
+                                    &workspace,
+                                    &["ls-remote", "--refs", "--", &push_url, &remote_ref],
+                                )?;
+                                for row in advertised.lines() {
+                                    let (oid, name) = row.split_once('\t').ok_or_else(|| {
+                                        invalid("Invalid remote ref advertisement")
+                                    })?;
+                                    if name != remote_ref
+                                        || expected_remote_oid.is_some()
+                                        || ![40, 64].contains(&oid.len())
+                                        || !oid.bytes().all(|byte| byte.is_ascii_hexdigit())
+                                        || oid.bytes().all(|byte| byte == b'0')
+                                    {
+                                        return Err(invalid("Invalid remote ref advertisement"));
+                                    }
+                                    expected_remote_oid = Some(oid.to_owned());
+                                }
+                                // An empty expectation permits creation only while the
+                                // remote branch remains absent.
+                                args.push(format!(
+                                    "--force-with-lease={remote_ref}:{}",
+                                    expected_remote_oid.as_deref().unwrap_or("")
+                                ));
+                            }
+                            _ => return Err(invalid("Invalid push mode")),
+                        }
+                        args.extend(words(&[
                             "--",
                             remote,
                             &format!("refs/heads/{local}:refs/heads/{branch}"),
-                        ]);
+                        ]));
                     }
                 }
             }
@@ -708,6 +745,7 @@ impl Proof {
             branch: changes.branch,
             target_oid,
             remote_branch,
+            expected_remote_oid,
             dirty_files: changes.files.len(),
             affected_commits,
             operation: changes.operation,

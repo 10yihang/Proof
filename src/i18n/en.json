@@ -1568,5 +1568,15 @@
   "复制命令": "Copy command",
   "Agent 会话未能保存，请查看失败详情。": "The Agent session could not be saved. Check the failure details.",
   "每次运行新建会话并保留到对应 Agent。已有终端会话不会被接续。": "Each run creates and saves a new session in its Agent. Existing terminal sessions are never resumed.",
-  "会话由对应 Agent 管理，清除 Proof 本地数据不会删除这些会话。": "Sessions are managed by their Agent. Clearing Proof data does not delete them."
+  "会话由对应 Agent 管理，清除 Proof 本地数据不会删除这些会话。": "Sessions are managed by their Agent. Clearing Proof data does not delete them.",
+  "Push 方式": "Push mode",
+  "用本地 Branch 的历史更新远程 Branch。仅当远程仍指向下方确认的 Commit 时执行；远程发生变化则停止。": "Update the remote Branch with this local Branch history. Proceed only if the remote still points to the confirmed Commit below; stop if it has changed.",
+  "确认的远程 Commit": "Confirmed remote Commit",
+  "新建远程 Branch": "New remote Branch",
+  "定位 HEAD": "Locate HEAD",
+  "定位 HEAD · {v0}": "Locate HEAD · {v0}",
+  "当前分支 · {v0}": "Current branch · {v0}",
+  "HEAD 尚未加载时，显示当前分支历史。": "Show current branch history if HEAD is not loaded.",
+  "尚无提交": "No commits yet",
+  "本地 Commit": "Local Commit"
 }
