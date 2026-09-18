@@ -1,10 +1,13 @@
 import { DropdownMenuItem as MenuItem } from "./ui/dropdown-menu";
 import { Button } from "./ui/controls";
 import { t } from "../i18n";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ArrowRight,
+  CaretDown,
+  CaretRight,
   Check,
+  Folder,
   FolderOpen,
   GitBranch,
   HardDrives,
@@ -51,6 +54,21 @@ export function RepositoryView({
     x: number;
     y: number;
   } | null>(null);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
+    new Set(),
+  );
+
+  function toggleGroup(prefix: string) {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(prefix)) {
+        next.delete(prefix);
+      } else {
+        next.add(prefix);
+      }
+      return next;
+    });
+  }
 
   function compareBranches(base: BranchEntry, target: BranchEntry) {
     setComparison({
@@ -99,6 +117,42 @@ export function RepositoryView({
   const [busy, setBusy] = useState(false);
   const [historyScope, setHistoryScope] = useState("all");
   const [historyRef, setHistoryRef] = useState<string | null>(null);
+
+  // Group branches by path prefix (e.g. "codex/backup/*" → folder "codex/backup")
+  const groupedBranches = useMemo(() => {
+    const groups = new Map<
+      string,
+      { local: BranchEntry[]; remote: BranchEntry[] }
+    >();
+    const ungrouped: { local: BranchEntry[]; remote: BranchEntry[] } = {
+      local: [],
+      remote: [],
+    };
+
+    for (const branch of branches) {
+      const lastSlash = branch.name.lastIndexOf("/");
+      if (lastSlash <= 0) {
+        // No prefix or prefix at start (e.g. "/foo") → ungrouped
+        ungrouped[branch.remote ? "remote" : "local"].push(branch);
+        continue;
+      }
+      const prefix = branch.name.slice(0, lastSlash);
+      const key = `${branch.remote ? "remote" : "local"}:${prefix}`;
+      if (!groups.has(key)) {
+        groups.set(key, { local: [], remote: [] });
+      }
+      groups.get(key)![branch.remote ? "remote" : "local"].push(branch);
+    }
+
+    // Sort groups by name, ungrouped branches by name
+    const sortedGroups = [...groups.entries()].sort((a, b) =>
+      a[0].localeCompare(b[0]),
+    );
+    ungrouped.local.sort((a, b) => a.name.localeCompare(b.name));
+    ungrouped.remote.sort((a, b) => a.name.localeCompare(b.name));
+
+    return { groups: sortedGroups, ungrouped };
+  }, [branches]);
   useEffect(() => {
     let cancelled = false;
     setBusy(true);
@@ -319,7 +373,88 @@ export function RepositoryView({
         </div>
         {section === "branches" && (
           <div className="branch-list">
-            {branches.map((branch) => (
+            {/* Grouped branches (e.g. codex/backup/*) */}
+            {groupedBranches.groups.map(([key, { local, remote }]) => {
+              const prefix = key.slice(key.indexOf(":") + 1);
+              const allBranches = [...local, ...remote];
+              const isCollapsed = collapsedGroups.has(key);
+              return (
+                <div key={key} className="branch-group">
+                  <button
+                    className="branch-group-header"
+                    onClick={() => toggleGroup(key)}
+                    aria-expanded={!isCollapsed}
+                    aria-label={t(
+                      isCollapsed
+                        ? "展开 {v0} 分组"
+                        : "折叠 {v0} 分组",
+                      { v0: prefix },
+                    )}
+                  >
+                    {isCollapsed ? (
+                      <CaretRight size={14} />
+                    ) : (
+                      <CaretDown size={14} />
+                    )}
+                    <Folder size={15} />
+                    <span>{prefix}</span>
+                    <small>
+                      {allBranches.length} {t("个分支")}
+                    </small>
+                  </button>
+                  {!isCollapsed &&
+                    allBranches.map((branch) => (
+                      <div
+                        className="branch-row branch-row-grouped"
+                        key={`${branch.remote}:${branch.name}`}
+                        onContextMenu={(event) => branchContext(event, branch)}
+                      >
+                        <GitBranch size={19} />
+                        <div>
+                          <strong>
+                            {branch.name.slice(prefix.length + 1)}
+                          </strong>
+                          <small>
+                            {branch.remote
+                              ? t("远程引用 · 本地已知")
+                              : t("本地分支")}
+                            <code>{branch.oid.slice(0, 8)}</code>
+                          </small>
+                        </div>
+                        {branch.current ? (
+                          <span className="tag active-tag">
+                            <Check size={13} />
+                            {t("当前分支")}
+                          </span>
+                        ) : (
+                          !branch.remote && (
+                            <Button
+                              className="button compact"
+                              disabled={demo || busy || !changes.workspace.trusted}
+                              onClick={() => {
+                                actions.open("switch", { type: "branch", branch });
+                              }}
+                            >
+                              {t("切换 ")}
+                              <ArrowRight size={14} />
+                            </Button>
+                          )
+                        )}
+                        <HistoryMoreButton
+                          label={t("{v0} 的 Branch 操作", { v0: branch.name })}
+                          onClick={(event) => branchContext(event, branch)}
+                        />
+                      </div>
+                    ))}
+                </div>
+              );
+            })}
+
+            {/* Ungrouped branches */}
+            {[
+              ...groupedBranches.ungrouped.local,
+              ...groupedBranches.ungrouped.remote,
+            ].map((branch) => (
               <div
                 className="branch-row"
                 key={`${branch.remote}:${branch.name}`}

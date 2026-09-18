@@ -15,3 +15,7 @@ src-tauri/binaries/
 
 # Local updater signing keys; never publish or delete during artifact cleanup.
 .release-keys/
+
+# Internal SSO credential cache; never commit.
+.redInfo
+
