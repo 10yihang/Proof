@@ -96,6 +96,8 @@ export interface Preferences {
   contextOpen: boolean;
   strictReview: boolean;
   gitPath: string;
+  /** Delimiter used to group branch names into a collapsible tree (default "/"). */
+  branchDelimiter: string;
 }
 export interface RepositoryLayout {
   sidebarWidth: number;
@@ -297,6 +299,7 @@ export const defaultPreferences: Preferences = {
   contextOpen: true,
   strictReview: false,
   gitPath: "git",
+  branchDelimiter: "/",
 };
 export const fileKey = (file: Pick<ChangedFile, "side" | "path">) =>
   `${file.side}:${file.path}`;

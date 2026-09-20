@@ -3,10 +3,8 @@ import { Button } from "./ui/controls";
 import { t } from "../i18n";
 import { useEffect, useMemo, useState } from "react";
 import {
-  ArrowRight,
   CaretDown,
   CaretRight,
-  Check,
   Folder,
   FolderOpen,
   GitBranch,
@@ -14,6 +12,11 @@ import {
 } from "@phosphor-icons/react";
 import { useRequest } from "../api";
 import type { BranchEntry, Changes, WorktreeEntry } from "../types";
+import {
+  buildBranchTree,
+  countTreeBranches,
+  type BranchTreeNode,
+} from "../branch-tree";
 import type { HistoryComparison } from "./HistoryDiff";
 import { CommitHistory } from "./CommitHistory";
 import { branchRef } from "../history-actions";
@@ -25,7 +28,7 @@ import {
 } from "./HistoryActions";
 import type { HistoryActions } from "./HistoryActions";
 
-export type RepositorySection = "history" | "branches" | "worktrees";
+export type RepositorySection = "history" | "worktrees";
 
 export function RepositoryView({
   actions,
@@ -36,6 +39,7 @@ export function RepositoryView({
   onOpen,
   onError,
   onOpenDiff,
+  branchDelimiter = "/",
 }: {
   actions: HistoryActions;
   section: RepositorySection;
@@ -45,6 +49,7 @@ export function RepositoryView({
   onOpen: (path: string) => Promise<void>;
   onError: (e: unknown) => void;
   onOpenDiff: (value: HistoryComparison) => void;
+  branchDelimiter?: string;
 }) {
   const request = useRequest();
   const [comparison, setComparison] = useState<HistoryComparison | null>(null);
@@ -54,21 +59,6 @@ export function RepositoryView({
     x: number;
     y: number;
   } | null>(null);
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
-    new Set(),
-  );
-
-  function toggleGroup(prefix: string) {
-    setCollapsedGroups((prev) => {
-      const next = new Set(prev);
-      if (next.has(prefix)) {
-        next.delete(prefix);
-      } else {
-        next.add(prefix);
-      }
-      return next;
-    });
-  }
 
   function compareBranches(base: BranchEntry, target: BranchEntry) {
     setComparison({
@@ -114,48 +104,36 @@ export function RepositoryView({
   }, [section]);
   const [branches, setBranches] = useState<BranchEntry[]>([]);
   const [worktrees, setWorktrees] = useState<WorktreeEntry[]>([]);
-  const [busy, setBusy] = useState(false);
   const [historyScope, setHistoryScope] = useState("all");
   const [historyRef, setHistoryRef] = useState<string | null>(null);
 
-  // Group branches by path prefix (e.g. "codex/backup/*" → folder "codex/backup")
-  const groupedBranches = useMemo(() => {
-    const groups = new Map<
-      string,
-      { local: BranchEntry[]; remote: BranchEntry[] }
-    >();
-    const ungrouped: { local: BranchEntry[]; remote: BranchEntry[] } = {
-      local: [],
-      remote: [],
-    };
+  // Sidebar: nested tree keyed by the configurable delimiter. Remote names
+  // carry their remote prefix (origin/…), so they fold into the same shape.
+  const sidebarTree = useMemo(
+    () => ({
+      local: buildBranchTree(
+        branches.filter((b) => !b.remote),
+        branchDelimiter,
+      ),
+      remote: buildBranchTree(
+        branches.filter((b) => b.remote),
+        branchDelimiter,
+      ),
+    }),
+    [branches, branchDelimiter],
+  );
 
-    for (const branch of branches) {
-      const lastSlash = branch.name.lastIndexOf("/");
-      if (lastSlash <= 0) {
-        // No prefix or prefix at start (e.g. "/foo") → ungrouped
-        ungrouped[branch.remote ? "remote" : "local"].push(branch);
-        continue;
-      }
-      const prefix = branch.name.slice(0, lastSlash);
-      const key = `${branch.remote ? "remote" : "local"}:${prefix}`;
-      if (!groups.has(key)) {
-        groups.set(key, { local: [], remote: [] });
-      }
-      groups.get(key)![branch.remote ? "remote" : "local"].push(branch);
-    }
-
-    // Sort groups by name, ungrouped branches by name
-    const sortedGroups = [...groups.entries()].sort((a, b) =>
-      a[0].localeCompare(b[0]),
-    );
-    ungrouped.local.sort((a, b) => a.name.localeCompare(b.name));
-    ungrouped.remote.sort((a, b) => a.name.localeCompare(b.name));
-
-    return { groups: sortedGroups, ungrouped };
-  }, [branches]);
+  const [collapsedRefs, setCollapsedRefs] = useState<Set<string>>(new Set());
+  function toggleRefGroup(path: string) {
+    setCollapsedRefs((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }
   useEffect(() => {
     let cancelled = false;
-    setBusy(true);
     if (demo) {
       setBranches(demoGraphPage().branches);
       setWorktrees([
@@ -166,7 +144,6 @@ export function RepositoryView({
           locked: false,
         },
       ]);
-      setBusy(false);
       return;
     }
     void Promise.all([
@@ -184,9 +161,6 @@ export function RepositoryView({
       .catch((e) => {
         if (!cancelled) onError(e);
       })
-      .finally(() => {
-        if (!cancelled) setBusy(false);
-      });
     return () => {
       cancelled = true;
     };
@@ -208,6 +182,99 @@ export function RepositoryView({
       setBranchAnchor(null);
     }
   }, [branches, historyScope]);
+
+  // Render a single branch leaf row in the History sidebar tree.
+  function renderSidebarLeaf(branch: BranchEntry, depth: number) {
+    const indent = depth * 16;
+    const segments = branch.name.split(branchDelimiter);
+    const leafName = segments[segments.length - 1] || branch.name;
+    return (
+      <div
+        className="repo-ref-wrap"
+        key={`${branch.remote}:${branch.name}`}
+        style={{ paddingLeft: `${indent}px` }}
+      >
+        <Button
+          className={`repo-ref ${branch.current ? "is-current" : ""} ${historyRef === `${branch.remote ? "remote" : "local"}:${branch.name}` ? "active" : ""}`}
+          title={t(
+            branch.remote
+              ? "查看 {v0} 的本地历史"
+              : "查看 {v0} 的历史",
+            { v0: branch.name },
+          )}
+          onClick={(event) =>
+            chooseBranch(
+              branch,
+              event.metaKey || event.ctrlKey || event.shiftKey,
+            )
+          }
+          onContextMenu={(event) => branchContext(event, branch)}
+          onDoubleClick={() => {
+            if (!actions.disabled && !branch.current)
+              actions.open("switch", { type: "branch", branch });
+          }}
+        >
+          <GitBranch size={14} />
+          <span>{leafName}</span>
+          {branch.current && (
+            <span className="current-ref-badge" aria-label={t("当前分支")}>
+              HEAD
+            </span>
+          )}
+        </Button>
+        <HistoryMoreButton
+          label={t("{v0} 的 Branch 操作", { v0: branch.name })}
+          onClick={(event) => branchContext(event, branch)}
+        />
+      </div>
+    );
+  }
+
+  // Render a folder node (and its children) in the History sidebar tree.
+  function renderSidebarNode(
+    node: BranchTreeNode,
+    depth: number,
+  ): React.ReactNode {
+    const isCollapsed = collapsedRefs.has(node.path);
+    const indent = depth * 16;
+
+    if (node.branch) {
+      // Leaf: an actual branch
+      return renderSidebarLeaf(node.branch, depth);
+    }
+
+    // Folder: only render if it has children
+    if (!node.children.length) return null;
+
+    return (
+      <div className="repo-ref-tree-node" key={node.path}>
+        <button
+          className="repo-ref repo-ref-folder"
+          style={{ paddingLeft: `${indent}px` }}
+          onClick={() => toggleRefGroup(node.path)}
+          aria-expanded={!isCollapsed}
+          aria-label={t(
+            isCollapsed ? "展开 {v0} 分组" : "折叠 {v0} 分组",
+            { v0: node.path },
+          )}
+        >
+          {isCollapsed ? <CaretRight size={13} /> : <CaretDown size={13} />}
+          <Folder size={14} />
+          <span>{node.name}</span>
+          <span className="repo-ref-count">{countTreeBranches(node)}</span>
+        </button>
+        <div
+          className={`repo-ref-children ${isCollapsed ? "" : "is-open"}`}
+          aria-hidden={isCollapsed}
+        >
+          <div className="repo-ref-children-inner">
+            {node.children.map((child) => renderSidebarNode(child, depth + 1))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <main className="repository-view">
       <aside className="repository-nav">
@@ -240,76 +307,14 @@ export function RepositoryView({
               <GitBranch size={15} />
               <span>{t("所有分支")}</span>
             </Button>
-            {branches
-              .filter((branch) => !branch.remote)
-              .map((branch) => (
-                <div className="repo-ref-wrap" key={branch.name}>
-                  <Button
-                    className={`repo-ref ${branch.current ? "is-current" : ""} ${historyRef === `${branch.remote ? "remote" : "local"}:${branch.name}` ? "active" : ""}`}
-                    title={t("查看 {v0} 的历史", { v0: branch.name })}
-                    onClick={(event) =>
-                      chooseBranch(
-                        branch,
-                        event.metaKey || event.ctrlKey || event.shiftKey,
-                      )
-                    }
-                    onContextMenu={(event) => branchContext(event, branch)}
-                    onDoubleClick={() => {
-                      if (!actions.disabled && !branch.current)
-                        actions.open("switch", { type: "branch", branch });
-                    }}
-                  >
-                    <GitBranch size={14} />
-                    <span>{branch.name}</span>
-                    {branch.current && (
-                      <span
-                        className="current-ref-badge"
-                        aria-label={t("当前分支")}
-                      >
-                        HEAD
-                      </span>
-                    )}
-                  </Button>
-                  <HistoryMoreButton
-                    label={t("{v0} 的 Branch 操作", { v0: branch.name })}
-                    onClick={(event) => branchContext(event, branch)}
-                  />
-                </div>
-              ))}
-            {branches.some((branch) => branch.remote) && (
+            {sidebarTree.local.map((node) => renderSidebarNode(node, 0))}
+            {sidebarTree.remote.length > 0 && (
               <>
                 <div className="refs-heading">
                   <span>{t("远程引用")}</span>
                   <span>{t("本地已知")}</span>
                 </div>
-                {branches
-                  .filter((branch) => branch.remote)
-                  .map((branch) => (
-                    <div className="repo-ref-wrap" key={branch.name}>
-                      <Button
-                        className={`repo-ref ${historyRef === `${branch.remote ? "remote" : "local"}:${branch.name}` ? "active" : ""}`}
-                        title={t("查看 {v0} 的本地历史", { v0: branch.name })}
-                        onClick={(event) =>
-                          chooseBranch(
-                            branch,
-                            event.metaKey || event.ctrlKey || event.shiftKey,
-                          )
-                        }
-                        onContextMenu={(event) => branchContext(event, branch)}
-                        onDoubleClick={() => {
-                          if (!actions.disabled)
-                            actions.open("switch", { type: "branch", branch });
-                        }}
-                      >
-                        <GitBranch size={14} />
-                        <span>{branch.name}</span>
-                      </Button>
-                      <HistoryMoreButton
-                        label={t("{v0} 的 Branch 操作", { v0: branch.name })}
-                        onClick={(event) => branchContext(event, branch)}
-                      />
-                    </div>
-                  ))}
+                {sidebarTree.remote.map((node) => renderSidebarNode(node, 0))}
               </>
             )}
           </div>
@@ -324,23 +329,9 @@ export function RepositoryView({
         {section !== "history" && (
           <header className="repository-header">
             <div>
-              <h2>{section === "branches" ? t("分支") : "Worktree"}</h2>
-              <p>
-                {section === "branches"
-                  ? t("本地分支与已知远程引用。")
-                  : t("每个 worktree 的代码和审查进度独立保存。")}
-              </p>
+              <h2>Worktree</h2>
+              <p>{t("每个 worktree 的代码和审查进度独立保存。")}</p>
             </div>
-            {section === "branches" && (
-              <Button
-                className="button compact"
-                disabled={demo || !changes.workspace.trusted || busy}
-                onClick={() => actions.open("createBranch")}
-              >
-                <GitBranch size={15} />
-                {t("创建分支")}
-              </Button>
-            )}
           </header>
         )}
         <div className="repository-page" hidden={section !== "history"}>
@@ -371,130 +362,6 @@ export function RepositoryView({
             />
           )}
         </div>
-        {section === "branches" && (
-          <div className="branch-list">
-            {/* Grouped branches (e.g. codex/backup/*) */}
-            {groupedBranches.groups.map(([key, { local, remote }]) => {
-              const prefix = key.slice(key.indexOf(":") + 1);
-              const allBranches = [...local, ...remote];
-              const isCollapsed = collapsedGroups.has(key);
-              return (
-                <div key={key} className="branch-group">
-                  <button
-                    className="branch-group-header"
-                    onClick={() => toggleGroup(key)}
-                    aria-expanded={!isCollapsed}
-                    aria-label={t(
-                      isCollapsed
-                        ? "展开 {v0} 分组"
-                        : "折叠 {v0} 分组",
-                      { v0: prefix },
-                    )}
-                  >
-                    {isCollapsed ? (
-                      <CaretRight size={14} />
-                    ) : (
-                      <CaretDown size={14} />
-                    )}
-                    <Folder size={15} />
-                    <span>{prefix}</span>
-                    <small>
-                      {allBranches.length} {t("个分支")}
-                    </small>
-                  </button>
-                  {!isCollapsed &&
-                    allBranches.map((branch) => (
-                      <div
-                        className="branch-row branch-row-grouped"
-                        key={`${branch.remote}:${branch.name}`}
-                        onContextMenu={(event) => branchContext(event, branch)}
-                      >
-                        <GitBranch size={19} />
-                        <div>
-                          <strong>
-                            {branch.name.slice(prefix.length + 1)}
-                          </strong>
-                          <small>
-                            {branch.remote
-                              ? t("远程引用 · 本地已知")
-                              : t("本地分支")}
-                            <code>{branch.oid.slice(0, 8)}</code>
-                          </small>
-                        </div>
-                        {branch.current ? (
-                          <span className="tag active-tag">
-                            <Check size={13} />
-                            {t("当前分支")}
-                          </span>
-                        ) : (
-                          !branch.remote && (
-                            <Button
-                              className="button compact"
-                              disabled={demo || busy || !changes.workspace.trusted}
-                              onClick={() => {
-                                actions.open("switch", { type: "branch", branch });
-                              }}
-                            >
-                              {t("切换 ")}
-                              <ArrowRight size={14} />
-                            </Button>
-                          )
-                        )}
-                        <HistoryMoreButton
-                          label={t("{v0} 的 Branch 操作", { v0: branch.name })}
-                          onClick={(event) => branchContext(event, branch)}
-                        />
-                      </div>
-                    ))}
-                </div>
-              );
-            })}
-
-            {/* Ungrouped branches */}
-            {[
-              ...groupedBranches.ungrouped.local,
-              ...groupedBranches.ungrouped.remote,
-            ].map((branch) => (
-              <div
-                className="branch-row"
-                key={`${branch.remote}:${branch.name}`}
-                onContextMenu={(event) => branchContext(event, branch)}
-              >
-                <GitBranch size={19} />
-                <div>
-                  <strong>{branch.name}</strong>
-                  <small>
-                    {branch.remote ? t("远程引用 · 本地已知") : t("本地分支")}
-                    <code>{branch.oid.slice(0, 8)}</code>
-                  </small>
-                </div>
-                {branch.current ? (
-                  <span className="tag active-tag">
-                    <Check size={13} />
-                    {t("当前分支")}
-                  </span>
-                ) : (
-                  !branch.remote && (
-                    <Button
-                      className="button compact"
-                      disabled={demo || busy || !changes.workspace.trusted}
-                      onClick={() => {
-                        actions.open("switch", { type: "branch", branch });
-                      }}
-                    >
-                      {t("切换 ")}
-                      <ArrowRight size={14} />
-                    </Button>
-                  )
-                )}
-                <HistoryMoreButton
-                  label={t("{v0} 的 Branch 操作", { v0: branch.name })}
-                  onClick={(event) => branchContext(event, branch)}
-                />
-              </div>
-            ))}
-          </div>
-        )}
         {section === "worktrees" && (
           <div className="worktree-list">
             {worktrees.map((tree) => (

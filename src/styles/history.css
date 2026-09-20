@@ -585,6 +585,8 @@
   margin: 18px -2px 0;
   min-height: 0;
   overflow: auto;
+  /* Reserve scrollbar track so expanding a group doesn't shift content */
+  scrollbar-gutter: stable;
 }
 .refs-heading {
   display: flex;
@@ -687,6 +689,40 @@
   display: flex;
   align-items: center;
   min-width: 0;
+}
+/* Collapsible tree folder in the History sidebar */
+.repo-ref-folder {
+  color: var(--text);
+  font-weight: 550;
+  width: 100%;
+  text-align: left;
+}
+.repo-ref-folder .repo-ref-count {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--faint);
+}
+/* Smooth expand/collapse: animate the children container height.
+   The single inner wrapper is required: grid-template-rows animates the
+   track, and the wrapper clips the content while it shrinks. No `hidden`
+   attribute — display:none would skip the transition entirely. */
+.repo-ref-children {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--motion-panel) var(--ease-out);
+}
+.repo-ref-children-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+.repo-ref-children.is-open {
+  grid-template-rows: 1fr;
+}
+@media (prefers-reduced-motion: reduce) {
+  .repo-ref-children {
+    transition: none;
+  }
 }
 .repo-ref-wrap .repo-ref {
   min-width: 0;

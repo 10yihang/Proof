@@ -303,6 +303,25 @@ export function Settings({
                     }}
                   />
                 </label>
+                <label className="field-label" htmlFor="branch-delimiter">
+                  {t("分支分组分隔符")}
+                </label>
+                <Input
+                  id="branch-delimiter"
+                  defaultValue={preferences.branchDelimiter}
+                  placeholder="/"
+                  maxLength={1}
+                  onBlur={(e) => {
+                    const value = e.target.value.trim() || "/";
+                    if (value !== preferences.branchDelimiter)
+                      void onChange({ branchDelimiter: value });
+                  }}
+                />
+                <p className="inline-help">
+                  {t(
+                    "按此字符把分支名折叠为树。例如 feature/login 在 / 下归入 feature 文件夹。",
+                  )}
+                </p>
                 {layout && (
                   <RepositoryLayoutSettings
                     key={layout.key}

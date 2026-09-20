@@ -340,6 +340,9 @@ impl Store {
             || !["unified", "split"].contains(&preferences.diff_mode.as_str())
             || preferences.git_path.is_empty()
             || preferences.git_path.contains('\0')
+            || preferences.branch_delimiter.is_empty()
+            || preferences.branch_delimiter.chars().count() > 4
+            || preferences.branch_delimiter.chars().any(|c| c.is_control())
         {
             return Err(Error::new(
                 "INVALID_SETTING",

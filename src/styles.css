@@ -1709,61 +1709,6 @@ kbd {
     transform: translateY(0);
   }
 }
-.branch-group {
-  border-bottom: 1px solid var(--border);
-}
-.branch-group-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 14px 10px;
-  font-size: 12px;
-  font-weight: 550;
-  color: var(--text);
-  cursor: pointer;
-  user-select: none;
-  width: 100%;
-  text-align: left;
-}
-.branch-group-header:hover {
-  background: var(--hover);
-}
-.branch-group-header small {
-  font-size: 10px;
-  color: var(--muted);
-  font-weight: normal;
-  margin-left: auto;
-}
-.branch-row {
-  display: flex;
-  align-items: center;
-  gap: 13px;
-  border-bottom: 1px solid var(--border);
-  padding: 18px 10px;
-}
-.branch-row-grouped {
-  padding-left: 32px;
-  border-bottom: none;
-  border-top: 1px solid var(--border);
-}
-.branch-row > div {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  flex: 1;
-}
-.branch-row strong {
-  font-size: 12px;
-  font-weight: 550;
-}
-.branch-row small {
-  font-size: 10px;
-  color: var(--muted);
-}
-.branch-row code {
-  font-size: 9px;
-  margin-left: 12px;
-}
 .tag {
   font-size: 9px;
   padding: 4px 7px;

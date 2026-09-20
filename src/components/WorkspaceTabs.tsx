@@ -7,7 +7,6 @@ import { LayoutGroup, motion, useReducedMotion } from "motion/react";
 import {
   ClockCounterClockwise,
   Files,
-  GitBranch,
   GitCommit,
   GitDiff,
   X,
@@ -22,7 +21,7 @@ const tabPointer = PointerSensor.configure({
   ],
 });
 export type WorkspaceView =
-  "changes" | "commit" | "history" | "branches" | `diff:${string}`;
+  "changes" | "commit" | "history" | `diff:${string}`;
 export interface ComparisonTab {
   id: `diff:${string}`;
   workspaceId: string;
@@ -72,7 +71,6 @@ export function WorkspaceTabs({
     },
     { id: "commit", label: t("Commit"), icon: GitCommit, count: stagedCount },
     { id: "history", label: t("History"), icon: ClockCounterClockwise },
-    { id: "branches", label: t("Branches"), icon: GitBranch },
   ] as const;
   const indicator = (
     <motion.span

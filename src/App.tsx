@@ -1436,13 +1436,11 @@ export default function App({
         !dialog &&
         changes &&
         (event.metaKey || event.ctrlKey) &&
-        /^[1-4]$/.test(event.key)
+        /^[1-3]$/.test(event.key)
       ) {
         event.preventDefault();
         selectWorkspaceView(
-          (["changes", "commit", "history", "branches"] as const)[
-            Number(event.key) - 1
-          ],
+          (["changes", "commit", "history"] as const)[Number(event.key) - 1],
         );
         return;
       }
@@ -1626,13 +1624,9 @@ export default function App({
     setTab("repository");
   }
   const workspaceView: WorkspaceView =
-    tab === "repository"
-      ? repositorySection === "branches"
-        ? "branches"
-        : "history"
-      : tab;
+    tab === "repository" ? "history" : tab;
   function selectWorkspaceView(view: WorkspaceView) {
-    if (view === "history" || view === "branches") showRepository(view);
+    if (view === "history") showRepository("history");
     else if (view === "commit") showCommit();
     else setTab(view);
   }
@@ -1690,13 +1684,7 @@ export default function App({
             onReorder={(source, target) =>
               setDiffTabs((tabs) => reorderComparisonTabs(tabs, source, target))
             }
-            active={
-              tab === "repository"
-                ? repositorySection === "history"
-                  ? "history"
-                  : "branches"
-                : tab
-            }
+            active={tab === "repository" ? "history" : tab}
             changesCount={changes.files.length}
             stagedCount={stagedCount}
             comparisons={diffTabs.filter(
@@ -1993,7 +1981,7 @@ export default function App({
           <Tabs.Panel
             keepMounted
             hidden={tab !== "repository"}
-            value={repositorySection === "branches" ? "branches" : "history"}
+            value="history"
             className="workspace-page"
           >
             {(repositoryVisited || tab === "repository") && (
@@ -2010,6 +1998,7 @@ export default function App({
                   if (current.current?.workspace.id === changes.workspace.id)
                     setError(asError(e));
                 }}
+                branchDelimiter={preferences.branchDelimiter}
               />
             )}
           </Tabs.Panel>

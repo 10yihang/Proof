@@ -294,6 +294,12 @@ pub struct Preferences {
     pub context_open: bool,
     pub strict_review: bool,
     pub git_path: String,
+    /// Delimiter used to group branch names into a collapsible tree (default "/").
+    #[serde(default = "default_branch_delimiter")]
+    pub branch_delimiter: String,
+}
+fn default_branch_delimiter() -> String {
+    "/".to_string()
 }
 /// UI layout belongs to a local repository, including its linked worktrees.
 /// It is separate from Git/Agent configuration and from review state.
@@ -328,6 +334,7 @@ impl Default for Preferences {
             context_open: true,
             strict_review: false,
             git_path: "git".into(),
+            branch_delimiter: default_branch_delimiter(),
         }
     }
 }
