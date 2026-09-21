@@ -101,9 +101,9 @@ test("File history retries the same version and path after a transient Blame fai
     exact: true,
   });
   await modal.getByRole("button", { name: /Saved version/ }).click();
-  await expect(modal.getByRole("alert").filter({hasText:/\S/})).toContainText(
-    "Temporary Git read failure",
-  );
+  await expect(
+    modal.getByRole("alert").filter({ hasText: /\S/ }),
+  ).toContainText("Temporary Git read failure");
   await modal.getByRole("button", { name: "读取", exact: true }).click();
   await expect(
     modal.getByRole("region", { name: "所选版本的逐行归属" }),
@@ -126,9 +126,9 @@ test("File history and current Worktree Blame recover independently after failed
     name: "文件历史与 Blame",
     exact: true,
   });
-  await expect(modal.getByRole("alert").filter({hasText:/\S/})).toContainText(
-    "Temporary Git read failure",
-  );
+  await expect(
+    modal.getByRole("alert").filter({ hasText: /\S/ }),
+  ).toContainText("Temporary Git read failure");
   await expect(modal).toContainText("文件历史读取失败");
   const before = await page.evaluate(() => {
     const w = window as any;
@@ -141,9 +141,9 @@ test("File history and current Worktree Blame recover independently after failed
   await expect(
     modal.getByRole("region", { name: "所选版本的逐行归属" }),
   ).toContainText("current Worktree source");
-  await expect(modal.getByRole("alert").filter({hasText:/\S/})).toContainText(
-    "Temporary history read failure",
-  );
+  await expect(
+    modal.getByRole("alert").filter({ hasText: /\S/ }),
+  ).toContainText("Temporary history read failure");
   expect(await page.evaluate(() => (window as any).historyReads)).toBe(
     before.history,
   );
@@ -156,7 +156,9 @@ test("File history and current Worktree Blame recover independently after failed
   await expect(
     modal.getByRole("button", { name: /Saved version/ }),
   ).toBeVisible();
-  await expect(modal.getByRole("alert").filter({hasText:/\S/})).toHaveCount(0);
+  await expect(modal.getByRole("alert").filter({ hasText: /\S/ })).toHaveCount(
+    0,
+  );
   expect(
     await page.evaluate(() => ({
       history: (window as any).historyReads,
@@ -170,9 +172,7 @@ test("Local changes uses one-line context controls and a standalone Full file bu
 }) => {
   await openFixture(page);
   await expect(
-    page
-      .locator(".workspace-tabs .view-tab")
-      .filter({hasText:/^本地变更/}),
+    page.locator(".workspace-tabs .view-tab").filter({ hasText: /^本地变更/ }),
   ).toBeVisible();
   const context = page.getByLabel("上下文行数");
   await expect(context).toHaveText("3");
@@ -273,9 +273,7 @@ test("comparison Review reconciles late replies across two tabs without restorin
 }) => {
   await openFixture(page);
   const navigation = page.getByRole("navigation", { name: "Worktree" });
-  await navigation
-    .getByRole("tab", { name: "History", exact: true })
-    .click();
+  await navigation.getByRole("tab", { name: "History", exact: true }).click();
   const graph = page.getByRole("listbox", { name: "提交列表与分支关系" });
   await graph.getByRole("option").first().dblclick();
   const tabs = page.locator(".diff-tab-page");
@@ -371,9 +369,7 @@ test("Review invalidates cached comparison directions even while another directi
 }) => {
   await openFixture(page);
   const navigation = page.getByRole("navigation", { name: "Worktree" });
-  await navigation
-    .getByRole("tab", { name: "History", exact: true })
-    .click();
+  await navigation.getByRole("tab", { name: "History", exact: true }).click();
   const graph = page.getByRole("listbox", { name: "提交列表与分支关系" });
   await graph.getByRole("option").first().dblclick();
   await page.getByRole("button", { name: "返回 History", exact: true }).click();
@@ -417,9 +413,7 @@ test("Review reconciliation resumes after its tab is hidden during a read", asyn
 }) => {
   await openFixture(page);
   const navigation = page.getByRole("navigation", { name: "Worktree" });
-  await navigation
-    .getByRole("tab", { name: "History", exact: true })
-    .click();
+  await navigation.getByRole("tab", { name: "History", exact: true }).click();
   await page
     .getByRole("listbox", { name: "提交列表与分支关系" })
     .getByRole("option")
@@ -446,9 +440,7 @@ test("Review reconciliation resumes after its tab is hidden during a read", asyn
   await expect
     .poll(() => page.evaluate(() => !!(window as any).releaseReviewRead))
     .toBe(true);
-  await navigation
-    .getByRole("tab", { name: "History", exact: true })
-    .click();
+  await navigation.getByRole("tab", { name: "History", exact: true }).click();
   await navigation.locator(".diff-tab-button").last().click();
   await page.evaluate(() => {
     (window as any).releaseReviewRead();
@@ -499,7 +491,9 @@ test("failed Review reconciliation exposes retry and never presents stale marks 
     };
   });
   await tab.locator(".hunk-review").first().click();
-  await expect(tab.getByRole("alert").filter({hasText:/\S/})).toContainText("Review 状态读取失败");
+  await expect(tab.getByRole("alert").filter({ hasText: /\S/ })).toContainText(
+    "Review 状态读取失败",
+  );
   await expect(tab.locator(".hunk-review")).toHaveCount(0);
   await page.evaluate(() => {
     (window as any).failReviewRead = false;
@@ -575,7 +569,9 @@ test("full-file search cancels without accepting late text and keeps its scope h
     (window as any).failContext = true;
   });
   await page.getByRole("button", { name: "全文", exact: true }).click();
-  await expect(page.getByRole("alert").filter({hasText:/\S/})).toContainText("完整内容超过读取上限");
+  await expect(page.getByRole("alert").filter({ hasText: /\S/ })).toContainText(
+    "完整内容超过读取上限",
+  );
   await expect(
     page.getByRole("button", { name: "全文", exact: true }),
   ).toHaveAttribute("aria-pressed", "false");
@@ -614,9 +610,7 @@ test("full-file search restores its range after leaving a historical tab", async
     };
   });
   const navigation = page.getByRole("navigation", { name: "Worktree" });
-  await navigation
-    .getByRole("tab", { name: "History", exact: true })
-    .click();
+  await navigation.getByRole("tab", { name: "History", exact: true }).click();
   await page
     .getByRole("listbox", { name: "提交列表与分支关系" })
     .getByRole("option")
@@ -628,14 +622,12 @@ test("full-file search restores its range after leaving a historical tab", async
   await tab
     .getByLabel("搜索当前 Diff", { exact: true })
     .fill("unchanged searchable tail");
-  await expect(tab.locator(".view-line:has(.proof-search-match)").first()).toContainText(
-    "unchanged searchable tail",
-  );
+  await expect(
+    tab.locator(".view-line:has(.proof-search-match)").first(),
+  ).toContainText("unchanged searchable tail");
   await tab.getByRole("button", { name: "下一个匹配行", exact: true }).click();
   await expect(tab.getByLabel("匹配行数")).toContainText("2/3");
-  await navigation
-    .getByRole("tab", { name: "History", exact: true })
-    .click();
+  await navigation.getByRole("tab", { name: "History", exact: true }).click();
   await expect(tab.locator(".diff-scroll")).not.toContainText(
     "unchanged searchable tail",
   );
@@ -644,9 +636,9 @@ test("full-file search restores its range after leaving a historical tab", async
     tab.getByRole("button", { name: "全文", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
   await expect(tab.getByLabel("匹配行数")).toContainText("2/3");
-  await expect(tab.locator(".view-line:has(.proof-search-match)").first()).toContainText(
-    "unchanged searchable tail",
-  );
+  await expect(
+    tab.locator(".view-line:has(.proof-search-match)").first(),
+  ).toContainText("unchanged searchable tail");
   expect(await page.evaluate(() => (window as any).fullContextReads)).toBe(2);
 });
 
@@ -713,7 +705,7 @@ for (const route of [
       tab.getByRole("button", { name: "全文", exact: true }),
     ).toHaveAttribute("aria-pressed", "true");
     const scroll = tab.locator(".diff-scroll");
-    await setEditorScroll(scroll,{scrollTop:9000});
+    await setEditorScroll(scroll, { scrollTop: 9000 });
     const visiblePosition = () => visibleSourcePosition(scroll);
     const before = await visiblePosition();
     expect(Number(before?.key.split(" ").at(-1))).toBeGreaterThanOrEqual(100);
@@ -804,9 +796,9 @@ for (const outcome of ["cancel", "failure"] as const) {
       await tab.getByRole("button", { name: "取消读取", exact: true }).click();
       await page.evaluate(() => (window as any).releaseContext());
     } else
-      await expect(tab.getByRole("alert").filter({hasText:/\S/})).toContainText(
-        "Context limit fixture",
-      );
+      await expect(
+        tab.getByRole("alert").filter({ hasText: /\S/ }),
+      ).toContainText("Context limit fixture");
     await tab
       .getByRole("button", { name: "response.ts M", exact: true })
       .click();
@@ -861,7 +853,9 @@ test("file search includes whitespace-only changes and restores the reading filt
   await page
     .getByRole("button", { name: "Diff 阅读选项", exact: true })
     .click();
-  await page.getByRole("checkbox",{name:"隐藏空白变化",exact:true}).check();
+  await page
+    .getByRole("checkbox", { name: "隐藏空白变化", exact: true })
+    .check();
   await expect(page.locator(".hidden-diff-lines")).toBeVisible();
   await page.getByRole("button", { name: "搜索文件内容", exact: true }).click();
   await page
@@ -872,8 +866,12 @@ test("file search includes whitespace-only changes and restores the reading filt
   await page
     .getByRole("button", { name: "关闭文件内容搜索", exact: true })
     .click();
-  await page.getByRole("button",{name:"Diff 阅读选项",exact:true}).click();
-  await expect(page.getByRole("checkbox",{name:"隐藏空白变化",exact:true})).toBeChecked();
+  await page
+    .getByRole("button", { name: "Diff 阅读选项", exact: true })
+    .click();
+  await expect(
+    page.getByRole("checkbox", { name: "隐藏空白变化", exact: true }),
+  ).toBeChecked();
   await page.keyboard.press("Escape");
   await expect(page.locator(".hidden-diff-lines")).toBeVisible();
   expect(
@@ -920,16 +918,24 @@ test("Full file shrinking resets split widths and horizontal offsets", async ({
   await page
     .getByLabel("搜索当前 Diff", { exact: true })
     .fill("long unchanged");
-  await expect(page.locator(".view-line:has(.proof-search-match)").first()).toContainText(
-    "long unchanged",
-  );
-  const bar=page.locator(".diff-scroll");
-  await expect.poll(async()=> (await editorState(bar,"old"))?.width??0).toBeGreaterThan(10000);
-  await setEditorScroll(bar,{scrollLeft:20000},"old");
-  await expect.poll(async()=> (await editorState(bar,"old"))?.left??0).toBeGreaterThan(10000);
+  await expect(
+    page.locator(".view-line:has(.proof-search-match)").first(),
+  ).toContainText("long unchanged");
+  const bar = page.locator(".diff-scroll");
+  await expect
+    .poll(async () => (await editorState(bar, "old"))?.width ?? 0)
+    .toBeGreaterThan(10000);
+  await setEditorScroll(bar, { scrollLeft: 20000 }, "old");
+  await expect
+    .poll(async () => (await editorState(bar, "old"))?.left ?? 0)
+    .toBeGreaterThan(10000);
   await page.getByRole("button", { name: "全文", exact: true }).click();
-  await expect.poll(async()=> (await editorState(bar,"old"))?.width??Infinity).toBeLessThan(3000);
-  await expect.poll(async()=> (await editorState(bar,"old"))?.left??Infinity).toBeLessThan(3000);
+  await expect
+    .poll(async () => (await editorState(bar, "old"))?.width ?? Infinity)
+    .toBeLessThan(3000);
+  await expect
+    .poll(async () => (await editorState(bar, "old"))?.left ?? Infinity)
+    .toBeLessThan(3000);
 });
 
 test("healthy file watching refreshes on events without continuous Git polling", async ({
@@ -982,34 +988,54 @@ test("a runtime watcher failure resumes fallback refresh", async ({ page }) => {
     ).content = "Fallback file update";
     state.changes.token += ":fallback-save";
   });
-  await expect(page.getByRole("alert").filter({hasText:/\S/})).toHaveCount(0);
+  await expect(page.getByRole("alert").filter({ hasText: /\S/ })).toHaveCount(
+    0,
+  );
   await expect(page.locator(".diff-scroll")).toContainText(
     "Fallback file update",
   );
 });
 
-test("background changes stay readable without a loading overlay or toast", async ({ page }) => {
+test("background changes stay readable without a loading overlay or toast", async ({
+  page,
+}) => {
   await openFixture(page, true);
-  await expect.poll(() => page.evaluate(() => (window as any).fixture.watchStarts)).toBe(1);
+  await expect
+    .poll(() => page.evaluate(() => (window as any).fixture.watchStarts))
+    .toBe(1);
   await page.evaluate(() => {
-    const w = window as any, original = w.__TAURI_INTERNALS__.invoke, state = w.fixture;
+    const w = window as any,
+      original = w.__TAURI_INTERNALS__.invoke,
+      state = w.fixture;
     w.__TAURI_INTERNALS__.invoke = async (name: string, payload: any) => {
       if (payload?.command === "read_file_diff") {
-        await new Promise<void>((resolve) => { w.finishBackgroundDiff = resolve; });
+        await new Promise<void>((resolve) => {
+          w.finishBackgroundDiff = resolve;
+        });
       }
       return original(name, payload);
     };
-    state.diffs["src/api/requests.ts"].hunks[0].lines.find((line: any) => line.kind === "add").content = "Quietly refreshed content";
+    state.diffs["src/api/requests.ts"].hunks[0].lines.find(
+      (line: any) => line.kind === "add",
+    ).content = "Quietly refreshed content";
     state.changes.token += ":quiet-refresh";
     state.emitNativeEvent("workspace-invalidated", state.changes.workspace.id);
   });
-  await expect.poll(() => page.evaluate(() => typeof (window as any).finishBackgroundDiff)).toBe("function");
+  await expect
+    .poll(() =>
+      page.evaluate(() => typeof (window as any).finishBackgroundDiff),
+    )
+    .toBe("function");
   await expect(page.locator(".diff-scroll")).toBeVisible();
   await expect(page.locator(".diff-loading-layer")).toHaveCount(0);
-  await expect(page.getByRole("alert").filter({ hasText: /\S/ })).toHaveCount(0);
+  await expect(page.getByRole("alert").filter({ hasText: /\S/ })).toHaveCount(
+    0,
+  );
   await expect(page.locator(".live-status")).toHaveText("实时");
   await page.evaluate(() => (window as any).finishBackgroundDiff());
-  await expect(page.locator(".diff-scroll")).toContainText("Quietly refreshed content");
+  await expect(page.locator(".diff-scroll")).toContainText(
+    "Quietly refreshed content",
+  );
 });
 
 for (const command of ["changes", "read_file_diff"] as const) {
@@ -1154,9 +1180,7 @@ test("large historical Diff loads in its tab and releases its hidden rendered bo
   await openFixture(page);
   await installLargeDiff(page, "src/api/requests.ts");
   const navigation = page.getByRole("navigation", { name: "Worktree" });
-  await navigation
-    .getByRole("tab", { name: "History", exact: true })
-    .click();
+  await navigation.getByRole("tab", { name: "History", exact: true }).click();
   await page
     .getByRole("listbox", { name: "提交列表与分支关系" })
     .getByRole("option")
@@ -1167,9 +1191,7 @@ test("large historical Diff loads in its tab and releases its hidden rendered bo
   await expect(
     tab.getByRole("region", { name: "代码差异", exact: true }),
   ).toBeVisible();
-  await navigation
-    .getByRole("tab", { name: "History", exact: true })
-    .click();
+  await navigation.getByRole("tab", { name: "History", exact: true }).click();
   await expect(
     tab.getByRole("region", { name: "代码差异", exact: true }),
   ).toHaveCount(0);
@@ -1300,9 +1322,7 @@ test("a released large historical Diff restores its wrapped source line", async 
     ];
   });
   const navigation = page.getByRole("navigation", { name: "Worktree" });
-  await navigation
-    .getByRole("tab", { name: "History", exact: true })
-    .click();
+  await navigation.getByRole("tab", { name: "History", exact: true }).click();
   await page
     .getByRole("listbox", { name: "提交列表与分支关系" })
     .getByRole("option")
@@ -1312,15 +1332,13 @@ test("a released large historical Diff restores its wrapped source line", async 
   await tab.getByRole("button", { name: "加载 Diff", exact: true }).click();
   await tab.getByRole("button", { name: "切换自动换行", exact: true }).click();
   const scroll = tab.locator(".diff-scroll");
-  await setEditorScroll(scroll,{scrollTop:12000});
-  const visiblePosition=()=>visibleSourcePosition(scroll);
+  await setEditorScroll(scroll, { scrollTop: 12000 });
+  const visiblePosition = () => visibleSourcePosition(scroll);
   let before: Awaited<ReturnType<typeof visiblePosition>> = null;
   await expect
     .poll(async () => (before = await visiblePosition()))
     .not.toBeNull();
-  await navigation
-    .getByRole("tab", { name: "History", exact: true })
-    .click();
+  await navigation.getByRole("tab", { name: "History", exact: true }).click();
   await expect(scroll).toHaveCount(0);
   await navigation.locator(".diff-tab-button").last().click();
   await expect(scroll).toBeVisible();
@@ -1378,25 +1396,25 @@ test("a regular historical Diff preserves its reading position across tabs", asy
   await page.setViewportSize({ width: 1440, height: 580 });
   await openFixture(page);
   const navigation = page.getByRole("navigation", { name: "Worktree" });
-  await navigation
-    .getByRole("tab", { name: "History", exact: true })
-    .click();
+  await navigation.getByRole("tab", { name: "History", exact: true }).click();
   await page
     .getByRole("listbox", { name: "提交列表与分支关系" })
     .getByRole("option")
     .first()
     .dblclick();
   const scroll = page.locator(".diff-tab-page .diff-scroll");
-  await setEditorScroll(scroll,{scrollTop:180});
-  await expect.poll(async()=> (await editorState(scroll))?.top ?? 0).toBeGreaterThan(100);
-  const top=(await editorState(scroll))!.top;
-  await navigation
-    .getByRole("tab", { name: "History", exact: true })
-    .click();
+  await setEditorScroll(scroll, { scrollTop: 180 });
+  await expect
+    .poll(async () => (await editorState(scroll))?.top ?? 0)
+    .toBeGreaterThan(100);
+  const top = (await editorState(scroll))!.top;
+  await navigation.getByRole("tab", { name: "History", exact: true }).click();
   await navigation.locator(".diff-tab-button").last().click();
   await expect
     .poll(() =>
-      editorState(scroll).then(state=>state?Math.abs(state.top-top):Infinity),
+      editorState(scroll).then((state) =>
+        state ? Math.abs(state.top - top) : Infinity,
+      ),
     )
     .toBeLessThan(5);
 });
@@ -1498,7 +1516,9 @@ test("a Diff from a newer Branch waits for matching repository state before revi
   await page
     .getByRole("button", { name: "response.ts M", exact: true })
     .click();
-  await expect.poll(() => page.evaluate(() => (window as any).branchReadingRace.reads)).toBeGreaterThan(0);
+  await expect
+    .poll(() => page.evaluate(() => (window as any).branchReadingRace.reads))
+    .toBeGreaterThan(0);
   await expect(
     page.getByText("仓库已更新，正在刷新…", { exact: true }),
   ).toHaveCount(0);
@@ -1514,7 +1534,10 @@ test("a Diff from a newer Branch waits for matching repository state before revi
   ).toHaveCount(0);
   await page.evaluate(() => (window as any).branchReadingRace.release());
   await expect(
-    page.getByRole("combobox", { name: "切换 Branch，当前 other", exact: true }),
+    page.getByRole("combobox", {
+      name: "切换 Branch，当前 other",
+      exact: true,
+    }),
   ).toBeVisible();
   await expect(
     page.getByRole("region", { name: "代码差异", exact: true }),
@@ -1749,7 +1772,10 @@ async function openFixture(
             executablePath: null as string | null,
             model: null as string | null,
           },
-          codewiz: { executablePath: null as string | null, model: null as string | null },
+          codewiz: {
+            executablePath: null as string | null,
+            model: null as string | null,
+          },
         },
         codewizEnabled: false,
         agentAuthenticated: false,
@@ -1788,7 +1814,11 @@ async function openFixture(
             if (_ === "prepare_read_request") return `read-${++identifier}`;
             if (_ === "cancel_read_request") {
               if (payload.ticket === state.aiTicket) {
-                state.aiReject?.({ code: "AI_CANCELLED", message: "AI 分析已取消。", detail: "Owned fixture task cancelled" });
+                state.aiReject?.({
+                  code: "AI_CANCELLED",
+                  message: "AI 分析已取消。",
+                  detail: "Owned fixture task cancelled",
+                });
                 state.aiReject = null;
               }
               return true;
@@ -1902,14 +1932,25 @@ async function openFixture(
             }
             if (command === "agent_providers")
               return aiEnabled
-                ? ["codex", "claude_code", ...(state.codewizEnabled ? ["codewiz"] : [])].map((id) => {
+                ? [
+                    "codex",
+                    "claude_code",
+                    ...(state.codewizEnabled ? ["codewiz"] : []),
+                  ].map((id) => {
                     const options =
                       id === "codex"
                         ? state.agentSettings.codex
-                        : id === "codewiz" ? state.agentSettings.codewiz : state.agentSettings.claudeCode;
+                        : id === "codewiz"
+                          ? state.agentSettings.codewiz
+                          : state.agentSettings.claudeCode;
                     return {
                       id,
-                      name: id === "codex" ? "Codex" : id === "codewiz" ? "Codewiz" : "Claude Code",
+                      name:
+                        id === "codex"
+                          ? "Codex"
+                          : id === "codewiz"
+                            ? "Codewiz"
+                            : "Claude Code",
                       available: true,
                       path:
                         options.executablePath ??
@@ -2063,7 +2104,10 @@ async function openFixture(
                         reviewPriority: [first.path],
                       }
                     : null,
-                commitMessage: input.task === "commit" ? "fix(api): validate request boundaries\n\nHandle invalid input before dispatch." : null,
+                commitMessage:
+                  input.task === "commit"
+                    ? "fix(api): validate request boundaries\n\nHandle invalid input before dispatch."
+                    : null,
                 limitations: ["Fixture Agent; no model was called."],
               };
               if (state.aiHold)
@@ -2353,7 +2397,10 @@ test("Changes focuses on Diff while Commit keeps staging and the draft in its ow
     .first();
   await file.click();
   await expect(page.locator(".diff-file-header")).toContainText("response.ts");
-  await expect(page.getByRole("tab", { name: /^Commit/ })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: /^Commit/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   await expect(page.getByLabel("Commit message")).toBeVisible();
   expect(
     await page.evaluate(() =>
@@ -2504,7 +2551,10 @@ test("branch dropdown switches in place and ignores IME confirmation", async ({
     .click();
   await expect(page.locator(".branch-picker")).toContainText("feature/ui");
   await expect(page.locator(".commit-workspace")).toBeVisible();
-  await expect(page.getByRole("tab", { name: /^Commit/ })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: /^Commit/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   await expect(page.getByLabel("Commit message")).toHaveValue(
     "Keep this draft",
   );
@@ -2560,7 +2610,9 @@ test("Amend restores draft when unchecked and failed Commit preserves message", 
     (window as any).fixture.failCommit = true;
   });
   await page.locator(".composer-submit > button").first().click();
-  await expect(page.getByRole("alert").filter({hasText:/\S/})).toContainText("提交 failed");
+  await expect(page.getByRole("alert").filter({ hasText: /\S/ })).toContainText(
+    "提交 failed",
+  );
   await expect(page.getByLabel("Commit message")).toHaveValue("Ordinary draft");
 });
 
@@ -2605,7 +2657,9 @@ test("expired native snapshots reload once and allow a new explicit action", asy
     .getByRole("button", { name: "Stage Hunk", exact: true })
     .first()
     .click();
-  await expect(page.getByRole("alert").filter({hasText:/\S/})).toContainText("Diff 已更新");
+  await expect(page.getByRole("alert").filter({ hasText: /\S/ })).toContainText(
+    "Diff 已更新",
+  );
   await expect(
     page.getByRole("button", { name: "Stage Hunk", exact: true }).first(),
   ).toBeEnabled();
@@ -2732,7 +2786,9 @@ test("late context reply cannot evict the next workspace cache or show its error
       requestAnimationFrame(() => requestAnimationFrame(resolve)),
     );
   });
-  await expect(page.getByRole("alert").filter({hasText:/\S/})).toHaveCount(0);
+  await expect(page.getByRole("alert").filter({ hasText: /\S/ })).toHaveCount(
+    0,
+  );
   const readsBefore = await page.evaluate(
     () =>
       (window as any).fixture.actions.filter(
@@ -2864,8 +2920,10 @@ async function chooseEditor(page: Page) {
   await expect(
     page.getByRole("region", { name: "外部编辑器", exact: true }),
   ).toBeVisible();
-  await chooseOption(page
-    .getByLabel("默认使用", { exact: true }),"application");
+  await chooseOption(
+    page.getByLabel("默认使用", { exact: true }),
+    "application",
+  );
   await page.getByRole("button", { name: "Zed", exact: true }).click();
 }
 
@@ -2908,8 +2966,14 @@ test("editor configuration is explicit, scoped, and only the open button launche
     .getByRole("tab", { name: "外部编辑器", exact: true })
     .click();
   await page.getByRole("button", { name: "此仓库", exact: true }).click();
-  await expect(page.getByLabel("此仓库使用", { exact: true })).toHaveAttribute("data-value","inherit");
-  await chooseOption(page.getByLabel("此仓库使用", { exact: true }),"disabled");
+  await expect(page.getByLabel("此仓库使用", { exact: true })).toHaveAttribute(
+    "data-value",
+    "inherit",
+  );
+  await chooseOption(
+    page.getByLabel("此仓库使用", { exact: true }),
+    "disabled",
+  );
   await page.getByRole("button", { name: "保存", exact: true }).click();
   await expect(page.locator(".editor-effective")).toContainText("未启用");
   await expect(page.locator(".editor-effective")).toContainText(
@@ -2951,7 +3015,9 @@ test("editor save conflict keeps draft, and a late failed save remains visible a
       detail: "fixture",
     }),
   );
-  await expect(page.getByRole("alert").filter({hasText:/\S/})).toContainText("编辑器设置未保存");
+  await expect(page.getByRole("alert").filter({ hasText: /\S/ })).toContainText(
+    "编辑器设置未保存",
+  );
 });
 
 test("an editor launch failure stays visible when the same file refreshes in the background", async ({
@@ -2989,7 +3055,7 @@ test("an editor launch failure stays visible when the same file refreshes in the
       detail: "fixture",
     }),
   );
-  await expect(page.getByRole("alert").filter({hasText:/\S/})).toContainText(
+  await expect(page.getByRole("alert").filter({ hasText: /\S/ })).toContainText(
     "无法打开 src/api/requests.ts",
   );
   await expect(
@@ -3275,8 +3341,12 @@ test("data: repository deletion previews linked Worktrees, cancels, and clears o
     .getByRole("button", { name: "删除 Proof 记录", exact: true })
     .click();
   await expect(page.locator(".diff-file-header")).toHaveCount(0);
-  await page.getByLabel("查看范围", {exact:true}).click();
-  await expect(page.getByRole("listbox").getByRole("option",{name:"Other project",exact:false})).toBeVisible();
+  await page.getByLabel("查看范围", { exact: true }).click();
+  await expect(
+    page
+      .getByRole("listbox")
+      .getByRole("option", { name: "Other project", exact: false }),
+  ).toBeVisible();
   await page.keyboard.press("Escape");
   expect(
     await page.evaluate(() => [
@@ -3297,7 +3367,7 @@ test("data: completing deletion after Settings closes still clears the renderer 
     localStorage.setItem("unrelated-key", "keep unrelated");
     localStorage.setItem("proof:file-view", "list");
   });
-  await chooseOption(page.getByLabel("查看范围", { exact: true }),"");
+  await chooseOption(page.getByLabel("查看范围", { exact: true }), "");
   await page
     .getByRole("button", { name: "查看全部删除范围…", exact: true })
     .click();
@@ -3414,7 +3484,7 @@ test("standards old queued preferences cannot borrow the deletion epoch", async 
     .locator(".settings-nav")
     .getByRole("tab", { name: "本地数据", exact: true })
     .click();
-  await chooseOption(page.getByLabel("查看范围", { exact: true }),"");
+  await chooseOption(page.getByLabel("查看范围", { exact: true }), "");
   await page
     .getByRole("button", { name: "查看全部删除范围…", exact: true })
     .click();
@@ -3542,8 +3612,10 @@ test("standards automatic restoration after deletion must not replace a newer wo
       return value;
     };
   });
-  await chooseOption(page
-    .getByLabel("查看范围", { exact: true }),"other-workspace");
+  await chooseOption(
+    page.getByLabel("查看范围", { exact: true }),
+    "other-workspace",
+  );
   await page
     .getByRole("button", { name: "查看此仓库的删除范围…", exact: true })
     .click();
@@ -3819,9 +3891,7 @@ test("History opens selected Commit diffs in closable tabs and preserves graph s
   await expect(
     navigation.getByRole("button", { name: "Compare", exact: true }),
   ).toHaveCount(0);
-  await navigation
-    .getByRole("tab", { name: "History", exact: true })
-    .click();
+  await navigation.getByRole("tab", { name: "History", exact: true }).click();
   const graph = page.getByRole("listbox", { name: "提交列表与分支关系" });
   await graph.getByRole("option").first().click();
   await expect(page.locator(".diff-tab-item")).toHaveCount(0);
@@ -3858,15 +3928,17 @@ test("History opens selected Commit diffs in closable tabs and preserves graph s
     page.getByRole("region", { name: "Git 提交图" }).locator(".diff-scroll"),
   ).toHaveCount(0);
   await graph.getByRole("option").first().click();
-  await chooseOption(page
-    .getByRole("combobox", { name: "比较父提交", exact: true }),"1");
+  await chooseOption(
+    page.getByRole("combobox", { name: "比较父提交", exact: true }),
+    "1",
+  );
   await page
     .getByRole("button", { name: "在新 tab 中查看 Diff", exact: true })
     .click();
   await expect(page.locator(".diff-tab-item")).toHaveCount(2);
   await expect(
     active.getByRole("combobox", { name: "Diff 比较父提交" }),
-  ).toHaveAttribute("data-value","1");
+  ).toHaveAttribute("data-value", "1");
   await expect
     .poll(() =>
       page.evaluate(
@@ -3940,7 +4012,9 @@ test("Desktop chrome reserves native controls and supports document tab shortcut
   const toolbarBox = (await toolbar.boundingBox())!;
   const tabsBox = (await navigation.boundingBox())!;
   expect(tabsBox.y).toBeGreaterThanOrEqual(toolbarBox.y);
-  expect(tabsBox.y + tabsBox.height).toBeLessThanOrEqual(toolbarBox.y + toolbarBox.height);
+  expect(tabsBox.y + tabsBox.height).toBeLessThanOrEqual(
+    toolbarBox.y + toolbarBox.height,
+  );
   expect(
     (await toolbar.locator(".brand").boundingBox())!.x,
   ).toBeGreaterThanOrEqual(88);
@@ -3992,9 +4066,7 @@ test("Desktop chrome reserves native controls and supports document tab shortcut
     .click({ button: "middle" });
   await expect(page.locator(".diff-tab-item")).toHaveCount(0);
   await history.press("ArrowLeft");
-  await expect(
-    navigation.getByRole("tab", { name: /^Commit/ }),
-  ).toBeFocused();
+  await expect(navigation.getByRole("tab", { name: /^Commit/ })).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(
     navigation.getByRole("tab", { name: /^Commit/ }),
@@ -4109,188 +4181,319 @@ test("Branch comparison opens a Diff tab and an older file response cannot repla
   await expect(panel.locator(".compare-empty")).toContainText("没有文件差异");
 });
 
-for (const adapter of [{ agent: "codex", name: "Codex", config: "/fixture/config/hooks.json" }, { agent: "codewiz", name: "Codewiz", config: "/fixture/config/plugins/proof-observer.js" }]) {
-test(`${adapter.name} Hook uses current workspace trust and requires a config preview before installing`, async ({
-  page,
-}) => {
-  await openFixture(page);
-  await page.evaluate((adapter) => {
-    const w = window as any,
-      state = w.fixture,
-      original = w.__TAURI_INTERNALS__.invoke;
-    state.changes.workspace.trusted = false;
-    const hook = {
-      policyRevision: 0,
-      serviceAvailable: false,
-      serviceError: null,
-      installations: [] as any[],
-    };
-    let preview: any;
-    w.__TAURI_INTERNALS__.invoke = async (name: string, payload: any) => {
-      const c = payload?.command,
-        a = payload?.args ?? {};
-      if (
-        ![
-          "observer_status",
-          "observer_program_locations",
-          "probe_observer",
-          "data_workspaces",
-          "preview_observer_install",
-          "cancel_observer_config",
-          "apply_observer_config",
-          "configure_observer_workspace",
-        ].includes(c)
-      )
-        return original(name, payload);
-      state.actions.push({ command: c, args: structuredClone(a) });
-      if (c === "data_workspaces")
-        return [
-          {
-            workspace: { ...state.changes.workspace, trusted: true },
-            recent: true,
-          },
-        ];
-      if (c === "observer_program_locations")
-        return [{ agent: adapter.agent, executablePath: `/fixture/${adapter.agent}`, name: adapter.name, installationAvailable: true, unavailableReason: null }];
-      if (c === "observer_status") return structuredClone(hook);
-      if (c === "probe_observer")
-        return {
-          agent: adapter.agent,
-          version: "99.0.0-preview.2",
-          status: "candidate_unverified",
-          profile: { runtimeVerified: false, adapterVersion: "1" },
-        };
-      if (c === "preview_observer_install") {
-        preview = {
-          id: "hook-preview",
-          action: "install",
-          agent: adapter.agent,
-          agentVersion: "99.0.0-preview.2",
-          workspaceId: a.workspaceId,
-          configPath: adapter.config,
-          before: '{"userHook":true}',
-          after: '{"userHook":true,"proofHook":true}',
-          fields: a.fields,
-          requiresHookTrust: adapter.agent === "codex",
-        };
-        return preview;
-      }
-      if (c === "cancel_observer_config") return null;
-      if (c === "apply_observer_config") {
-        hook.policyRevision++;
-        hook.serviceAvailable = true;
-        hook.installations = [
-          {
-            installationId: "fixture-hook",
+for (const adapter of [
+  { agent: "codex", name: "Codex", config: "/fixture/config/hooks.json" },
+  {
+    agent: "codewiz",
+    name: "Codewiz",
+    config: "/fixture/config/plugins/proof-observer.js",
+  },
+]) {
+  test(`${adapter.name} Hook uses current workspace trust and requires a config preview before installing`, async ({
+    page,
+  }) => {
+    await openFixture(page);
+    await page.evaluate((adapter) => {
+      const w = window as any,
+        state = w.fixture,
+        original = w.__TAURI_INTERNALS__.invoke;
+      state.changes.workspace.trusted = false;
+      const hook = {
+        policyRevision: 0,
+        serviceAvailable: false,
+        serviceError: null,
+        installations: [] as any[],
+      };
+      let preview: any;
+      w.__TAURI_INTERNALS__.invoke = async (name: string, payload: any) => {
+        const c = payload?.command,
+          a = payload?.args ?? {};
+        if (
+          ![
+            "observer_status",
+            "observer_program_locations",
+            "probe_observer",
+            "data_workspaces",
+            "preview_observer_install",
+            "cancel_observer_config",
+            "apply_observer_config",
+            "configure_observer_workspace",
+          ].includes(c)
+        )
+          return original(name, payload);
+        state.actions.push({ command: c, args: structuredClone(a) });
+        if (c === "data_workspaces")
+          return [
+            {
+              workspace: { ...state.changes.workspace, trusted: true },
+              recent: true,
+            },
+          ];
+        if (c === "observer_program_locations")
+          return [
+            {
+              agent: adapter.agent,
+              executablePath: `/fixture/${adapter.agent}`,
+              name: adapter.name,
+              installationAvailable: true,
+              unavailableReason: null,
+            },
+          ];
+        if (c === "observer_status") return structuredClone(hook);
+        if (c === "probe_observer")
+          return {
+            agent: adapter.agent,
+            version: "99.0.0-preview.2",
+            status: "candidate_unverified",
+            profile: { runtimeVerified: false, adapterVersion: "1" },
+          };
+        if (c === "preview_observer_install") {
+          preview = {
+            id: "hook-preview",
+            action: "install",
             agent: adapter.agent,
             agentVersion: "99.0.0-preview.2",
-            configPath: preview.configPath,
-            state: "configured_pending",
-            lastEventAt: null,
-            issue: null,
-            consents: [
-              {
-                ...preview.fields,
-                installationId: "fixture-hook",
-                workspaceId: a.workspaceId ?? preview.workspaceId,
-                enabled: true,
-              },
-            ],
-          },
-        ];
-        return {
-          installationId: "fixture-hook",
-          message: "Proof Hook 已安装。",
-          warning: null,
-          observingEnabled: true,
-        };
-      }
-      if (c === "configure_observer_workspace") {
-        hook.policyRevision++;
-        hook.installations[0].consents[0].enabled = a.enabled;
-        return null;
-      }
-    };
-  }, adapter);
-  await page.getByRole("button", { name: "Agent Hook", exact: true }).click();
-  const card = page.getByRole("region", { name: `${adapter.name} Hook`, exact: true });
-  await expect(
-    card.getByRole("checkbox", { name: "Prompt", exact: true }),
-  ).not.toBeChecked();
-  await expect(
-    card.getByRole("checkbox", { name: "关闭 Proof 后继续观察", exact: true }),
-  ).not.toBeChecked();
-  await card.getByRole("button", { name: "检测版本", exact: true }).click();
-  await card.getByRole("checkbox", { name: "Prompt", exact: true }).check();
-  await card.getByRole("button", { name: "预览安装…", exact: true }).click();
-  await expect(card.locator(".hook-config-preview")).toContainText(
-    adapter.config,
-  );
-  await card.getByRole("button", { name: "取消", exact: true }).click();
-  expect(
-    await page.evaluate(() =>
-      (window as any).fixture.actions.filter(
-        (a: any) => a.command === "apply_observer_config",
+            workspaceId: a.workspaceId,
+            configPath: adapter.config,
+            before: '{"userHook":true}',
+            after: '{"userHook":true,"proofHook":true}',
+            fields: a.fields,
+            requiresHookTrust: adapter.agent === "codex",
+          };
+          return preview;
+        }
+        if (c === "cancel_observer_config") return null;
+        if (c === "apply_observer_config") {
+          hook.policyRevision++;
+          hook.serviceAvailable = true;
+          hook.installations = [
+            {
+              installationId: "fixture-hook",
+              agent: adapter.agent,
+              agentVersion: "99.0.0-preview.2",
+              configPath: preview.configPath,
+              state: "configured_pending",
+              lastEventAt: null,
+              issue: null,
+              consents: [
+                {
+                  ...preview.fields,
+                  installationId: "fixture-hook",
+                  workspaceId: a.workspaceId ?? preview.workspaceId,
+                  enabled: true,
+                },
+              ],
+            },
+          ];
+          return {
+            installationId: "fixture-hook",
+            message: "Proof Hook 已安装。",
+            warning: null,
+            observingEnabled: true,
+          };
+        }
+        if (c === "configure_observer_workspace") {
+          hook.policyRevision++;
+          hook.installations[0].consents[0].enabled = a.enabled;
+          return null;
+        }
+      };
+    }, adapter);
+    await page.getByRole("button", { name: "Agent Hook", exact: true }).click();
+    const card = page.getByRole("region", {
+      name: `${adapter.name} Hook`,
+      exact: true,
+    });
+    await expect(
+      card.getByRole("checkbox", { name: "Prompt", exact: true }),
+    ).not.toBeChecked();
+    await expect(
+      card.getByRole("checkbox", {
+        name: "关闭 Proof 后继续观察",
+        exact: true,
+      }),
+    ).not.toBeChecked();
+    await card.getByRole("button", { name: "检测版本", exact: true }).click();
+    await card.getByRole("checkbox", { name: "Prompt", exact: true }).check();
+    await card.getByRole("button", { name: "预览安装…", exact: true }).click();
+    await expect(card.locator(".hook-config-preview")).toContainText(
+      adapter.config,
+    );
+    await card.getByRole("button", { name: "取消", exact: true }).click();
+    expect(
+      await page.evaluate(() =>
+        (window as any).fixture.actions.filter(
+          (a: any) => a.command === "apply_observer_config",
+        ),
       ),
-    ),
-  ).toHaveLength(0);
-  await card.getByRole("button", { name: "预览安装…", exact: true }).click();
-  await card
-    .getByRole("button", { name: "安装并开启观察", exact: true })
-    .click();
-  await expect(card).toContainText("等待 Agent 事件");
-  await card.getByRole("button", { name: "暂停", exact: true }).click();
-  await expect(card).toContainText("已暂停");
-});
-
+    ).toHaveLength(0);
+    await card.getByRole("button", { name: "预览安装…", exact: true }).click();
+    await card
+      .getByRole("button", { name: "安装并开启观察", exact: true })
+      .click();
+    await expect(card).toContainText("等待 Agent 事件");
+    await card.getByRole("button", { name: "暂停", exact: true }).click();
+    await expect(card).toContainText("已暂停");
+  });
 }
 
-test("Context: opening a file's activity requests that file, not the entire session", async ({ page }) => {
+test("Context: opening a file's activity requests that file, not the entire session", async ({
+  page,
+}) => {
   await openContextFixture(page);
-  await page.getByRole("button", { name: /查看文件活动/ }).first().click();
-  await expect.poll(() => page.evaluate(() => (window as any).contextFixture.calls.find((c: any) => c.command === "context_session_events")?.args.path)).toBe("src/api/requests.ts");
+  await page
+    .getByRole("button", { name: /查看文件活动/ })
+    .first()
+    .click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as any).contextFixture.calls.find(
+            (c: any) => c.command === "context_session_events",
+          )?.args.path,
+      ),
+    )
+    .toBe("src/api/requests.ts");
 });
 
-test("Context: compact file activity shows edits, commands and failures without opening raw logs", async ({ page }) => {
+test("Context: compact file activity shows edits, commands and failures without opening raw logs", async ({
+  page,
+}) => {
   await openContextFixture(page);
   await page.evaluate(() => {
-    const w = window as any, original = w.__TAURI_INTERNALS__.invoke;
+    const w = window as any,
+      original = w.__TAURI_INTERNALS__.invoke;
     w.contextFixture.links[0].session.eventCount = 1060;
     w.contextFixture.links[0].originalEvidence.pathEventCount = 65;
     w.__TAURI_INTERNALS__.invoke = async (name: string, payload: any) => {
-      if (payload?.command !== "context_session_events") return original(name, payload);
-      w.contextFixture.calls.push({ command: payload.command, args: structuredClone(payload.args) });
-      const make = (id: string, patch: any = {}) => ({ id, sessionId: "session-a", nativeSessionId: "native-session-a", kind: "PostToolUse", toolName: "Bash", toolRef: id, turnId: "file-turn", receivedAt: Date.now(), paths: ["src/api/requests.ts"], prompt: null, command: "cat src/api/requests.ts", output: null, reply: null, exitCode: 0, commandState: "command_succeeded", fieldStatus: {}, truncated: false, possiblyDuplicate: false, ...patch });
+      if (payload?.command !== "context_session_events")
+        return original(name, payload);
+      w.contextFixture.calls.push({
+        command: payload.command,
+        args: structuredClone(payload.args),
+      });
+      const make = (id: string, patch: any = {}) => ({
+        id,
+        sessionId: "session-a",
+        nativeSessionId: "native-session-a",
+        kind: "PostToolUse",
+        toolName: "Bash",
+        toolRef: id,
+        turnId: "file-turn",
+        receivedAt: Date.now(),
+        paths: ["src/api/requests.ts"],
+        prompt: null,
+        command: "cat src/api/requests.ts",
+        output: null,
+        reply: null,
+        exitCode: 0,
+        commandState: "command_succeeded",
+        fieldStatus: {},
+        truncated: false,
+        possiblyDuplicate: false,
+        ...patch,
+      });
       const events = [
         ...Array.from({ length: 60 }, (_, index) => make(`read-${index}`)),
-        ...Array.from({ length: 3 }, (_, index) => make(`edit-${index}`, { toolName: "apply_patch", command: null, output: index === 0 ? "Applied earlier patch" : null, exitCode: null, commandState: "not_applicable" })),
-        make("check", { command: "npm run typecheck", output: "No type errors" }),
-        make("failed", { command: "npm test", output: "Expected 401 but received 200", exitCode: 1, commandState: "command_failed" }),
+        ...Array.from({ length: 3 }, (_, index) =>
+          make(`edit-${index}`, {
+            toolName: "apply_patch",
+            command: null,
+            output: index === 0 ? "Applied earlier patch" : null,
+            exitCode: null,
+            commandState: "not_applicable",
+          }),
+        ),
+        make("check", {
+          command: "npm run typecheck",
+          output: "No type errors",
+        }),
+        make("failed", {
+          command: "npm test",
+          output: "Expected 401 but received 200",
+          exitCode: 1,
+          commandState: "command_failed",
+        }),
       ];
-      if (!payload.args.path) events.unshift(make("unrelated", { turnId: "other-turn", toolName: "Write", paths: ["other.ts"], command: null }));
-      return { events, fileEventCount: 65, taskContext: [make("intent", { kind: "UserPromptSubmit", prompt: "Fix authentication expiry", toolName: null })], expiry: {}, next: null, cleared: false };
+      if (!payload.args.path)
+        events.unshift(
+          make("unrelated", {
+            turnId: "other-turn",
+            toolName: "Write",
+            paths: ["other.ts"],
+            command: null,
+          }),
+        );
+      return {
+        events,
+        fileEventCount: 65,
+        taskContext: [
+          make("intent", {
+            kind: "UserPromptSubmit",
+            prompt: "Fix authentication expiry",
+            toolName: null,
+          }),
+        ],
+        expiry: {},
+        next: null,
+        cleared: false,
+      };
     };
   });
   await page.getByRole("button", { name: /查看文件活动/ }).click();
-  await expect(page.getByText("Fix authentication expiry", { exact: true })).toBeVisible();
-  await expect(page.getByText("修改文件 · requests.ts", { exact: true })).toBeVisible();
-  await expect(page.getByText("No type errors", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("Expected 401 but received 200", { exact: true }).first()).toBeVisible();
+  await expect(
+    page.getByText("Fix authentication expiry", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("修改文件 · requests.ts", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("No type errors", { exact: true }).first(),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Expected 401 but received 200", { exact: true }).first(),
+  ).toBeVisible();
   await expect(page.locator(".activity-row:visible")).toHaveCount(3);
-  await expect(page.getByText("cat src/api/requests.ts", { exact: true }).first()).not.toBeVisible();
-  await expect(page.getByText("读取、搜索与其他操作 · 60 条", { exact: true })).toBeVisible();
-  await page.screenshot({ path: ".artifacts/hook-context/file-activity-light.png", animations: "disabled" });
-  const edits = page.locator(".activity-row").filter({ hasText: "修改文件 · requests.ts" }).first();
+  await expect(
+    page.getByText("cat src/api/requests.ts", { exact: true }).first(),
+  ).not.toBeVisible();
+  await expect(
+    page.getByText("读取、搜索与其他操作 · 60 条", { exact: true }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: ".artifacts/hook-context/file-activity-light.png",
+    animations: "disabled",
+  });
+  const edits = page
+    .locator(".activity-row")
+    .filter({ hasText: "修改文件 · requests.ts" })
+    .first();
   await edits.locator(".activity-detail > summary").click();
-  await edits.locator(".activity-repeats details").last().locator("summary").click();
-  await expect(edits.getByText("Applied earlier patch", { exact: true })).toBeVisible();
+  await edits
+    .locator(".activity-repeats details")
+    .last()
+    .locator("summary")
+    .click();
+  await expect(
+    edits.getByText("Applied earlier patch", { exact: true }),
+  ).toBeVisible();
   await edits.locator(".activity-detail > summary").click();
   await page.getByRole("button", { name: "完整会话", exact: true }).click();
-  await expect(page.getByText("修改文件 · other.ts", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("修改文件 · other.ts", { exact: true }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "当前文件", exact: true }).click();
-  await expect(page.getByText("修改文件 · other.ts", { exact: true })).toHaveCount(0);
-  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
-  await page.screenshot({ path: ".artifacts/hook-context/file-activity-dark.png", animations: "disabled" });
+  await expect(
+    page.getByText("修改文件 · other.ts", { exact: true }),
+  ).toHaveCount(0);
+  await page.evaluate(() =>
+    document.documentElement.setAttribute("data-theme", "dark"),
+  );
+  await page.screenshot({
+    path: ".artifacts/hook-context/file-activity-dark.png",
+    animations: "disabled",
+  });
 });
 
 test("Context: manual links, notes, unlink and undo preserve original session evidence", async ({
@@ -4375,9 +4578,7 @@ test("Context: background updates cannot overwrite a note draft or its expected 
     (window as any).fixture.emitNativeEvent("proof:close-active-view"),
   );
   await expect(
-    page
-      .locator(".workspace-tabs .view-tab")
-      .filter({hasText:/^本地变更/}),
+    page.locator(".workspace-tabs .view-tab").filter({ hasText: /^本地变更/ }),
   ).toHaveAttribute("aria-current", "page");
   await expect(dialog.getByLabel("本地备注", { exact: true })).toBeFocused();
   expect(await page.evaluate(() => (window as any).fixture.windowCloses)).toBe(
@@ -4397,7 +4598,9 @@ test("Context: background updates cannot overwrite a note draft or its expected 
     "My unsaved note",
   );
   await dialog.getByRole("button", { name: "关联此会话", exact: true }).click();
-  await expect(dialog.getByRole("alert").filter({hasText:/\S/})).toContainText("关联已更新");
+  await expect(
+    dialog.getByRole("alert").filter({ hasText: /\S/ }),
+  ).toContainText("关联已更新");
   await expect(dialog.getByLabel("本地备注", { exact: true })).toHaveValue(
     "My unsaved note",
   );
@@ -4455,7 +4658,7 @@ test("Context: failed saves remain visible after closing and notes survive selec
       detail: "fixture disk full",
     }),
   );
-  await expect(page.getByRole("alert").filter({hasText:/\S/})).toContainText(
+  await expect(page.getByRole("alert").filter({ hasText: /\S/ })).toContainText(
     "备注未保存：磁盘空间不足",
   );
 });
@@ -4494,7 +4697,9 @@ test("Context: manager is scoped to the selected file and stays usable in a narr
   expect(saved.workspaceId).toBe("workflow-test");
   await dialog.getByRole("button", { name: "关闭", exact: true }).click();
   await expect(dialog).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "关联会话", exact: true })).toBeFocused();
+  await expect(
+    page.getByRole("button", { name: "关联会话", exact: true }),
+  ).toBeFocused();
 });
 
 test("Context: cached event pages survive new activity and expire output without a count change", async ({
@@ -4547,7 +4752,11 @@ test("Context: cached event pages survive new activity and expire output without
   const events = page.getByLabel("会话原始记录");
   await events.getByRole("button", { name: "加载更早的记录" }).click();
   await events.locator(".activity-routine > summary").click();
-  await events.locator(".activity-row").filter({ hasText: "command-from-older-page" }).locator(".activity-detail > summary").click();
+  await events
+    .locator(".activity-row")
+    .filter({ hasText: "command-from-older-page" })
+    .locator(".activity-detail > summary")
+    .click();
   await expect(events).toContainText("CACHED_OUTPUT_TO_EXPIRE");
   const readsBeforeActivity = await page.evaluate(
     () => (window as any).contextFixture.eventReads,
@@ -4567,7 +4776,12 @@ test("Context: cached event pages survive new activity and expire output without
   });
   await expect(events).toContainText("工具输出 · 记录已清理");
   await expect(events).toContainText("command-from-older-page");
-  await expect(events.locator(".activity-row").filter({ hasText: "command-from-older-page" }).locator(".activity-detail")).toHaveAttribute("open", "");
+  await expect(
+    events
+      .locator(".activity-row")
+      .filter({ hasText: "command-from-older-page" })
+      .locator(".activity-detail"),
+  ).toHaveAttribute("open", "");
   expect(
     await page.evaluate(() => (window as any).contextFixture.eventReads),
   ).toBe(readsBeforeActivity);
@@ -4899,8 +5113,10 @@ test("AI Review returns structured findings, jumps to Diff and expires after fil
   await openFixture(page, true, true);
   await page.getByRole("button", { name: "显示上下文", exact: true }).click();
   await page.getByRole("button", { name: "AI Review", exact: true }).click();
-  await chooseOption(page
-    .getByRole("combobox", { name: "AI Agent" }),"claude_code");
+  await chooseOption(
+    page.getByRole("combobox", { name: "AI Agent" }),
+    "claude_code",
+  );
   await page
     .getByRole("button", { name: "Review 当前变更", exact: true })
     .click();
@@ -5005,7 +5221,9 @@ test("historical AI Review stays in its frozen Diff tab and never reviews local 
     };
   });
   expect(layout.centerWidth).toBeGreaterThan(layout.inspectorWidth * 2);
-  expect(Math.abs(layout.centerRight + 4 - layout.inspectorLeft)).toBeLessThan(2); // The resize handle occupies 4 px.
+  expect(Math.abs(layout.centerRight + 4 - layout.inspectorLeft)).toBeLessThan(
+    2,
+  ); // The resize handle occupies 4 px.
   expect(Math.abs(layout.centerTop - layout.inspectorTop)).toBeLessThan(2);
   await page.screenshot({ path: ".artifacts/ai-core/history-review.png" });
 });
@@ -5017,7 +5235,10 @@ test("missing AI providers leave manual groups, Diff and Commit usable", async (
     page.getByRole("button", { name: "AI 分组", exact: true }),
   ).toBeDisabled();
   await page.getByRole("button", { name: "变更分组", exact: true }).click();
-  await chooseOption(page.locator('.change-group-file [role="combobox"]').first(),"new");
+  await chooseOption(
+    page.locator('.change-group-file [role="combobox"]').first(),
+    "new",
+  );
   await expect(page.locator(".group-toggle").first()).toContainText("新变更");
   await openCommit(page);
   await expect(
@@ -5038,8 +5259,10 @@ test("Agent settings expose default provider, CLI paths, models and a no-inferen
   await openFixture(page, false, true);
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await page.getByRole("tab", { name: "AI Agent", exact: true }).click();
-  await chooseOption(page
-    .getByLabel("默认 Agent", { exact: true }),"claude_code");
+  await chooseOption(
+    page.getByLabel("默认 Agent", { exact: true }),
+    "claude_code",
+  );
   await page
     .getByRole("textbox", { name: "Codex CLI 路径", exact: true })
     .fill("/custom/Codex Agent/codex");
@@ -5075,7 +5298,10 @@ test("Agent settings expose default provider, CLI paths, models and a no-inferen
   await expect(
     page.getByRole("textbox", { name: "Codex CLI 路径", exact: true }),
   ).toHaveValue("/custom/Codex Agent/codex");
-  await expect(page.getByLabel("默认 Agent", { exact: true })).toHaveAttribute("data-value","claude_code");
+  await expect(page.getByLabel("默认 Agent", { exact: true })).toHaveAttribute(
+    "data-value",
+    "claude_code",
+  );
   await expect(
     page.getByRole("heading", { name: "AI Agent", exact: true }),
   ).toBeInViewport();
@@ -5085,60 +5311,123 @@ test("Agent settings expose default provider, CLI paths, models and a no-inferen
   await page.getByRole("button", { name: "AI Review", exact: true }).click();
   await expect(
     page.getByRole("combobox", { name: "AI Agent", exact: true }),
-  ).toHaveAttribute("data-value","claude_code");
+  ).toHaveAttribute("data-value", "claude_code");
 });
 
-test("Codewiz is hidden until detected and its settings drive Grouping and Review", async ({ page }) => {
+test("Codewiz is hidden until detected and its settings drive Grouping and Review", async ({
+  page,
+}) => {
   await openFixture(page, false, true);
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await page.getByRole("tab", { name: "AI Agent", exact: true }).click();
-  await expect(page.getByRole("textbox", { name: "Codewiz CLI 路径", exact: true })).toHaveCount(0);
-  await page.evaluate(() => { (window as any).fixture.codewizEnabled = true; (window as any).fixture.agentAuthenticated = true; });
-  await page.getByRole("button", { name: "重新读取 Agent 设置", exact: true }).click();
-  await expect(page.getByRole("textbox", { name: "Codewiz CLI 路径", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("textbox", { name: "Codewiz CLI 路径", exact: true }),
+  ).toHaveCount(0);
+  await page.evaluate(() => {
+    (window as any).fixture.codewizEnabled = true;
+    (window as any).fixture.agentAuthenticated = true;
+  });
+  await page
+    .getByRole("button", { name: "重新读取 Agent 设置", exact: true })
+    .click();
+  await expect(
+    page.getByRole("textbox", { name: "Codewiz CLI 路径", exact: true }),
+  ).toBeVisible();
   await chooseOption(page.getByLabel("默认 Agent", { exact: true }), "codewiz");
-  await page.getByRole("textbox", { name: "Codewiz 模型", exact: true }).fill("company/model");
-  const card = page.locator(".agent-setting-card").filter({ has: page.getByText("Codewiz", { exact: true }) });
+  await page
+    .getByRole("textbox", { name: "Codewiz 模型", exact: true })
+    .fill("company/model");
+  const card = page
+    .locator(".agent-setting-card")
+    .filter({ has: page.getByText("Codewiz", { exact: true }) });
   await card.getByRole("button", { name: "检测 CLI", exact: true }).click();
   await expect(card.getByRole("status")).toContainText("未调用模型");
-  await page.getByRole("button", { name: "保存 Agent 设置", exact: true }).click();
-  await expect(page.locator(".agent-settings-footer").getByRole("status")).toContainText("已保存");
-  expect(await page.evaluate(() => (window as any).fixture.actions.filter((a: any) => a.command === "run_ai_task"))).toHaveLength(0);
+  await page
+    .getByRole("button", { name: "保存 Agent 设置", exact: true })
+    .click();
+  await expect(
+    page.locator(".agent-settings-footer").getByRole("status"),
+  ).toContainText("已保存");
+  expect(
+    await page.evaluate(() =>
+      (window as any).fixture.actions.filter(
+        (a: any) => a.command === "run_ai_task",
+      ),
+    ),
+  ).toHaveLength(0);
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "AI 分组", exact: true }).click();
   await expect(page.locator(".group-toggle")).not.toHaveCount(0);
   await page.getByRole("button", { name: "显示上下文", exact: true }).click();
   await page.getByRole("button", { name: "AI Review", exact: true }).click();
-  await expect(page.getByRole("combobox", { name: "AI Agent", exact: true })).toHaveAttribute("data-value", "codewiz");
-  await page.getByRole("button", { name: "Review 当前变更", exact: true }).click();
-  await expect(page.locator(".ai-finding")).toContainText("Missing boundary validation");
+  await expect(
+    page.getByRole("combobox", { name: "AI Agent", exact: true }),
+  ).toHaveAttribute("data-value", "codewiz");
+  await page
+    .getByRole("button", { name: "Review 当前变更", exact: true })
+    .click();
+  await expect(page.locator(".ai-finding")).toContainText(
+    "Missing boundary validation",
+  );
   const actions = await page.evaluate(() => (window as any).fixture.actions);
-  expect(actions.filter((a: any) => a.command === "run_ai_task").map((a: any) => a.args.request.provider)).toEqual(["codewiz", "codewiz"]);
-  expect(actions.filter((a: any) => ["stage", "commit", "mark_reviewed"].includes(a.command))).toHaveLength(0);
+  expect(
+    actions
+      .filter((a: any) => a.command === "run_ai_task")
+      .map((a: any) => a.args.request.provider),
+  ).toEqual(["codewiz", "codewiz"]);
+  expect(
+    actions.filter((a: any) =>
+      ["stage", "commit", "mark_reviewed"].includes(a.command),
+    ),
+  ).toHaveLength(0);
   await page.screenshot({ path: ".artifacts/codewiz/codewiz-review.png" });
 });
 
-test("software update downloads survive closing settings and install only on an explicit click", async ({ page }) => {
+test("software update downloads survive closing settings and install only on an explicit click", async ({
+  page,
+}) => {
   await openFixture(page);
   await page.evaluate(() => {
-    const w = window as any, invoke = w.__TAURI_INTERNALS__.invoke;
+    const w = window as any,
+      invoke = w.__TAURI_INTERNALS__.invoke;
     w.fixture.updateCalls = [];
     w.__TAURI_INTERNALS__.invoke = async (name: string, payload: any) => {
-      if (name === "check_app_update") { w.fixture.updateCalls.push(name); return { id: "u1", version: "0.1.2", currentVersion: "0.1.1", notes: "Improved Diff reading" }; }
+      if (name === "check_app_update") {
+        w.fixture.updateCalls.push(name);
+        return {
+          id: "u1",
+          version: "0.1.2",
+          currentVersion: "0.1.1",
+          notes: "Improved Diff reading",
+        };
+      }
       if (name === "download_app_update") {
         w.fixture.updateCalls.push(name);
         payload.onProgress.onmessage({ downloaded: 50, total: 100 });
-        return new Promise<void>((resolve) => { w.fixture.finishUpdateDownload = resolve; });
+        return new Promise<void>((resolve) => {
+          w.fixture.finishUpdateDownload = resolve;
+        });
       }
-      if (name === "install_app_update") { w.fixture.updateCalls.push(name); throw { code: "UPDATE_WORK_RUNNING", message: "请等待 Git 操作或 AI 分析完成后再安装更新。", detail: "Busy" }; }
+      if (name === "install_app_update") {
+        w.fixture.updateCalls.push(name);
+        throw {
+          code: "UPDATE_WORK_RUNNING",
+          message: "请等待 Git 操作或 AI 分析完成后再安装更新。",
+          detail: "Busy",
+        };
+      }
       return invoke(name, payload);
     };
   });
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await page.getByRole("tab", { name: "软件更新", exact: true }).click();
-  expect(await page.evaluate(() => (window as any).fixture.updateCalls)).toEqual([]);
+  expect(
+    await page.evaluate(() => (window as any).fixture.updateCalls),
+  ).toEqual([]);
   await page.getByRole("button", { name: "检查更新", exact: true }).click();
-  await expect(page.getByText("可用版本：0.1.2", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("可用版本：0.1.2", { exact: true }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "下载更新", exact: true }).click();
   await expect(page.getByText("50%", { exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
@@ -5146,11 +5435,19 @@ test("software update downloads survive closing settings and install only on an 
   await page.getByRole("tab", { name: "软件更新", exact: true }).click();
   await expect(page.getByText("50%", { exact: true })).toBeVisible();
   await page.evaluate(() => (window as any).fixture.finishUpdateDownload());
-  await expect(page.getByRole("button", { name: "安装并重启", exact: true })).toBeEnabled();
-  expect(await page.evaluate(() => (window as any).fixture.updateCalls)).toEqual(["check_app_update", "download_app_update"]);
+  await expect(
+    page.getByRole("button", { name: "安装并重启", exact: true }),
+  ).toBeEnabled();
+  expect(
+    await page.evaluate(() => (window as any).fixture.updateCalls),
+  ).toEqual(["check_app_update", "download_app_update"]);
   await page.getByRole("button", { name: "安装并重启", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText("请等待 Git 操作或 AI 分析完成");
-  await expect(page.getByRole("button", { name: "安装并重启", exact: true })).toBeEnabled();
+  await expect(page.getByRole("alert")).toContainText(
+    "请等待 Git 操作或 AI 分析完成",
+  );
+  await expect(
+    page.getByRole("button", { name: "安装并重启", exact: true }),
+  ).toBeEnabled();
   await page.screenshot({ path: ".artifacts/codewiz/software-update.png" });
 });
 test("AI failure details link directly to Agent settings and preserve the error category", async ({
@@ -5275,7 +5572,10 @@ test("historical groups stay scoped while panes collapse and window requests fre
   await tab.getByRole("textbox", { name: "分组名称" }).press("Enter");
   const file = tab.locator('.group-file-select[title="src/api/response.ts"]');
   await expect
-    .poll(async () => (await file.locator(".group-file-name").boundingBox())?.width ?? 0)
+    .poll(
+      async () =>
+        (await file.locator(".group-file-name").boundingBox())?.width ?? 0,
+    )
     .toBeGreaterThan(100);
   await file.click();
   await expect(tab.locator(".diff-file-header")).toContainText("response.ts");
@@ -5337,8 +5637,19 @@ test("detached Diff uses the shared workspace without repository navigation or a
       ),
     ),
   ).toHaveLength(0);
-  await expect(tab.locator(".monaco-editor .view-lines")).toContainText("validateRequest");
-  await expect.poll(()=>tab.locator(".monaco-editor .view-lines [class*=mtk]").evaluateAll(nodes=>new Set(nodes.map(node=>getComputedStyle(node).color)).size)).toBeGreaterThanOrEqual(4);
+  await expect(tab.locator(".monaco-editor .view-lines")).toContainText(
+    "validateRequest",
+  );
+  await expect
+    .poll(() =>
+      tab
+        .locator(".monaco-editor .view-lines [class*=mtk]")
+        .evaluateAll(
+          (nodes) =>
+            new Set(nodes.map((node) => getComputedStyle(node).color)).size,
+        ),
+    )
+    .toBeGreaterThanOrEqual(4);
   await page.screenshot({ path: ".artifacts/diff-workspace/window.png" });
 });
 
@@ -5780,7 +6091,9 @@ for (const historical of [false, true]) {
     await region
       .getByRole("button", { name: "Missing boundary validation", exact: true })
       .click();
-    await expect(region.locator(".monaco-editor .is-finding-target")).toHaveCount(2);
+    await expect(
+      region.locator(".monaco-editor .is-finding-target"),
+    ).toHaveCount(2);
     const bubble = region.locator(".ai-inline-review").first();
     await expect(bubble).toBeVisible();
     await expect(bubble.locator("summary")).toContainText("修改后 3–4");
@@ -5820,11 +6133,12 @@ for (const historical of [false, true]) {
     await region
       .getByRole("button", { name: "Review 当前变更", exact: true })
       .click();
-    await region.getByRole("combobox", {name:"Review 记录"}).click();
+    await region.getByRole("combobox", { name: "Review 记录" }).click();
     await expect(page.getByRole("listbox").getByRole("option")).toHaveCount(2);
     await page.keyboard.press("Escape");
-    await chooseOption(region
-      .getByRole("combobox", { name: "Review 记录" }),{ index: 1 });
+    await chooseOption(region.getByRole("combobox", { name: "Review 记录" }), {
+      index: 1,
+    });
     await expect(region.locator(".ai-finding .finding-decision")).toHaveText(
       "不采纳",
     );
@@ -5858,22 +6172,45 @@ for (const historical of [false, true]) {
         })
         .click();
       await expect(
-        region.locator('.proof-code-editor[data-code-side="new"] .is-finding-target'),
+        region.locator(
+          '.proof-code-editor[data-code-side="new"] .is-finding-target',
+        ),
       ).toHaveCount(2);
       await expect(
-        region.locator('.proof-code-editor[data-code-side="old"] .is-finding-target'),
+        region.locator(
+          '.proof-code-editor[data-code-side="old"] .is-finding-target',
+        ),
       ).toHaveCount(0);
       await expect(
-        region.locator(".proof-code-editor[data-code-side='new'] .ai-inline-review"),
+        region.locator(
+          ".proof-code-editor[data-code-side='new'] .ai-inline-review",
+        ),
       ).toBeVisible();
     }
-    const reviewBounds=await region.locator(".proof-code-editor:has(.ai-inline-review)").evaluate(node=>{
-      const editor=node.getBoundingClientRect(),bubble=node.querySelector(".ai-inline-review")!.getBoundingClientRect();
-      const buttons=[...node.querySelectorAll(".ai-inline-review button")].map(button=>button.getBoundingClientRect().right);
-      return {editorRight:editor.right,bubbleRight:bubble.right,buttons,variables:getComputedStyle(node).getPropertyValue("--editor-width")};
-    });
-    expect(reviewBounds.bubbleRight,JSON.stringify(reviewBounds)).toBeLessThanOrEqual(reviewBounds.editorRight);
-    expect(Math.max(...reviewBounds.buttons)).toBeLessThanOrEqual(reviewBounds.editorRight);
+    const reviewBounds = await region
+      .locator(".proof-code-editor:has(.ai-inline-review)")
+      .evaluate((node) => {
+        const editor = node.getBoundingClientRect(),
+          bubble = node
+            .querySelector(".ai-inline-review")!
+            .getBoundingClientRect();
+        const buttons = [
+          ...node.querySelectorAll(".ai-inline-review button"),
+        ].map((button) => button.getBoundingClientRect().right);
+        return {
+          editorRight: editor.right,
+          bubbleRight: bubble.right,
+          buttons,
+          variables: getComputedStyle(node).getPropertyValue("--editor-width"),
+        };
+      });
+    expect(
+      reviewBounds.bubbleRight,
+      JSON.stringify(reviewBounds),
+    ).toBeLessThanOrEqual(reviewBounds.editorRight);
+    expect(Math.max(...reviewBounds.buttons)).toBeLessThanOrEqual(
+      reviewBounds.editorRight,
+    );
     await page.screenshot({
       path: `.artifacts/review-comments/${historical ? "history" : "local"}.png`,
     });
@@ -6004,7 +6341,9 @@ test("Review decisions reconcile peer updates arriving during a save", async ({
   await expect(
     page.locator('.proof-code-editor[data-code-side="new"] .is-finding-target'),
   ).toHaveCount(0);
-  await expect(page.locator(".proof-code-editor[data-code-side='old'] .ai-inline-review")).toBeVisible();
+  await expect(
+    page.locator(".proof-code-editor[data-code-side='old'] .ai-inline-review"),
+  ).toBeVisible();
 });
 
 test("i18n switches immediately, retains drafts and persists after reopening", async ({
@@ -6018,7 +6357,7 @@ test("i18n switches immediately, retains drafts and persists after reopening", a
     .getByRole("textbox", { name: "Commit message", exact: true })
     .fill(draft);
   await page.getByRole("button", { name: "设置", exact: true }).click();
-  await chooseOption(page.locator("#ui-language"),"en");
+  await chooseOption(page.locator("#ui-language"), "en");
   await expect(page.locator("html")).toHaveAttribute("lang", "en");
   await expect(
     page.getByRole("heading", { name: "Appearance and reading", exact: true }),
@@ -6044,8 +6383,10 @@ test("i18n switches immediately, retains drafts and persists after reopening", a
     page.getByRole("button", { name: "Full file", exact: true }),
   ).toBeVisible();
   await expect(page.locator(".diff-file-header")).toContainText("requests.ts");
-  await expect(page.locator(".monaco-editor .view-lines")).toContainText("validateRequest");
-  const before=await page.locator(".monaco-editor .view-lines").textContent();
+  await expect(page.locator(".monaco-editor .view-lines")).toContainText(
+    "validateRequest",
+  );
+  const before = await page.locator(".monaco-editor .view-lines").textContent();
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("lang", "en");
   await page
@@ -6057,7 +6398,7 @@ test("i18n switches immediately, retains drafts and persists after reopening", a
   await expect(page.locator(".diff-file-header")).toContainText("requests.ts");
   await expect(page.locator(".monaco-editor .view-lines")).toHaveText(before!);
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await chooseOption(page.locator("#ui-language"),"zh-CN");
+  await chooseOption(page.locator("#ui-language"), "zh-CN");
   await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
   await page
     .getByRole("dialog", { name: "设置", exact: true })
@@ -6088,7 +6429,7 @@ test("i18n translates backend errors and keeps a failed language save unchanged"
   await page.emulateMedia({ reducedMotion: "reduce" });
   await openFixture(page, false, true);
   await page.getByRole("button", { name: "设置", exact: true }).click();
-  await chooseOption(page.locator("#ui-language"),"en");
+  await chooseOption(page.locator("#ui-language"), "en");
   await expect(page.locator("html")).toHaveAttribute("lang", "en");
   await page.evaluate(() => {
     const original = (window as any).__TAURI_INTERNALS__.invoke;
@@ -6105,14 +6446,17 @@ test("i18n translates backend errors and keeps a failed language save unchanged"
       return original(name, payload);
     };
   });
-  await chooseOption(page.locator("#ui-language"),"zh-CN");
-  await expect(page.getByRole("alert").filter({hasText:/\S/})).toContainText(
+  await chooseOption(page.locator("#ui-language"), "zh-CN");
+  await expect(page.getByRole("alert").filter({ hasText: /\S/ })).toContainText(
     "Could not save the language setting",
   );
-  await expect(page.getByRole("alert").filter({hasText:/\S/})).toContainText(
+  await expect(page.getByRole("alert").filter({ hasText: /\S/ })).toContainText(
     "Local records could not be saved",
   );
-  await expect(page.locator("#ui-language")).toHaveAttribute("data-value","en");
+  await expect(page.locator("#ui-language")).toHaveAttribute(
+    "data-value",
+    "en",
+  );
   await expect(page.locator("html")).toHaveAttribute("lang", "en");
   await page.screenshot({ path: ".artifacts/i18n/en-settings.png" });
 });
@@ -6147,7 +6491,7 @@ test("i18n reconciles peer language changes during saving without replacing the 
       return result;
     };
   });
-  await chooseOption(page.locator("#ui-language"),"en");
+  await chooseOption(page.locator("#ui-language"), "en");
   await expect
     .poll(() => page.evaluate(() => !!(window as any).fixture.languageRelease))
     .toBe(true);
@@ -6200,78 +6544,171 @@ test("i18n reconciles peer language changes during saving without replacing the 
   await page.screenshot({ path: ".artifacts/i18n/en-local.png" });
 });
 
-test("migrated panels save user resizing, cancel Escape and keep narrow fitting temporary",async({page})=>{
-  await openFixture(page,true);
-  const files=page.getByRole("tabpanel",{name:/^本地变更/}).locator(".files-panel"),handle=page.getByRole("separator",{name:"变化文件",exact:true});
-  const start=(await files.boundingBox())!.width;
-  const drag=async(dx:number,cancel=false)=>{await handle.focus();const b=(await handle.boundingBox())!;await page.mouse.move(b.x+b.width/2,b.y+120);await page.mouse.down();await page.mouse.move(b.x+b.width/2+dx,b.y+120,{steps:10});if(cancel)await page.keyboard.press("Escape");await page.mouse.up();};
+test("migrated panels save user resizing, cancel Escape and keep narrow fitting temporary", async ({
+  page,
+}) => {
+  await openFixture(page, true);
+  const files = page
+      .getByRole("tabpanel", { name: /^本地变更/ })
+      .locator(".files-panel"),
+    handle = page.getByRole("separator", { name: "变化文件", exact: true });
+  const start = (await files.boundingBox())!.width;
+  const drag = async (dx: number, cancel = false) => {
+    await handle.focus();
+    const b = (await handle.boundingBox())!;
+    await page.mouse.move(b.x + b.width / 2, b.y + 120);
+    await page.mouse.down();
+    await page.mouse.move(b.x + b.width / 2 + dx, b.y + 120, { steps: 10 });
+    if (cancel) await page.keyboard.press("Escape");
+    await page.mouse.up();
+  };
   await drag(64);
-  await expect.poll(async()=>Math.round((await files.boundingBox())!.width)).toBe(Math.round(start+64));
-  const writes=()=>page.evaluate(()=>(window as any).fixture.actions.filter((a:any)=>a.command==="set_repository_layout"));
-  await expect.poll(async()=>(await writes()).length).toBe(1);
+  await expect
+    .poll(async () => Math.round((await files.boundingBox())!.width))
+    .toBe(Math.round(start + 64));
+  const writes = () =>
+    page.evaluate(() =>
+      (window as any).fixture.actions.filter(
+        (a: any) => a.command === "set_repository_layout",
+      ),
+    );
+  await expect.poll(async () => (await writes()).length).toBe(1);
   await handle.press("ArrowLeft");
-  await expect.poll(async()=>(await writes()).length).toBe(2);
-  const before=(await files.boundingBox())!.width;
-  await drag(80,true);
-  await expect.poll(async()=>Math.round((await files.boundingBox())!.width)).toBe(Math.round(before));
+  await expect.poll(async () => (await writes()).length).toBe(2);
+  const before = (await files.boundingBox())!.width;
+  await drag(80, true);
+  await expect
+    .poll(async () => Math.round((await files.boundingBox())!.width))
+    .toBe(Math.round(before));
   expect((await writes()).length).toBe(2);
-  await page.setViewportSize({width:850,height:760});
+  await page.setViewportSize({ width: 850, height: 760 });
   await expect(page.locator(".center-panel")).toBeVisible();
   expect((await writes()).length).toBe(2);
-  await page.getByRole("button",{name:"显示上下文",exact:true}).click();
-  await page.getByRole("button",{name:"AI Review",exact:true}).click();
-  await expect(page.getByRole("button",{name:"Review 全部变更",exact:true})).toBeVisible();
+  await page.getByRole("button", { name: "显示上下文", exact: true }).click();
+  await page.getByRole("button", { name: "AI Review", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Review 全部变更", exact: true }),
+  ).toBeVisible();
 });
 
-test("dragging files changes logical groups without Git writes",async({page})=>{
-  await openFixture(page,true,true);
-  await page.getByRole("button",{name:"AI 分组",exact:true}).click();
-  const first=page.locator('.change-group-file [role="combobox"]').first();
-  await chooseOption(first,"new");
+test("dragging files changes logical groups without Git writes", async ({
+  page,
+}) => {
+  await openFixture(page, true, true);
+  await page.getByRole("button", { name: "AI 分组", exact: true }).click();
+  const first = page.locator('.change-group-file [role="combobox"]').first();
+  await chooseOption(first, "new");
   await expect(page.locator('[data-drop-group="1"]')).toBeVisible();
-  const source=page.locator('[data-drop-group="0"] .group-drag-handle').first();
-  const path=(await source.getAttribute("aria-label"))!.replace(/^拖动 /,"").replace(/ 到其他分组$/,"");
-  const from=(await source.boundingBox())!,to=(await page.locator('[data-drop-group="1"] header').boundingBox())!;
-  await page.mouse.move(from.x+from.width/2,from.y+from.height/2);await page.mouse.down();await page.mouse.move(to.x+to.width/2,to.y+to.height/2,{steps:15});await page.mouse.up();
-  await expect.poll(()=>page.evaluate(path=>(window as any).fixture.aiGroups.groups[1].files.includes(path),path)).toBe(true);
-  const actions=await page.evaluate(()=>(window as any).fixture.actions);
-  expect(actions.filter((a:any)=>["stage","stage_files","commit","mark_reviewed"].includes(a.command))).toHaveLength(0);
-  expect(actions.filter((a:any)=>a.command==="run_ai_task")).toHaveLength(1);
+  const source = page
+    .locator('[data-drop-group="0"] .group-drag-handle')
+    .first();
+  const path = (await source.getAttribute("aria-label"))!
+    .replace(/^拖动 /, "")
+    .replace(/ 到其他分组$/, "");
+  const from = (await source.boundingBox())!,
+    to = (await page.locator('[data-drop-group="1"] header').boundingBox())!;
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, {
+    steps: 15,
+  });
+  await page.mouse.up();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (path) =>
+          (window as any).fixture.aiGroups.groups[1].files.includes(path),
+        path,
+      ),
+    )
+    .toBe(true);
+  const actions = await page.evaluate(() => (window as any).fixture.actions);
+  expect(
+    actions.filter((a: any) =>
+      ["stage", "stage_files", "commit", "mark_reviewed"].includes(a.command),
+    ),
+  ).toHaveLength(0);
+  expect(actions.filter((a: any) => a.command === "run_ai_task")).toHaveLength(
+    1,
+  );
 });
 
-test("Diff tabs separate click activation from drag and keyboard ordering",async({page})=>{
-  await openFixture(page,true);
-  const history=page.getByRole("tab",{name:"History",exact:true}),tabs=page.locator(".diff-tab-button");
-  await history.click();await page.getByRole("listbox",{name:"提交列表与分支关系"}).getByRole("option").nth(0).dblclick();
-  await history.click();await page.getByRole("listbox",{name:"提交列表与分支关系"}).getByRole("option").nth(1).dblclick();
-  const before=await tabs.allTextContents();expect(before).toHaveLength(2);
-  const from=(await tabs.last().boundingBox())!,to=(await tabs.first().boundingBox())!;
-  await page.mouse.move(from.x+from.width/2,from.y+from.height/2);await page.mouse.down();await page.mouse.move(to.x+to.width/2,to.y+to.height/2,{steps:12});await page.mouse.up();
-  await expect.poll(()=>tabs.allTextContents()).toEqual([before[1],before[0]]);
-  await history.click();await tabs.first().click();await expect(tabs.first()).toHaveAttribute("aria-selected","true");
-  await tabs.first().press("Meta+Shift+ArrowRight");await expect.poll(()=>tabs.allTextContents()).toEqual(before);
+test("Diff tabs separate click activation from drag and keyboard ordering", async ({
+  page,
+}) => {
+  await openFixture(page, true);
+  const history = page.getByRole("tab", { name: "History", exact: true }),
+    tabs = page.locator(".diff-tab-button");
+  await history.click();
+  await page
+    .getByRole("listbox", { name: "提交列表与分支关系" })
+    .getByRole("option")
+    .nth(0)
+    .dblclick();
+  await history.click();
+  await page
+    .getByRole("listbox", { name: "提交列表与分支关系" })
+    .getByRole("option")
+    .nth(1)
+    .dblclick();
+  const before = await tabs.allTextContents();
+  expect(before).toHaveLength(2);
+  const from = (await tabs.last().boundingBox())!,
+    to = (await tabs.first().boundingBox())!;
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, {
+    steps: 12,
+  });
+  await page.mouse.up();
+  await expect
+    .poll(() => tabs.allTextContents())
+    .toEqual([before[1], before[0]]);
+  await history.click();
+  await tabs.first().click();
+  await expect(tabs.first()).toHaveAttribute("aria-selected", "true");
+  await tabs.first().press("Meta+Shift+ArrowRight");
+  await expect.poll(() => tabs.allTextContents()).toEqual(before);
 });
 
-
-test("Agent activity stays scoped, shows quiet elapsed time and cancels both task types", async ({ page }) => {
+test("Agent activity stays scoped, shows quiet elapsed time and cancels both task types", async ({
+  page,
+}) => {
   await page.clock.install();
   await openFixture(page, false, true);
-  await expect(page.locator(".monaco-editor .view-lines")).toContainText("validateRequest");
-  await page.evaluate(() => { (window as any).fixture.aiHold = true; });
+  await expect(page.locator(".monaco-editor .view-lines")).toContainText(
+    "validateRequest",
+  );
+  await page.evaluate(() => {
+    (window as any).fixture.aiHold = true;
+  });
   await page.getByRole("button", { name: "AI 分组", exact: true }).click();
-  const progress = page.getByRole("region", { name: "Agent 活动", exact: true });
+  const progress = page.getByRole("region", {
+    name: "Agent 活动",
+    exact: true,
+  });
   await expect(progress).toBeVisible();
   await expect(progress).toContainText("正在收集变更");
-  await expect.poll(() => page.evaluate(() => (window as any).fixture.aiTicket)).not.toBe("");
-  const groupingTicket = await page.evaluate(() => (window as any).fixture.aiTicket);
+  await expect
+    .poll(() => page.evaluate(() => (window as any).fixture.aiTicket))
+    .not.toBe("");
+  const groupingTicket = await page.evaluate(
+    () => (window as any).fixture.aiTicket,
+  );
   await page.evaluate(() => {
     const fixture = (window as any).fixture;
-    fixture.emitNativeEvent("proof://ai-progress", { ticket: "another-window", event: { phase: "reading", path: "private-other-task.ts" } });
+    fixture.emitNativeEvent("proof://ai-progress", {
+      ticket: "another-window",
+      event: { phase: "reading", path: "private-other-task.ts" },
+    });
   });
   await expect(progress).not.toContainText("private-other-task.ts");
   await page.evaluate(() => {
     const fixture = (window as any).fixture;
-    fixture.emitNativeEvent("proof://ai-progress", { ticket: fixture.aiTicket, event: { phase: "searching", path: "src/api/requests.ts" } });
+    fixture.emitNativeEvent("proof://ai-progress", {
+      ticket: fixture.aiTicket,
+      event: { phase: "searching", path: "src/api/requests.ts" },
+    });
   });
   await expect(progress).toContainText("正在搜索代码");
   await expect(progress).toContainText("src/api/requests.ts");
@@ -6279,145 +6716,398 @@ test("Agent activity stays scoped, shows quiet elapsed time and cancels both tas
   await expect(progress).toContainText("等待 Agent 新活动，任务仍在运行。");
   await expect(progress.getByLabel("运行时长")).toHaveText("0:16");
   await progress.getByText("查看活动", { exact: true }).click();
-  await expect(progress.getByRole("list", { name: "活动记录" })).toContainText("src/api/requests.ts");
-  await page.screenshot({ path: ".artifacts/agent-activity/grouping.png", animations: "disabled" });
+  await expect(progress.getByRole("list", { name: "活动记录" })).toContainText(
+    "src/api/requests.ts",
+  );
+  await page.screenshot({
+    path: ".artifacts/agent-activity/grouping.png",
+    animations: "disabled",
+  });
   await progress.getByRole("button", { name: "取消", exact: true }).click();
   await expect(progress).toBeHidden();
   await expect(page.locator(".ai-error")).toContainText("AI 分析已取消");
   await page.getByRole("button", { name: "显示上下文", exact: true }).click();
   await page.getByRole("button", { name: "AI Review", exact: true }).click();
-  await page.getByRole("button", { name: "Review 全部变更", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Review 全部变更", exact: true })
+    .click();
   await expect(progress).toBeVisible();
-  await expect.poll(() => page.evaluate(() => (window as any).fixture.aiTicket)).not.toBe(groupingTicket);
+  await expect
+    .poll(() => page.evaluate(() => (window as any).fixture.aiTicket))
+    .not.toBe(groupingTicket);
   await page.evaluate((ticket) => {
     const fixture = (window as any).fixture;
-    fixture.emitNativeEvent("proof://ai-progress", { ticket, event: { phase: "reading", path: "late-old-task.ts" } });
-    fixture.emitNativeEvent("proof://ai-progress", { ticket: fixture.aiTicket, event: { phase: "reading", path: "src/lib/validation.ts" } });
+    fixture.emitNativeEvent("proof://ai-progress", {
+      ticket,
+      event: { phase: "reading", path: "late-old-task.ts" },
+    });
+    fixture.emitNativeEvent("proof://ai-progress", {
+      ticket: fixture.aiTicket,
+      event: { phase: "reading", path: "src/lib/validation.ts" },
+    });
   }, groupingTicket);
   await expect(progress).toContainText("src/lib/validation.ts");
   await expect(progress).not.toContainText("late-old-task.ts");
-  await page.screenshot({ path: ".artifacts/agent-activity/review.png", animations: "disabled" });
+  await page.screenshot({
+    path: ".artifacts/agent-activity/review.png",
+    animations: "disabled",
+  });
   await progress.getByRole("button", { name: "取消", exact: true }).click();
   await expect(progress).toBeHidden();
 });
 
-
-test("blocked Agent analysis is an error in Grouping and Review, never an empty success report", async ({ page }) => {
+test("blocked Agent analysis is an error in Grouping and Review, never an empty success report", async ({
+  page,
+}) => {
   await openFixture(page, false, true);
   await page.evaluate(() => {
-    const w = window as any, original = w.__TAURI_INTERNALS__.invoke;
+    const w = window as any,
+      original = w.__TAURI_INTERNALS__.invoke;
     w.__TAURI_INTERNALS__.invoke = async (name: string, payload: any) => {
-      if (payload?.command === "run_ai_task") throw {
-        code: "AI_ANALYSIS_BLOCKED",
-        message: "Agent 未能完成分析，请查看失败详情后重试。",
-        detail: "Unable to read manifest.json: code-mode host is disabled",
-      };
+      if (payload?.command === "run_ai_task")
+        throw {
+          code: "AI_ANALYSIS_BLOCKED",
+          message: "Agent 未能完成分析，请查看失败详情后重试。",
+          detail: "Unable to read manifest.json: code-mode host is disabled",
+        };
       return original(name, payload);
     };
   });
   await page.getByRole("button", { name: "AI 分组", exact: true }).click();
-  await expect(page.locator(".change-groups .ai-error")).toContainText("Agent 未能完成分析");
+  await expect(page.locator(".change-groups .ai-error")).toContainText(
+    "Agent 未能完成分析",
+  );
   await expect(page.locator(".group-toggle")).toHaveCount(0);
   await page.getByRole("button", { name: "显示上下文", exact: true }).click();
   await page.getByRole("button", { name: "AI Review", exact: true }).click();
-  await page.getByRole("button", { name: "Review 全部变更", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Review 全部变更", exact: true })
+    .click();
   const panel = page.locator(".ai-review-panel");
   await expect(panel.locator(".ai-error")).toContainText("Agent 未能完成分析");
-  await panel.getByText("失败详情 · AI_ANALYSIS_BLOCKED", { exact: true }).click();
-  await expect(panel.locator(".ai-error pre")).toContainText("code-mode host is disabled");
+  await panel
+    .getByText("失败详情 · AI_ANALYSIS_BLOCKED", { exact: true })
+    .click();
+  await expect(panel.locator(".ai-error pre")).toContainText(
+    "code-mode host is disabled",
+  );
   await expect(panel.locator(".ai-report-meta")).toHaveCount(0);
-  await expect(panel.getByText("此次分析未提出 Findings，仍需人工 Review。", { exact: true })).toHaveCount(0);
-  await expect(panel.getByRole("combobox", { name: "Review 记录", exact: true })).toHaveCount(0);
+  await expect(
+    panel.getByText("此次分析未提出 Findings，仍需人工 Review。", {
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await expect(
+    panel.getByRole("combobox", { name: "Review 记录", exact: true }),
+  ).toHaveCount(0);
 });
 
-test("task prompts persist separately and reset only the selected task", async ({ page }) => {
+test("task prompts persist separately and reset only the selected task", async ({
+  page,
+}) => {
   await openFixture(page, false, true);
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await page.getByRole("tab", { name: "AI Agent", exact: true }).click();
-  await page.getByLabel("Grouping Prompt", { exact: true }).fill("按业务行为分组，不要按目录分组");
+  await page
+    .getByLabel("Grouping Prompt", { exact: true })
+    .fill("按业务行为分组，不要按目录分组");
   const tabs = page.getByRole("tablist", { name: "Prompt 类型" });
   await tabs.getByRole("tab", { name: "AI Review", exact: true }).click();
-  await page.getByLabel("Review Prompt", { exact: true }).fill("重点检查并发和兼容性");
+  await page
+    .getByLabel("Review Prompt", { exact: true })
+    .fill("重点检查并发和兼容性");
   await tabs.getByRole("tab", { name: "AI Commit", exact: true }).click();
-  await page.getByLabel("Commit Prompt", { exact: true }).fill("Use Conventional Commits");
-  await page.getByRole("button", { name: "保存 Agent 设置", exact: true }).click();
-  await expect(page.locator(".agent-settings-footer").getByRole("status")).toContainText("已保存");
+  await page
+    .getByLabel("Commit Prompt", { exact: true })
+    .fill("Use Conventional Commits");
+  await page
+    .getByRole("button", { name: "保存 Agent 设置", exact: true })
+    .click();
+  await expect(
+    page.locator(".agent-settings-footer").getByRole("status"),
+  ).toContainText("已保存");
   await page.getByRole("tab", { name: "外观与阅读", exact: true }).click();
   await page.getByRole("tab", { name: "AI Agent", exact: true }).click();
-  await expect(page.getByLabel("Grouping Prompt", { exact: true })).toHaveValue("按业务行为分组，不要按目录分组");
+  await expect(page.getByLabel("Grouping Prompt", { exact: true })).toHaveValue(
+    "按业务行为分组，不要按目录分组",
+  );
   await tabs.getByRole("tab", { name: "AI Commit", exact: true }).click();
-  await expect(page.getByLabel("Commit Prompt", { exact: true })).toHaveValue("Use Conventional Commits");
+  await expect(page.getByLabel("Commit Prompt", { exact: true })).toHaveValue(
+    "Use Conventional Commits",
+  );
   await page.getByRole("button", { name: "恢复默认", exact: true }).click();
-  await expect(page.getByLabel("Commit Prompt", { exact: true })).toHaveValue("");
+  await expect(page.getByLabel("Commit Prompt", { exact: true })).toHaveValue(
+    "",
+  );
   await tabs.getByRole("tab", { name: "AI Review", exact: true }).click();
-  await expect(page.getByLabel("Review Prompt", { exact: true })).toHaveValue("重点检查并发和兼容性");
-  expect(await page.evaluate(() => (window as any).fixture.actions.filter((a: any) => a.command === "run_ai_task"))).toHaveLength(0);
+  await expect(page.getByLabel("Review Prompt", { exact: true })).toHaveValue(
+    "重点检查并发和兼容性",
+  );
+  expect(
+    await page.evaluate(() =>
+      (window as any).fixture.actions.filter(
+        (a: any) => a.command === "run_ai_task",
+      ),
+    ),
+  ).toHaveLength(0);
   await page.screenshot({ path: ".artifacts/ai-customization/prompts.png" });
 });
 
-test("AI Commit fills an empty draft without staging, committing or marking Review", async ({ page }) => {
+test("AI Commit fills an empty draft without staging, committing or marking Review", async ({
+  page,
+}) => {
   await openFixture(page, false, true);
   await openCommit(page);
   await page.getByLabel("Commit message", { exact: true }).fill("");
   await page.getByRole("button", { name: "AI Commit", exact: true }).click();
-  await expect(page.getByLabel("Commit message", { exact: true })).toHaveValue(/fix\(api\): validate request boundaries/);
+  await expect(page.getByLabel("Commit message", { exact: true })).toHaveValue(
+    /fix\(api\): validate request boundaries/,
+  );
   const actions = await page.evaluate(() => (window as any).fixture.actions);
-  expect(actions.filter((a: any) => a.command === "run_ai_task")).toHaveLength(1);
-  expect(actions.find((a: any) => a.command === "run_ai_task").args.request).toMatchObject({ task: "commit", amend: false, scope: { kind: "local", files: null } });
-  expect(actions.filter((a: any) => ["stage", "stage_files", "commit", "mark_reviewed"].includes(a.command))).toHaveLength(0);
+  expect(actions.filter((a: any) => a.command === "run_ai_task")).toHaveLength(
+    1,
+  );
+  expect(
+    actions.find((a: any) => a.command === "run_ai_task").args.request,
+  ).toMatchObject({
+    task: "commit",
+    amend: false,
+    scope: { kind: "local", files: null },
+  });
+  expect(
+    actions.filter((a: any) =>
+      ["stage", "stage_files", "commit", "mark_reviewed"].includes(a.command),
+    ),
+  ).toHaveLength(0);
   await page.screenshot({ path: ".artifacts/ai-customization/commit.png" });
 });
 
-test("AI Commit preserves edits made while generating and applies only on request", async ({ page }) => {
+test("AI Commit preserves edits made while generating and applies only on request", async ({
+  page,
+}) => {
   await openFixture(page, false, true);
   await openCommit(page);
   await page.getByLabel("Commit message", { exact: true }).fill("");
-  await page.evaluate(() => { (window as any).fixture.aiHold = true; });
+  await page.evaluate(() => {
+    (window as any).fixture.aiHold = true;
+  });
   await page.getByRole("button", { name: "AI Commit", exact: true }).click();
   await expect(page.getByRole("region", { name: "Agent 活动" })).toBeVisible();
-  await page.getByLabel("Commit message", { exact: true }).fill("My draft typed during generation");
-  await expect.poll(() => page.evaluate(() => !!(window as any).fixture.aiRelease)).toBe(true);
-  await page.evaluate(() => { (window as any).fixture.aiRelease(); });
-  await expect(page.getByRole("button", { name: "使用此说明", exact: true })).toBeVisible();
-  await expect(page.getByLabel("Commit message", { exact: true })).toHaveValue("My draft typed during generation");
+  await page
+    .getByLabel("Commit message", { exact: true })
+    .fill("My draft typed during generation");
+  await expect
+    .poll(() => page.evaluate(() => !!(window as any).fixture.aiRelease))
+    .toBe(true);
+  await page.evaluate(() => {
+    (window as any).fixture.aiRelease();
+  });
+  await expect(
+    page.getByRole("button", { name: "使用此说明", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Commit message", { exact: true })).toHaveValue(
+    "My draft typed during generation",
+  );
   await page.getByRole("button", { name: "使用此说明", exact: true }).click();
-  await expect(page.getByLabel("Commit message", { exact: true })).toHaveValue(/fix\(api\):/);
+  await expect(page.getByLabel("Commit message", { exact: true })).toHaveValue(
+    /fix\(api\):/,
+  );
 });
 
-test("AI Commit cancellation preserves the draft and Amend uses its own scope", async ({ page }) => {
+test("AI Commit cancellation preserves the draft and Amend uses its own scope", async ({
+  page,
+}) => {
   await openFixture(page, false, true);
   await openCommit(page);
   await page.getByRole("checkbox", { name: /Amend/ }).check();
   const message = page.getByLabel("Commit message", { exact: true });
   await message.fill("Keep amend draft");
-  await page.evaluate(() => { (window as any).fixture.aiHold = true; });
+  await page.evaluate(() => {
+    (window as any).fixture.aiHold = true;
+  });
   await page.getByRole("button", { name: "AI Commit", exact: true }).click();
-  await expect.poll(() => page.evaluate(() => !!(window as any).fixture.aiReject)).toBe(true);
-  await page.getByRole("region", { name: "Agent 活动" }).getByRole("button", { name: "取消", exact: true }).click();
+  await expect
+    .poll(() => page.evaluate(() => !!(window as any).fixture.aiReject))
+    .toBe(true);
+  await page
+    .getByRole("region", { name: "Agent 活动" })
+    .getByRole("button", { name: "取消", exact: true })
+    .click();
   await expect(page.locator(".composer-ai-error")).toContainText("已取消");
   await expect(message).toHaveValue("Keep amend draft");
-  const action = await page.evaluate(() => (window as any).fixture.actions.find((a: any) => a.command === "run_ai_task"));
+  const action = await page.evaluate(() =>
+    (window as any).fixture.actions.find(
+      (a: any) => a.command === "run_ai_task",
+    ),
+  );
   expect(action.args.request.amend).toBe(true);
 });
 
-test("AI Commit drops a late result after the Git scope changes", async ({ page }) => {
+test("AI Commit drops a late result after the Git scope changes", async ({
+  page,
+}) => {
   await openFixture(page, false, true);
   await openCommit(page);
   const message = page.getByLabel("Commit message", { exact: true });
   await message.fill("Keep the current draft");
-  await page.evaluate(() => { (window as any).fixture.aiHold = true; });
+  await page.evaluate(() => {
+    (window as any).fixture.aiHold = true;
+  });
   await page.getByRole("button", { name: "AI Commit", exact: true }).click();
-  await expect.poll(() => page.evaluate(() => !!(window as any).fixture.aiRelease)).toBe(true);
+  await expect
+    .poll(() => page.evaluate(() => !!(window as any).fixture.aiRelease))
+    .toBe(true);
   await page.evaluate(() => {
     const fixture = (window as any).fixture;
     fixture.aiReject = null; // Model completion can race with native cancellation.
     fixture.changes.token = "different-index-generation";
   });
   await page.getByRole("button", { name: "打开命令面板", exact: true }).click();
-  await page.getByRole("dialog", { name: "命令面板", exact: true }).getByRole("option", { name: "刷新 Worktree", exact: true }).click();
+  await page
+    .getByRole("dialog", { name: "命令面板", exact: true })
+    .getByRole("option", { name: "刷新 Worktree", exact: true })
+    .click();
   await expect(page.getByRole("region", { name: "Agent 活动" })).toHaveCount(0);
-  await page.evaluate(() => { (window as any).fixture.aiRelease(); });
+  await page.evaluate(() => {
+    (window as any).fixture.aiRelease();
+  });
   await expect(message).toHaveValue("Keep the current draft");
   await expect(page.locator(".composer-ai-suggestion")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "AI Commit", exact: true })).toBeEnabled();
+  await expect(
+    page.getByRole("button", { name: "AI Commit", exact: true }),
+  ).toBeEnabled();
+});
+
+test("Diff toolbar stages and discards the whole file; file pane shows Review progress", async ({
+  page,
+}) => {
+  await openFixture(page);
+  const toolbar = page.locator(".diff-toolbar");
+  const stage = toolbar.getByRole("button", {
+    name: "Stage 文件",
+    exact: true,
+  });
+  const discard = toolbar.getByRole("button", {
+    name: "预览丢弃文件",
+    exact: true,
+  });
+  await expect(stage).toBeEnabled();
+  // 演示数据默认可 Stage 不可丢弃（canDiscard: false）。
+  await expect(discard).toBeVisible();
+  await expect(discard).toBeDisabled();
+
+  // 文件面板头部的 Review 进度：初始已加载 requests.ts（2 个 hunk）。
+  const progress = page.locator(".file-heading .review-progress");
+  await expect(progress).toContainText("0/2");
+
+  // 在选中 response.ts 之前放开其丢弃限制，并 stub 恢复点命令。
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    fixture.diffs["src/api/response.ts"].canDiscard = true;
+    fixture.diffs["src/api/response.ts"].discardReason = null;
+    const original = (window as any).__TAURI_INTERNALS__.invoke;
+    (window as any).__TAURI_INTERNALS__.invoke = async (
+      name: string,
+      payload: any,
+    ) => {
+      if (payload?.command === "discard_preview")
+        return {
+          id: "rp-1",
+          workspaceId: "workflow-test",
+          path: "src/api/response.ts",
+          scope: "file",
+          status: "saved",
+          createdAt: Date.now(),
+          expiresAt: Date.now() + 3_600_000,
+          bytes: 16,
+          message: null,
+        };
+      if (payload?.command === "cancel_discard_preview") return;
+      return original(name, payload);
+    };
+  });
+
+  // 选中 response.ts（再加载 1 个 hunk）→ 进度变 0/3，丢弃按钮可用。
+  await page
+    .getByRole("button", { name: "response.ts M", exact: true })
+    .click();
+  await expect(progress).toContainText("0/3");
+  await expect(discard).toBeEnabled();
+  await discard.click();
+  const discardDialog = page.getByRole("dialog", {
+    name: "确认丢弃未暂存变化",
+    exact: true,
+  });
+  await expect(discardDialog).toBeVisible();
+  await discardDialog
+    .getByRole("button", { name: "取消", exact: true })
+    .click();
+  await expect(discardDialog).toHaveCount(0);
+
+  // Staged 侧：按钮变 Unstage，丢弃按钮不出现。
+  await page
+    .locator(".file-filters")
+    .getByRole("button", { name: "Staged", exact: true })
+    .click();
+  await page.getByRole("button", { name: "README.md M", exact: true }).click();
+  const unstage = toolbar.getByRole("button", {
+    name: "Unstage 文件",
+    exact: true,
+  });
+  await expect(unstage).toBeEnabled();
+  await expect(
+    toolbar.getByRole("button", { name: "预览丢弃文件", exact: true }),
+  ).toHaveCount(0);
+  await unstage.click();
+  await expect
+    .poll(async () =>
+      page.evaluate(
+        () =>
+          (window as any).fixture.actions.filter(
+            (a: any) => a.command === "stage" && a.args.hunkId === null,
+          ).length,
+      ),
+    )
+    .toBe(1);
+});
+
+test("Focus review toggles from the Diff toolbar", async ({ page }) => {
+  await openFixture(page);
+  const toolbar = page.locator(".diff-toolbar");
+  await toolbar
+    .getByRole("button", { name: "进入专注审查", exact: true })
+    .click();
+  await expect(page.locator(".app")).toHaveClass(/is-focused/);
+  const exit = toolbar.getByRole("button", {
+    name: "退出专注审查",
+    exact: true,
+  });
+  await expect(exit).toBeVisible();
+  await exit.click();
+  await expect(page.locator(".app")).not.toHaveClass(/is-focused/);
+  await expect(
+    toolbar.getByRole("button", { name: "进入专注审查", exact: true }),
+  ).toBeVisible();
+});
+
+test("Command palette opens discard recovery points", async ({ page }) => {
+  await openFixture(page);
+  await page.evaluate(() => {
+    const original = (window as any).__TAURI_INTERNALS__.invoke;
+    (window as any).__TAURI_INTERNALS__.invoke = async (
+      name: string,
+      payload: any,
+    ) => {
+      if (payload?.command === "recovery_points") return [];
+      return original(name, payload);
+    };
+  });
+  await page.getByRole("button", { name: "打开命令面板", exact: true }).click();
+  await page
+    .getByRole("dialog", { name: "命令面板", exact: true })
+    .getByRole("option", { name: "打开丢弃恢复点", exact: true })
+    .click();
+  await expect(
+    page.getByRole("dialog", { name: "丢弃恢复点", exact: true }),
+  ).toBeVisible();
 });

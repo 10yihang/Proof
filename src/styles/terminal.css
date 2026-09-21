@@ -1,0 +1,41 @@
+.terminal-drawer {
+  height: 320px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+.terminal-drawer[hidden] {
+  display: none;
+}
+.terminal-drawer-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  font-size: 11px;
+}
+.terminal-drawer-header .toolbar-spacer {
+  flex: 1;
+}
+.terminal-drawer-title {
+  font-weight: 550;
+  color: var(--text);
+}
+.terminal-drawer-status {
+  color: var(--muted);
+}
+.terminal-drawer-status.error {
+  color: var(--del);
+}
+.terminal-drawer-body {
+  flex: 1;
+  min-height: 0;
+  padding: 6px 4px 6px 10px;
+}
+.terminal-drawer-body .xterm {
+  height: 100%;
+}

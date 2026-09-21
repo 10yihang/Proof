@@ -195,20 +195,6 @@
   .app.layout-enabled .demo-badge {
     display: none;
   }
-  .app.layout-enabled .app-footer {
-    height: auto;
-    min-height: 74px;
-    flex-wrap: wrap;
-    gap: 5px;
-    padding: 7px 12px;
-  }
-  .app.layout-enabled .review-progress {
-    flex-basis: 100%;
-    white-space: normal;
-  }
-  .app.layout-enabled .app-footer .toolbar-spacer {
-    display: none;
-  }
   .app.layout-enabled .demo-notice {
     font-size: 10px;
     padding: 6px 12px;

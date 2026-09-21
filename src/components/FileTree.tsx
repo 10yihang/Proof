@@ -1,6 +1,13 @@
 import { Button, Input } from "./ui/controls";
 import { t } from "../i18n";
-import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MouseEvent,
+} from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   CaretDown,
@@ -39,6 +46,7 @@ export function FileTree({
   onDiscard,
   onRecovery,
   workspacePath,
+  reviewProgress,
 }: {
   files: ChangedFile[];
   selected: string | null;
@@ -55,6 +63,7 @@ export function FileTree({
   onDiscard?: (files: ChangedFile[]) => void;
   onRecovery?: () => void;
   workspacePath?: string;
+  reviewProgress?: { reviewed: number; total: number };
 }) {
   const clientStorage = useClientStorage();
   const parent = useRef<HTMLDivElement>(null);
@@ -203,6 +212,25 @@ export function FileTree({
           />
           {!readOnly && <kbd>{t("⌘ P")}</kbd>}
         </div>
+
+        {!readOnly && reviewProgress && (
+          <span
+            className="review-progress"
+            title={`${t("Review")} ${reviewProgress.reviewed}/${reviewProgress.total} ${t("hunks reviewed")}`}
+          >
+            <span
+              className="progress-circle"
+              style={
+                {
+                  "--progress": `${reviewProgress.total ? (reviewProgress.reviewed / reviewProgress.total) * 100 : 0}%`,
+                } as CSSProperties
+              }
+            />
+            <span>
+              {reviewProgress.reviewed}/{reviewProgress.total}
+            </span>
+          </span>
+        )}
 
         <Button
           className="icon-button"

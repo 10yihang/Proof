@@ -3,6 +3,7 @@
 @import "./styles/history.css";
 @import "./styles/reading.css";
 @import "./styles/layout.css";
+@import "./styles/terminal.css";
 
 :root {
   font-family:
@@ -1295,23 +1296,17 @@ kbd {
   font-size: 9px;
   flex-shrink: 0;
 }
-.app-footer {
-  height: 54px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 0 18px;
-  border-top: 1px solid var(--border);
-  background: var(--bg);
-  flex-shrink: 0;
-  font-size: 10px;
-}
 .review-progress {
   display: flex;
   align-items: center;
   gap: 9px;
   color: var(--muted);
   white-space: nowrap;
+}
+.file-heading .review-progress {
+  gap: 5px;
+  font-size: 10px;
+  margin-left: auto;
 }
 .review-progress strong {
   font-weight: 550;
@@ -1832,13 +1827,6 @@ kbd {
   .app-header {
     padding: 0 12px;
   }
-  .app-footer {
-    padding: 0 10px;
-    gap: 6px;
-  }
-  .review-progress {
-    font-size: 9px;
-  }
   .diff-file-header {
     padding-left: 16px;
   }
@@ -1905,9 +1893,6 @@ kbd {
 .button:active:not(:disabled),
 .icon-button:active:not(:disabled) {
   transform: translateY(1px);
-}
-.app-footer {
-  box-shadow: 0 -1px 8px #14233a04;
 }
 .workbench {
   animation: workspace-enter var(--motion-panel) var(--ease-out);

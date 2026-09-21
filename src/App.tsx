@@ -26,16 +26,14 @@ import {
   GitCommit,
   Info,
   MagnifyingGlass,
-  Minus,
-  Plus,
   SidebarSimple,
   ShieldCheck,
   Warning,
   X,
-  Trash,
   ClockCounterClockwise,
   List,
   ArrowSquareOut,
+  Terminal as TerminalIcon,
 } from "@phosphor-icons/react";
 import {
   asError,
@@ -78,6 +76,7 @@ import { Settings } from "./components/Settings";
 import { RecoveryDialog } from "./components/RecoveryDialog";
 import { FileHistory } from "./components/FileHistory";
 import { ResizableWorkbench } from "./components/ResizableWorkbench";
+import { TerminalDrawer } from "./components/TerminalDrawer";
 import { useRepositoryLayout } from "./use-repository-layout";
 import { DiffCache, matchesGitBase } from "./diff-cache";
 import { WorkspaceRefresh, type RefreshResult } from "./workspace-refresh";
@@ -279,6 +278,7 @@ export default function App({
     );
   const [compact, setCompact] = useState(window.innerWidth <= 780),
     [filesDrawer, setFilesDrawer] = useWindowField(windowUI, "filesDrawer");
+  const [terminalOpen, setTerminalOpen] = useState(false);
   const repositoryLayout = useRepositoryLayout(changes?.workspace, demo);
   const [preview, setPreview] = useState<CommitPreview | null>(null),
     [draft, setDraft] = useState("");
@@ -1444,6 +1444,23 @@ export default function App({
         );
         return;
       }
+      // Ctrl+` 开关嵌入式终端（与 VS Code 一致），不在终端/输入框聚焦时生效。
+      if (
+        !dialog &&
+        changes &&
+        isDesktop &&
+        event.ctrlKey &&
+        event.key === "`"
+      ) {
+        event.preventDefault();
+        setTerminalOpen((value) => !value);
+        if (tab !== "changes") setTab("changes");
+        return;
+      }
+      if (terminalOpen && tab === "changes" && event.key === "Escape") {
+        setTerminalOpen(false);
+        return;
+      }
       if (editing || busy || (dialog !== null && dialog !== "commands")) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
@@ -1492,6 +1509,7 @@ export default function App({
       compact,
       filesDrawer,
       contextDrawer,
+      terminalOpen,
       repositoryLayout.ready,
       repositoryLayout.value.sidebarOpen,
       repositoryLayout.scopeKey,
@@ -1623,8 +1641,7 @@ export default function App({
     setRepositorySection(section);
     setTab("repository");
   }
-  const workspaceView: WorkspaceView =
-    tab === "repository" ? "history" : tab;
+  const workspaceView: WorkspaceView = tab === "repository" ? "history" : tab;
   function selectWorkspaceView(view: WorkspaceView) {
     if (view === "history") showRepository("history");
     else if (view === "commit") showCommit();
@@ -1699,6 +1716,74 @@ export default function App({
           className="toolbar-spacer window-drag-space"
           data-tauri-drag-region
         />
+        {changes && !diffWindow && isDesktop && (
+          <Button
+            id="terminal-toggle"
+            className="icon-button"
+            aria-label={terminalOpen ? t("收起终端") : t("打开终端")}
+            aria-expanded={terminalOpen}
+            aria-controls="terminal-drawer"
+            title={t("终端")}
+            onClick={() => {
+              setTerminalOpen((value) => !value);
+              if (tab !== "changes") setTab("changes");
+            }}
+          >
+            <TerminalIcon size={17} />
+          </Button>
+        )}
+        {changes && !diffWindow && (
+          <Button
+            id="files-toggle"
+            className="icon-button"
+            aria-label={sidebarVisible ? t("收起文件栏") : t("显示文件栏")}
+            aria-expanded={sidebarVisible}
+            aria-controls="files-panel"
+            title={t("文件栏 · ⌘/Ctrl P 搜索")}
+            disabled={!compact && !repositoryLayout.ready}
+            onClick={() => {
+              if (sidebarVisible) closeFiles();
+              else showFileSearch();
+            }}
+          >
+            <List size={17} />
+          </Button>
+        )}
+        {changes && !diffWindow && (
+          <Button
+            id="context-toggle"
+            className="icon-button"
+            aria-label={contextOpen ? t("收起上下文") : t("显示上下文")}
+            title={t("Context 面板")}
+            aria-expanded={contextOpen}
+            aria-controls="context-panel"
+            disabled={!narrow && !repositoryLayout.ready}
+            onClick={() => {
+              if (tab !== "changes" && tab !== "commit") setTab("changes");
+              if (contextOpen) {
+                closeContext();
+                return;
+              }
+              setFocused(false);
+              if (narrow) {
+                setContextDrawer(true);
+                setFilesDrawer(false);
+              } else
+                void repositoryLayout.update({
+                  contextOpen: true,
+                });
+              requestAnimationFrame(() =>
+                document
+                  .querySelector<HTMLButtonElement>(
+                    "#context-panel .context-header button",
+                  )
+                  ?.focus(),
+              );
+            }}
+          >
+            <SidebarSimple size={17} />
+          </Button>
+        )}
         {demo && <span className="demo-badge">{t("演示数据")}</span>}
         {changes && (
           <Button
@@ -2056,6 +2141,10 @@ export default function App({
                       onStage={(files, side) => void stageFiles(files, side)}
                       onDiscard={(files) => void prepareDiscardFiles(files)}
                       onRecovery={() => setDialog("recovery")}
+                      reviewProgress={{
+                        reviewed: reviewedUnits,
+                        total: knownUnits.length,
+                      }}
                       workspacePath={changes.workspace.path}
                       files={changes.files}
                       selected={selected}
@@ -2275,6 +2364,7 @@ export default function App({
                     }}
                     onCancelContext={contextReader.cancel}
                     onFocus={() => setFocused((f) => !f)}
+                    focused={focused}
                   />
                 ) : loadingDiff ? null : (
                   <div className="empty-diff">
@@ -2327,130 +2417,14 @@ export default function App({
           </Tabs.Panel>
         </>
       )}
-      {changes && tab === "changes" && (
-        <footer className="app-footer">
-          <div className="review-progress">
-            <span
-              className="progress-circle"
-              style={
-                {
-                  "--progress": `${knownUnits.length ? (reviewedUnits / knownUnits.length) * 100 : 0}%`,
-                } as React.CSSProperties
-              }
-            />
-            <span>
-              {t("Review")}{" "}
-              <strong>
-                {reviewedUnits}/{knownUnits.length}
-              </strong>{" "}
-              {t("hunks reviewed")}
-            </span>
-          </div>
-          <div className="toolbar-spacer" />
-          {focused && (
-            <Button
-              className="button subtle compact"
-              onClick={() => setFocused(false)}
-            >
-              {t("退出专注")}
-            </Button>
-          )}
-          <Button
-            id="files-toggle"
-            className="icon-button"
-            aria-label={sidebarVisible ? t("收起文件栏") : t("显示文件栏")}
-            aria-expanded={sidebarVisible}
-            aria-controls="files-panel"
-            title={t("文件栏 · ⌘/Ctrl P 搜索")}
-            disabled={!compact && !repositoryLayout.ready}
-            onClick={() => {
-              if (sidebarVisible) closeFiles();
-              else showFileSearch();
-            }}
-          >
-            <List size={18} />
-          </Button>
-          <Button
-            id="context-toggle"
-            className="icon-button"
-            aria-label={contextOpen ? t("收起上下文") : t("显示上下文")}
-            title={t("Context 面板")}
-            aria-expanded={contextOpen}
-            aria-controls="context-panel"
-            disabled={!narrow && !repositoryLayout.ready}
-            onClick={() => {
-              if (contextOpen) {
-                closeContext();
-                return;
-              }
-              setFocused(false);
-              if (narrow) {
-                setContextDrawer(true);
-                setFilesDrawer(false);
-              } else
-                void repositoryLayout.update({
-                  contextOpen: true,
-                });
-              requestAnimationFrame(() =>
-                document
-                  .querySelector<HTMLButtonElement>(
-                    "#context-panel .context-header button",
-                  )
-                  ?.focus(),
-              );
-            }}
-          >
-            <SidebarSimple size={18} />
-          </Button>
-          {diff && (
-            <Button
-              className="button compact"
-              disabled={!diff.canStage || busy || loadingDiff}
-              title={
-                !diff.canStage
-                  ? t("此文件当前不支持 Git 写操作")
-                  : t("操作当前整个文件")
-              }
-              onClick={() => {
-                void stage(null);
-              }}
-            >
-              {diff.side === "staged" ? (
-                <Minus size={15} />
-              ) : (
-                <Plus size={15} />
-              )}
-              {diff.side === "staged" ? t("Unstage file") : t("Stage file")}
-            </Button>
-          )}
-          <Button
-            className="icon-button"
-            aria-label={t("打开丢弃恢复点")}
-            title={t("丢弃恢复点")}
-            disabled={busy || demo}
-            onClick={() => {
-              setError(null);
-              setDialog("recovery");
-            }}
-          >
-            <ClockCounterClockwise size={18} />
-          </Button>
-          {diff?.side === "unstaged" && (
-            <Button
-              className="icon-button"
-              aria-label={t("预览丢弃文件")}
-              title={
-                diff.canDiscard
-                  ? t("预览丢弃整个文件的未暂存变化")
-                  : (diff.discardReason ?? t("当前不能丢弃"))
-              }
-              disabled={busy || !diff.canDiscard}
-              onClick={() => void prepareDiscard(null)}
-            >
-              <Trash size={18} />
-            </Button>
-          )}
-        </footer>
+      {/* 终端抽屉位于全局状态栏之上、贴窗口底部（与 VS Code 面板一致）。 */}
+      {changes && isDesktop && (
+        <TerminalDrawer
+          key={changes.workspace.id}
+          open={terminalOpen && tab === "changes"}
+          workspacePath={changes.workspace.path}
+          onClose={() => setTerminalOpen(false)}
+        />
       )}
       {dialog === "file-history" && diff && (
         <FileHistory
@@ -2942,6 +2916,15 @@ export default function App({
                   void openEditor(commandTarget);
                 },
                 disabled: tab !== "changes" || !commandTarget || openingEditor,
+              },
+              {
+                label: t("打开丢弃恢复点"),
+                icon: <ClockCounterClockwise size={19} />,
+                run: () => {
+                  setError(null);
+                  setDialog("recovery");
+                },
+                disabled: !changes || busy || demo,
               },
               {
                 label: t("观察与偏好设置"),

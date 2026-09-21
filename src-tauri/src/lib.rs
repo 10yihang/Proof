@@ -38,6 +38,7 @@ mod diff_windows;
 mod observer;
 mod read_requests;
 mod review_export;
+mod terminal;
 mod updater;
 mod watcher;
 #[cfg(target_os = "macos")]
@@ -690,6 +691,7 @@ pub fn run() {
             app.manage(diagnostics::DiagnosticState::default());
             app.manage(read_requests::ReadRequests::default());
             app.manage(diff_windows::DiffWindows::default());
+            app.manage(terminal::TerminalSet::default());
             app.manage(Mutex::new(std::collections::HashMap::<
                 String,
                 watcher::WorkspaceWatch,
@@ -735,7 +737,11 @@ pub fn run() {
             diagnostics::application_diagnostic,
             updater::check_app_update,
             updater::download_app_update,
-            updater::install_app_update
+            updater::install_app_update,
+            terminal::terminal_spawn,
+            terminal::terminal_write,
+            terminal::terminal_resize,
+            terminal::terminal_close
         ])
         .run(tauri::generate_context!())
         .expect("Proof could not start");

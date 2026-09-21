@@ -727,6 +727,7 @@ export function HistoryDiff({
                 onStage={() => {}}
                 onDiscard={() => {}}
                 onFocus={() => setFocused((value) => !value)}
+                focused={focused}
                 onEditor={() => {}}
                 openingEditor={false}
                 onLoadContext={async (contextLines) =>

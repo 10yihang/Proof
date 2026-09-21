@@ -35,6 +35,7 @@ import {
   CaretDown,
   CaretUp,
   TextAlignLeft,
+  ArrowsInSimple,
   ArrowsOutSimple,
   MagnifyingGlass,
   Code,
@@ -95,6 +96,7 @@ export function DiffView({
   onEditor,
   openingEditor,
   comparison,
+  focused,
   positionRef,
   jumpTo,
   ai,
@@ -117,6 +119,7 @@ export function DiffView({
   onEditor: () => void;
   openingEditor: boolean;
   comparison?: { base: string; target: string };
+  focused?: boolean;
   positionRef?: MutableRefObject<DiffPosition | null>;
 }) {
   const parent = useRef<HTMLDivElement>(null);
@@ -913,6 +916,40 @@ export function DiffView({
             </span>
           </span>
           <div className="toolbar-spacer" />
+          {!comparison && (
+            <Button
+              className="button compact"
+              disabled={!diff.canStage || pending}
+              title={
+                !diff.canStage
+                  ? t("此文件当前不支持 Git 写操作")
+                  : t("操作当前整个文件")
+              }
+              onClick={() => onStage(null)}
+            >
+              {diff.side === "staged" ? (
+                <Minus size={15} />
+              ) : (
+                <Plus size={15} />
+              )}
+              {diff.side === "staged" ? t("Unstage file") : t("Stage file")}
+            </Button>
+          )}
+          {!comparison && diff.side === "unstaged" && (
+            <Button
+              className="icon-button"
+              aria-label={t("预览丢弃文件")}
+              title={
+                diff.canDiscard
+                  ? t("预览丢弃整个文件的未暂存变化")
+                  : (diff.discardReason ?? t("当前不能丢弃"))
+              }
+              disabled={pending || !diff.canDiscard}
+              onClick={() => onDiscard(null)}
+            >
+              <Trash size={17} />
+            </Button>
+          )}
           <div
             className="context-stepper"
             role="group"
@@ -1108,12 +1145,17 @@ export function DiffView({
           )}
           {
             <Button
-              className="icon-button"
-              aria-label={t("进入专注审查")}
+              className={`icon-button ${focused ? "selected" : ""}`}
+              aria-label={focused ? t("退出专注审查") : t("进入专注审查")}
+              aria-pressed={!!focused}
               title={t("专注审查")}
               onClick={onFocus}
             >
-              <ArrowsOutSimple size={17} />
+              {focused ? (
+                <ArrowsInSimple size={17} />
+              ) : (
+                <ArrowsOutSimple size={17} />
+              )}
             </Button>
           }
         </div>

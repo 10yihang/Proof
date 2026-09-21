@@ -58,7 +58,6 @@
   "读取已取消，选择文件可重新读取。": "Reading cancelled. Select a file to retry.",
   "Review": "Review",
   "hunks reviewed": "hunks reviewed",
-  "退出专注": "Exit focus mode",
   "收起文件栏": "Hide file pane",
   "显示文件栏": "Show file pane",
   "文件栏 · ⌘/Ctrl P 搜索": "File pane · ⌘/Ctrl P to search",
@@ -1579,5 +1578,14 @@
   "当前分支 · {v0}": "Current branch · {v0}",
   "HEAD 尚未加载时，显示当前分支历史。": "Show current branch history if HEAD is not loaded.",
   "尚无提交": "No commits yet",
-  "本地 Commit": "Local Commit"
+  "本地 Commit": "Local Commit",
+  "终端": "Terminal",
+  "打开终端": "Show terminal",
+  "收起终端": "Hide terminal",
+  "关闭终端": "Close terminal",
+  "进程已退出": "Process exited",
+  "终端进程已退出。": "The terminal process has exited.",
+  "终端启动失败": "Terminal failed to start",
+  "重新启动终端": "Restart terminal",
+  "重新启动": "Restart"
 }
