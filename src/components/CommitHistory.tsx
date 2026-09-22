@@ -250,7 +250,7 @@ export function CommitHistory({
     demo,
     scope,
     revision,
-    actions.revision,
+    actions.graphRevision,
   ]);
 
   const graph = useMemo(() => layoutCommitGraph(commits), [commits]);
@@ -413,8 +413,8 @@ export function CommitHistory({
   const range = !!branchComparison || !!compared;
   return (
     <section className="commit-history" aria-label={t("Git 提交图")}>
-      {actions.toolbar}
       <header className="graph-toolbar">
+        {actions.toolbar}
         <div className="graph-heading">
           <Button
             className="graph-head-location"
@@ -424,14 +424,16 @@ export function CommitHistory({
             disabled={busy || !changes.head}
             onClick={locateHead}
           >
-            <Crosshair size={19} aria-hidden="true" />
+            <Crosshair size={15} aria-hidden="true" />
             <span className="graph-head-label" id={currentBranchLabel}>
-              <small>{changes.branch ? t("当前分支") : "Detached HEAD"}</small>
               <strong>
-                {changes.branch ?? changes.head?.slice(0, 8) ?? t("尚无提交")}
+                {changes.branch ??
+                  (changes.head ? "Detached HEAD" : t("尚无提交"))}
               </strong>
             </span>
-            {changes.branch && <code>{changes.head?.slice(0, 7) ?? "—"}</code>}
+            {changes.head && (
+              <code>{changes.head.slice(0, changes.branch ? 7 : 8)}</code>
+            )}
           </Button>
         </div>
         <div className="graph-search">

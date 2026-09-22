@@ -855,7 +855,7 @@ fn push_rejection_keeps_remote_history() {
     assert!(git(&peer, &["ls-remote", "origin", "refs/heads/main"]).starts_with(&remote_head));
 }
 #[test]
-fn rebase_replays_current_branch_without_updating_other_refs_or_autostashing() {
+fn rebase_autostashes_dirty_worktree_and_replays_current_branch() {
     let mut f = Fixture::new();
     git(&f.repo, &["branch", "base"]);
     f.commit("local", "local change");
@@ -864,20 +864,29 @@ fn rebase_replays_current_branch_without_updating_other_refs_or_autostashing() {
     git(&f.repo, &["switch", "base"]);
     let base = f.commit("base", "base change");
     git(&f.repo, &["switch", "main"]);
+    // 配置里显式关掉 autoStash、打开 updateRefs：Proof 的
+    // --autostash / -c rebase.updateRefs=false 必须覆盖用户配置。
     git(&f.repo, &["config", "rebase.updateRefs", "true"]);
-    git(&f.repo, &["config", "rebase.autoStash", "true"]);
-    fs::write(f.repo.join("dirty"), "dirty").unwrap();
-    assert_eq!(
-        f.prepare(action(Kind::Rebase, Some("refs/heads/base")))
-            .unwrap_err()
-            .code,
-        "HISTORY_CLEAN_REQUIRED"
-    );
-    fs::remove_file(f.repo.join("dirty")).unwrap();
+    git(&f.repo, &["config", "rebase.autoStash", "false"]);
+    // 已跟踪文件的未提交改动与 untracked 文件都不再阻塞 rebase。
+    fs::write(f.repo.join("local"), "dirty edit").unwrap();
+    fs::write(f.repo.join("untracked"), "keep me").unwrap();
     assert!(f.run(action(Kind::Rebase, Some("refs/heads/base"))).ok);
     assert_ne!(f.head(), original);
     assert_eq!(git(&f.repo, &["rev-parse", "HEAD^"]), base);
     assert_eq!(git(&f.repo, &["rev-parse", "keep-original"]), original);
+    // autostash 回放：脏改动与 untracked 文件都还在。
+    assert_eq!(fs::read_to_string(f.repo.join("local")).unwrap(), "dirty edit");
+    assert_eq!(fs::read_to_string(f.repo.join("untracked")).unwrap(), "keep me");
+    assert_eq!(git(&f.repo, &["status", "--porcelain"]), " M local\n?? untracked");
+    // 但 Merge 仍要求干净工作区（不随 rebase 放开）。
+    fs::write(f.repo.join("local"), "still dirty").unwrap();
+    assert_eq!(
+        f.prepare(action(Kind::Merge, Some("refs/heads/base")))
+            .unwrap_err()
+            .code,
+        "HISTORY_CLEAN_REQUIRED"
+    );
 }
 #[test]
 fn cherry_pick_revert_and_merge_parent_selection() {

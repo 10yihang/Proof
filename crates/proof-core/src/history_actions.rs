@@ -333,7 +333,13 @@ impl Proof {
         } else {
             self.require_write(&workspace)?;
         }
+        // Rebase（含 pull --rebase）显式带 --autostash：脏工作区先自动
+        // stash、变基后回放，不再需要用户手动清空工作区。其余操作仍要求干净，
+        // 避免 merge/cherry-pick 与未提交改动纠缠出难以解释的结果。
+        let autostashed = matches!(request.kind, Rebase)
+            || (request.kind == Pull && request.mode.as_deref() == Some("rebase"));
         if matches!(request.kind, Merge | Rebase | CherryPick | Revert | Pull)
+            && !autostashed
             && !changes.files.is_empty()
         {
             return Err(Error::new(
@@ -465,7 +471,7 @@ impl Proof {
                         "-c",
                         "rebase.updateRefs=false",
                         "rebase",
-                        "--no-autostash",
+                        "--autostash",
                         "--no-autosquash",
                         "--no-fork-point",
                         oid,
@@ -564,14 +570,15 @@ impl Proof {
                             "-c",
                             "rebase.updateRefs=false",
                             "pull",
-                            "--no-autostash",
                             "--no-recurse-submodules",
                             "--no-edit",
                         ]);
                         match request.mode.as_deref().unwrap_or("ff-only") {
-                            "ff-only" => args.extend(words(&["--no-rebase", "--ff-only"])),
-                            "merge" => args.extend(words(&["--no-rebase", "--ff"])),
-                            "rebase" => args.extend(words(&["--rebase=true", "--ff"])),
+                            "ff-only" => args.extend(words(&["--no-autostash", "--no-rebase", "--ff-only"])),
+                            "merge" => args.extend(words(&["--no-autostash", "--no-rebase", "--ff"])),
+                            "rebase" => {
+                                args.extend(words(&["--autostash", "--rebase=true", "--ff"]))
+                            }
                             _ => return Err(invalid("Invalid pull strategy")),
                         }
                         args.extend(words(&["--", remote, &format!("refs/heads/{branch}")]));

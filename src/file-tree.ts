@@ -63,14 +63,35 @@ export function treeRows(
       for (const [name, files] of [...folders].sort(([a], [b]) =>
         a.localeCompare(b),
       )) {
-        const path = prefix + name,
-          key = `folder:${side}:${path}`,
+        // 压缩单子文件夹链（典型如 Java 的 src/main/java/com/...）：文件夹下
+        // 唯一的直接子项仍是文件夹时合并成一行，直到出现直接文件或多个子文件夹。
+        let path = prefix + name,
+          label = name;
+        for (;;) {
+          const subfolders = new Set<string>();
+          let hasDirectFile = false;
+          for (const file of files) {
+            const rest = file.path.slice(path.length + 1),
+              slash = rest.indexOf("/");
+            if (slash < 0) {
+              hasDirectFile = true;
+              break;
+            }
+            subfolders.add(rest.slice(0, slash));
+            if (subfolders.size > 1) break;
+          }
+          if (hasDirectFile || subfolders.size !== 1) break;
+          const child = subfolders.values().next().value!;
+          label += `/${child}`;
+          path += `/${child}`;
+        }
+        const key = `folder:${side}:${path}`,
           expanded = !!search || !collapsed.has(key);
         rows.push({
           kind: "folder",
           key,
           side,
-          label: name,
+          label,
           files,
           depth,
           parent,

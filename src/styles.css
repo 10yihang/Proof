@@ -812,8 +812,13 @@ kbd {
   min-width: 0;
 }
 .file-title strong {
+  display: block;
   font-size: 13px;
   font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .file-title span {
   font-size: 10px;
@@ -1602,7 +1607,6 @@ kbd {
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  animation: workspace-enter var(--motion-panel) var(--ease-out);
 }
 .repository-nav {
   width: 225px;
@@ -1693,16 +1697,6 @@ kbd {
 .load-more {
   margin: 20px auto;
   display: flex;
-}
-@keyframes workspace-enter {
-  from {
-    opacity: 0.6;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
 }
 .tag {
   font-size: 9px;
@@ -1894,22 +1888,6 @@ kbd {
 .icon-button:active:not(:disabled) {
   transform: translateY(1px);
 }
-.workbench {
-  animation: workspace-enter var(--motion-panel) var(--ease-out);
-}
-.context-panel {
-  animation: inspector-enter var(--motion-panel) var(--ease-out);
-}
-@keyframes inspector-enter {
-  from {
-    opacity: 0.3;
-    transform: translateX(12px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
 .modal[open] {
   animation: modal-enter 220ms var(--ease-out);
 }
@@ -1978,9 +1956,6 @@ kbd {
   }
 }
 
-.workspace-page:not([hidden]) {
-  animation: workspace-enter var(--motion-panel) var(--ease-out);
-}
 .command-trigger {
   height: 34px;
   gap: 8px;
@@ -2165,7 +2140,9 @@ kbd {
   container-type: inline-size;
   container-name: diff-pane;
 }
-@container diff-pane (max-width: 750px) {
+/* 工具栏按钮组自身约需 750px；加上文件名/增删计数的最小宽度后，
+   面板不足 940px 时就应让文件名与工具栏分两行排布，避免互相挤压重叠。 */
+@container diff-pane (max-width: 940px) {
   .diff-topbar {
     flex-wrap: wrap;
     gap: 9px;
@@ -2175,6 +2152,8 @@ kbd {
   }
   .diff-toolbar {
     width: 100%;
+    flex-wrap: wrap;
+    row-gap: 6px;
   }
   .diff-toolbar .toolbar-spacer {
     display: block;
@@ -2191,6 +2170,8 @@ kbd {
   }
   .diff-toolbar {
     width: 100%;
+    flex-wrap: wrap;
+    row-gap: 6px;
   }
   .diff-toolbar .toolbar-spacer {
     display: block;

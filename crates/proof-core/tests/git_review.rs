@@ -672,6 +672,30 @@ fn file_discard_targets_index_including_staged_edits() {
 }
 
 #[test]
+fn binary_file_discard_and_undo_roundtrip() {
+    let mut f = Fixture::new();
+    // 含 NUL 的字节序列，Git 与 Proof 都会判定为二进制。
+    let original: Vec<u8> = (0..=255u8).cycle().take(4096).collect();
+    let edited: Vec<u8> = (0..=255u8).rev().cycle().take(4096).collect();
+    fs::write(f.repo.join("image.png"), &original).unwrap();
+    git(&f.repo, &["add", "image.png"]);
+    git(&f.repo, &["commit", "-m", "image"]);
+    fs::write(f.repo.join("image.png"), &edited).unwrap();
+    let diff = f
+        .proof
+        .file_diff(&f.workspace.id, "image.png", Side::Unstaged)
+        .unwrap();
+    // 整文件丢弃支持二进制；Hunk 级仍不支持。
+    assert!(diff.can_discard);
+    assert!(!diff.can_discard_hunks);
+    let preview = f.proof.discard_preview(&diff.id, None).unwrap();
+    assert!(f.proof.discard(&preview.id).unwrap().result.ok);
+    assert_eq!(fs::read(f.repo.join("image.png")).unwrap(), original);
+    assert!(f.proof.undo_discard(&preview.id).unwrap().result.ok);
+    assert_eq!(fs::read(f.repo.join("image.png")).unwrap(), edited);
+}
+
+#[test]
 fn tracked_deletion_can_be_recovered_and_undone_without_touching_index() {
     let mut f = Fixture::new();
     fs::remove_file(f.repo.join("code.txt")).unwrap();

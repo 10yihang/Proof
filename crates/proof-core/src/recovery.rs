@@ -22,6 +22,18 @@ pub struct DiscardBatchResult {
 }
 type StoredRecovery = (String, Option<Vec<u8>>, Option<Vec<u8>>);
 
+/// 恢复点只要存过二进制内容（整文件二进制丢弃），其后续所有读取/备份核对
+/// 都按字节处理，不再做 UTF-8 限定。
+fn record_binary(record: &Record) -> bool {
+    record.point.removes_file
+        || [&record.before, &record.after]
+            .into_iter()
+            .flatten()
+            .any(|image| {
+                image.bytes.contains(&0) || std::str::from_utf8(&image.bytes).is_err()
+            })
+}
+
 #[derive(Serialize, Deserialize)]
 struct Record {
     #[serde(default)]
@@ -300,8 +312,11 @@ impl Proof {
         let untracked = git
             .query(&workspace, &["ls-files", "-z", "--", &diff.path])?
             .is_empty();
-        let file =
-            BoundFile::open(Path::new(&workspace.path), &diff.path)?.with_binary_content(untracked);
+        // 整文件丢弃按原始字节存取恢复点，二进制（图片等）同样支持；
+        // 只有 Hunk 级丢弃需要文本反转，仍限定 UTF-8。
+        let whole_binary = hunk_id.is_none() && diff.kind == FileKind::Binary;
+        let file = BoundFile::open(Path::new(&workspace.path), &diff.path)?
+            .with_binary_content(untracked || whole_binary);
         let before = file.read()?;
         if untracked && before.is_none() {
             return Err(Error::stale());
@@ -312,12 +327,16 @@ impl Proof {
             git.index_worktree_content(&workspace, &diff.path)?
         };
         if index_content.len() > 32 * 1024 * 1024
-            || index_content.contains(&0)
-            || std::str::from_utf8(&index_content).is_err()
+            || (!whole_binary
+                && (index_content.contains(&0) || std::str::from_utf8(&index_content).is_err()))
         {
             return Err(Error::new(
                 "UNSUPPORTED_RECOVERY_ENCODING",
-                "索引内容不是受支持的 UTF-8 文本，已阻止丢弃。",
+                if whole_binary {
+                    "索引内容超过 32 MiB，已阻止丢弃。"
+                } else {
+                    "索引内容不是受支持的 UTF-8 文本，已阻止丢弃。"
+                },
                 &diff.path,
             ));
         }
@@ -549,8 +568,11 @@ impl Proof {
         if context != record.context {
             return Err(Error::stale());
         }
+        // 恢复点里只要存过二进制内容，当前文件也按字节读取（否则 UTF-8 校验
+        // 会把二进制恢复的读取阶段就挡掉）。
+        let binary_record = record_binary(&record);
         let file = BoundFile::open(Path::new(&workspace.path), &record.point.path)?
-            .with_binary_content(record.point.removes_file);
+            .with_binary_content(binary_record);
         file.check_volume(&directory)?;
         let current = file.read()?;
         if restore_missing && (current.is_some() || record.before.is_none()) {
@@ -592,7 +614,7 @@ impl Proof {
                 return Err(Error::stale());
             }
             if original.exists() {
-                let saved = guarded_file::read_saved(&original, record.point.removes_file)?;
+                let saved = guarded_file::read_saved(&original, binary_record)?;
                 if record
                     .before
                     .as_ref()
@@ -706,7 +728,7 @@ impl Proof {
         let record = self.load_recovery(id)?;
         let original = self.recovery_directory(id)?.join("original");
         let (captured, warning) = if original.exists() {
-            match guarded_file::read_saved(&original, record.point.removes_file) {
+            match guarded_file::read_saved(&original, record_binary(&record)) {
                 Ok(image) => (Some(image), None),
                 Err(error) => (None, Some(format!("捕获的原文件无法预览：{} 保存前后的不可变副本仍可读取；请在恢复目录检查原文件。", error.message))),
             }

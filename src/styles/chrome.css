@@ -87,7 +87,6 @@
   height: auto;
   align-self: stretch;
   flex: 0 1 auto;
-  padding-left: 6px;
   background: transparent;
   border-left: 1px solid var(--border);
   user-select: none;
@@ -118,18 +117,13 @@
   background: var(--hover);
   color: var(--text);
 }
+/* 激活标签用平底化样式：仅文字加深 + 底部 2px 强调线，
+   不再填充背景色块（暗色下像浮起的卡片/阴影，且与 header 底线叠出双线）。 */
 .workspace-tabs .view-tab.active {
   color: var(--text);
-  background: var(--bg);
 }
-.workspace-tabs .view-tab.active::after,
-.workspace-tabs .diff-tab-item.active::after {
-  content: "";
-  position: absolute;
-  inset: auto 0 -1px;
-  height: 2px;
-  background: var(--accent);
-}
+/* 激活指示线由 .workspace-tab-indicator（motion 弹簧滑动）承担，
+   不再用 ::after 画第二条线，避免两条线叠出毛边。 */
 .workspace-tabs .tab-count {
   padding: 1px 5px;
   font-size: 10px;
@@ -144,6 +138,11 @@
   margin-left: 8px;
   border-left: 1px solid var(--border);
 }
+/* 没有打开的比较页时整条隐藏，避免在最后一个视图标签右侧
+   留下一段悬停照不到的空白和一条多余的分隔线。 */
+.workspace-tabs .diff-tab-strip:empty {
+  display: none;
+}
 .workspace-tabs .diff-tab-item {
   display: flex;
   align-items: center;
@@ -154,7 +153,6 @@
 }
 .workspace-tabs .diff-tab-item.active {
   box-shadow: none;
-  background: var(--bg);
 }
 .workspace-tabs .diff-tab-button {
   height: 100%;
@@ -224,8 +222,10 @@
 }
 .app .graph-toolbar {
   min-height: 44px;
+  padding-block: 6px;
   padding-inline: 14px;
   gap: 8px;
+  flex-wrap: wrap;
 }
 .app .graph-heading {
   gap: 7px;

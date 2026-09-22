@@ -28,6 +28,12 @@
   gap: 6px;
   padding: 8px 14px;
 }
+/* 嵌入 graph-toolbar 后不再是独立行：去掉行距与分隔线。 */
+.commit-history .graph-toolbar .history-git-toolbar {
+  border-bottom: none;
+  padding: 0;
+  min-height: 0;
+}
 .commit-history .history-git-toolbar .button {
   height: 29px;
   padding: 0 8px;

@@ -48,6 +48,10 @@ export function useHistoryActions(
 ) {
   const request = useRequest();
   const [revision, setRevision] = useState(0);
+  // graphRevision 只驱动昂贵的 commit_graph 重走；revision 驱动便宜的
+  // 引用/状态校对（branches、worktrees、repository_state）。进入 History
+  // 标签页只做便宜校对，避免每次切换都全量重走 git log。
+  const [graphRevision, setGraphRevision] = useState(0);
   const [state, setState] = useState<HistoryRepositoryState | null>(null);
   const [stateError, setStateError] = useState<ProofError | null>(null);
   const [action, setAction] = useState<{
@@ -83,8 +87,9 @@ export function useHistoryActions(
         workspaceId: changes.workspace.id,
       })
         .then((fetched) => {
+          // 真正拉到新对象才重走提交图；否则只保留上面的便宜校对。
           if (fetchOwner.current === changes.workspace.id && fetched)
-            setRevision((value) => value + 1);
+            setGraphRevision((value) => value + 1);
         })
         .catch(() => {
           // Offline/credentials failures are quiet; a partial fetch can still
@@ -134,6 +139,7 @@ export function useHistoryActions(
         changes.workspace.id
       ) {
         setRevision((value) => value + 1);
+        setGraphRevision((value) => value + 1);
         if (!running.current)
           void onChanged().catch((error) => setStateError(asError(error)));
       }
@@ -203,8 +209,10 @@ export function useHistoryActions(
     disabled,
     busy,
     revision,
+    graphRevision,
     refresh: () => {
       setRevision((value) => value + 1);
+      setGraphRevision((value) => value + 1);
       void onChanged().catch((error) => setStateError(asError(error)));
     },
     state,

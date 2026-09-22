@@ -24,10 +24,11 @@
 .graph-head-location {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
-  max-width: 300px;
-  padding: 5px 8px;
+  max-width: 260px;
+  height: 29px;
+  padding: 0 10px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--surface);
@@ -50,19 +51,15 @@
   flex-shrink: 0;
 }
 .graph-head-label {
-  display: flex;
-  flex-direction: column;
+  display: block;
   min-width: 0;
-  gap: 1px;
-}
-.graph-head-label small {
-  color: var(--muted);
-  font-size: 10px;
-  white-space: nowrap;
+  overflow: hidden;
 }
 .graph-head-label strong {
+  display: block;
   color: var(--text);
-  font-size: 12px;
+  font-size: 11px;
+  font-weight: 500;
   max-width: 190px;
   overflow: hidden;
   white-space: nowrap;

@@ -312,7 +312,7 @@ impl Proof {
             && operation.is_none();
         let can_discard = can_stage
             && side == Side::Unstaged
-            && ((kind == FileKind::Text
+            && ((matches!(kind, FileKind::Text | FileKind::Binary)
                 && ["M", "D"].contains(&file.status.as_str())
                 && !metadata.mode_changed())
                 || (file.status == "?"
@@ -342,8 +342,9 @@ impl Proof {
                 && file.status != "A"
                 && file.status != "D",
             can_discard,
-            can_discard_hunks: can_discard && file.status == "M",
-            discard_reason: (!can_discard).then(|| "支持未暂存的普通文本修改和 untracked 普通文件；暂存、重命名、符号链接和属性变化不在 Discard 范围内。".into()),
+            // 二进制只能整文件丢弃；Hunk 级还原依赖文本反转，保持文本限定。
+            can_discard_hunks: can_discard && file.status == "M" && kind == FileKind::Text,
+            discard_reason: (!can_discard).then(|| "支持未暂存的普通文本/二进制修改和 untracked 普通文件；暂存、重命名、符号链接和属性变化不在 Discard 范围内。".into()),
             guard: before.token,
         };
         let snapshot = diff.clone();

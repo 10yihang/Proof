@@ -878,7 +878,7 @@ export function DiffView({
           <div className="file-title">
             <Code size={20} />
             <div>
-              <strong>{diff.path.split("/").pop()}</strong>
+              <strong title={diff.path}>{diff.path.split("/").pop()}</strong>
               <span>
                 {diff.oldPath ? `${diff.oldPath} → ` : ""}
                 {diff.path}

@@ -192,7 +192,7 @@
 .workspace-tab-indicator {
   position: absolute;
   height: 2px;
-  bottom: 0;
+  bottom: -1px;
   left: 9px;
   right: 9px;
   border-radius: 2px;
