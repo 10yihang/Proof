@@ -1544,6 +1544,7 @@ export default function App({
       : (repositoryLayout.value.contextOpen ?? preferences.contextOpen));
   const sidebarVisible =
     !focused && (compact ? filesDrawer : repositoryLayout.value.sidebarOpen);
+  const filesControlExpanded = tab === "commit" ? !focused : sidebarVisible;
   function showCommit() {
     setFocused(false);
     setTab("commit");
@@ -1572,7 +1573,8 @@ export default function App({
     );
   }
   function closeFiles() {
-    if (compact) setFilesDrawer(false);
+    if (tab === "commit") setFocused(true);
+    else if (compact) setFilesDrawer(false);
     else void repositoryLayout.update({ sidebarOpen: false });
     requestAnimationFrame(() =>
       document.getElementById("files-toggle")?.focus(),
@@ -1742,13 +1744,17 @@ export default function App({
           <Button
             id="files-toggle"
             className="icon-button"
-            aria-label={sidebarVisible ? t("收起文件栏") : t("显示文件栏")}
-            aria-expanded={sidebarVisible}
-            aria-controls="files-panel"
+            aria-label={
+              filesControlExpanded ? t("收起文件栏") : t("显示文件栏")
+            }
+            aria-expanded={filesControlExpanded}
+            aria-controls={
+              tab === "commit" ? "commit-preparation" : "files-panel"
+            }
             title={t("文件栏 · ⌘/Ctrl P 搜索")}
-            disabled={!compact && !repositoryLayout.ready}
+            disabled={tab !== "commit" && !compact && !repositoryLayout.ready}
             onClick={() => {
-              if (sidebarVisible) closeFiles();
+              if (filesControlExpanded) closeFiles();
               else showFileSearch();
             }}
           >
@@ -2115,8 +2121,57 @@ export default function App({
             keepMounted
             hidden={tab !== "changes" && tab !== "commit"}
             value={tab === "commit" ? "commit" : "changes"}
-            className="workspace-page"
+            className={`workspace-page${tab === "commit" ? " commit-page" : ""}`}
           >
+            <div
+              id="commit-preparation"
+              className="commit-preparation-pane"
+              hidden={tab !== "commit" || focused}
+            >
+              {(commitVisited || tab === "commit") && (
+                <CommitWorkspace
+                  key={changes.workspace.id}
+                  changes={changes}
+                  loaded={loaded}
+                  disabled={
+                    busy ||
+                    demo ||
+                    !changes.workspace.trusted ||
+                    !!changes.operation
+                  }
+                  onStage={(files, side) => void stageFiles(files, side)}
+                  onDiscard={(files) => void prepareDiscardFiles(files)}
+                  onRecovery={() => setDialog("recovery")}
+                  selected={selected}
+                  onSelect={(file) => void loadFile(file)}
+                >
+                  <CommitComposer
+                    changes={changes}
+                    ai={ai}
+                    onAgentSettings={() => openSettings("agents")}
+                    message={draft}
+                    onMessage={editDraft}
+                    amend={!!amendTarget}
+                    onAmend={(value) => void toggleAmend(value)}
+                    head={changes.head}
+                    branch={changes.branch}
+                    staged={stagedCount}
+                    unstaged={
+                      changes.files.filter((file) => file.side === "unstaged")
+                        .length
+                    }
+                    busy={busy}
+                    disabled={
+                      demo || !changes.workspace.trusted || !!changes.operation
+                    }
+                    demo={demo}
+                    strictReview={preferences.strictReview}
+                    onReviewSettings={() => openSettings("review")}
+                    onCommit={(all) => void quickCommit(all)}
+                  />
+                </CommitWorkspace>
+              )}
+            </div>
             <ResizableWorkbench
               layout={repositoryLayout.value}
               scopeKey={repositoryLayout.scopeKey}
@@ -2124,9 +2179,7 @@ export default function App({
               active={
                 (tab === "changes" || tab === "commit") && dialog === null
               }
-              sidebarVisible={
-                tab === "commit" ? !focused : sidebarVisible && !compact
-              }
+              sidebarVisible={tab !== "commit" && sidebarVisible && !compact}
               contextDocked={tab !== "commit" && contextOpen && !narrow}
               onChange={(partial) => {
                 void repositoryLayout.update(partial);
@@ -2191,54 +2244,6 @@ export default function App({
                       scope={scope}
                       onScope={setScope}
                     />
-                  </div>
-                  <div className="commit-files-pane" hidden={tab !== "commit"}>
-                    {(commitVisited || tab === "commit") && (
-                      <CommitWorkspace
-                        key={changes.workspace.id}
-                        changes={changes}
-                        loaded={loaded}
-                        disabled={
-                          busy ||
-                          demo ||
-                          !changes.workspace.trusted ||
-                          !!changes.operation
-                        }
-                        onStage={(files, side) => void stageFiles(files, side)}
-                        onDiscard={(files) => void prepareDiscardFiles(files)}
-                        onRecovery={() => setDialog("recovery")}
-                        selected={selected}
-                        onSelect={(file) => void loadFile(file)}
-                      >
-                        <CommitComposer
-                          changes={changes}
-                          ai={ai}
-                          onAgentSettings={() => openSettings("agents")}
-                          message={draft}
-                          onMessage={editDraft}
-                          amend={!!amendTarget}
-                          onAmend={(value) => void toggleAmend(value)}
-                          head={changes.head}
-                          branch={changes.branch}
-                          staged={stagedCount}
-                          unstaged={
-                            changes.files.filter(
-                              (file) => file.side === "unstaged",
-                            ).length
-                          }
-                          busy={busy}
-                          disabled={
-                            demo ||
-                            !changes.workspace.trusted ||
-                            !!changes.operation
-                          }
-                          demo={demo}
-                          strictReview={preferences.strictReview}
-                          onReviewSettings={() => openSettings("review")}
-                          onCommit={(all) => void quickCommit(all)}
-                        />
-                      </CommitWorkspace>
-                    )}
                   </div>
                 </>
               }

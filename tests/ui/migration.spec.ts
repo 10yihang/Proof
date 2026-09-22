@@ -16,7 +16,47 @@ test("migrated workbench primitives keep navigation, theme and focus coherent",a
   await page.screenshot({path:".artifacts/ui-migration/settings-light.png"});
   await modal.getByRole("button",{name:"深色",exact:true}).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme","dark");
-  await expect(modal.locator(".settings-content h3").first()).toHaveCSS("color","rgb(232, 237, 245)");
+  const themeReadability = await modal
+    .locator(".settings-content h3")
+    .first()
+    .evaluate((heading) => {
+      const theme = getComputedStyle(document.documentElement);
+      const parse = (value: string) =>
+        value.startsWith("#")
+          ? value
+              .slice(1)
+              .match(/.{2}/g)!
+              .map((channel) => parseInt(channel, 16))
+          : value
+              .match(/[\d.]+/g)!
+              .slice(0, 3)
+              .map(Number);
+      const foreground = parse(getComputedStyle(heading).color);
+      const luminance = (color: number[]) =>
+        color
+          .map((channel) => {
+            const value = channel / 255;
+            return value <= 0.04045
+              ? value / 12.92
+              : ((value + 0.055) / 1.055) ** 2.4;
+          })
+          .reduce(
+            (sum, channel, index) =>
+              sum + channel * [0.2126, 0.7152, 0.0722][index],
+            0,
+          );
+      const background = parse(theme.getPropertyValue("--bg").trim());
+      const levels = [luminance(foreground), luminance(background)].sort(
+        (a, b) => b - a,
+      );
+      return {
+        foreground,
+        textToken: parse(theme.getPropertyValue("--text").trim()),
+        contrast: (levels[0] + 0.05) / (levels[1] + 0.05),
+      };
+    });
+  expect(themeReadability.foreground).toEqual(themeReadability.textToken);
+  expect(themeReadability.contrast).toBeGreaterThanOrEqual(4.5);
   await page.screenshot({path:".artifacts/ui-migration/settings-dark.png"});
   await page.keyboard.press("Escape");await expect(modal).not.toBeVisible();
   await expect(page.getByRole("button",{name:"设置",exact:true})).toBeFocused();

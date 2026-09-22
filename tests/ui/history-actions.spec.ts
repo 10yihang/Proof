@@ -515,6 +515,44 @@ test("Workspace density: Commit shows files, message and the same live Diff toge
   const f = await fixture(page);
   const shots = resolve(".artifacts/workspace-density");
   mkdirSync(shots, { recursive: true });
+  const expectCommitLayout = async () => {
+    const files = page.locator(".commit-workspace .commit-stage-files");
+    const composer = page.locator(".commit-workspace .commit-details");
+    const message = page.getByLabel("Commit message", { exact: true });
+    const submit = composer
+      .locator(".composer-submit")
+      .getByRole("button", { name: /^Commit(?:\s|$)/ });
+    await expect(files).toBeInViewport({ ratio: 1 });
+    await expect(composer).toBeInViewport({ ratio: 1 });
+    await expect(message).toBeInViewport({ ratio: 1 });
+    await expect(submit).toBeInViewport({ ratio: 1 });
+    await submit.click({ trial: true });
+    await expect(message).toBeInViewport({ ratio: 1 });
+    const filesBox = (await files.boundingBox())!;
+    const composerBox = (await composer.boundingBox())!;
+    const diff = (await page
+      .locator(".center-panel .diff-panel")
+      .boundingBox())!;
+    expect(filesBox.x + filesBox.width).toBeLessThanOrEqual(composerBox.x + 1);
+    expect(diff.y + 1).toBeGreaterThanOrEqual(
+      Math.max(
+        filesBox.y + filesBox.height,
+        composerBox.y + composerBox.height,
+      ),
+    );
+    const codeLineHeight = await page
+      .locator(".diff-scroll .view-line")
+      .first()
+      .evaluate((line) => line.getBoundingClientRect().height);
+    expect(codeLineHeight).toBeGreaterThan(0);
+    const readingArea = (await page.locator(".diff-scroll").boundingBox())!;
+    expect(readingArea.height).toBeGreaterThanOrEqual(codeLineHeight * 6);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+  };
   try {
     await f.invoke("set_ui_language", { language: "en" });
     mkdirSync(join(f.repo, "src/agent/pool"), { recursive: true });
@@ -570,15 +608,10 @@ test("Workspace density: Commit shows files, message and the same live Diff toge
             document.querySelector(".center-panel .diff-panel"),
         ),
       ).toBe(true);
-      const sidebar = (await page.locator(".commit-workspace").boundingBox())!;
-      const diff = (await page.locator(".center-panel").boundingBox())!;
-      expect(diff.width).toBeGreaterThan(sidebar.width * 1.5);
       await page
         .getByLabel("Commit message", { exact: true })
         .fill("Handle connection errors");
-      await expect(
-        page.getByLabel("Commit message", { exact: true }),
-      ).toBeInViewport();
+      await expectCommitLayout();
       await page.screenshot({ path: join(shots, `commit-${theme}.png`) });
       await page
         .locator(".commit-workspace")
@@ -596,15 +629,45 @@ test("Workspace density: Commit shows files, message and the same live Diff toge
       ).toHaveValue("Handle connection errors");
     }
     await page.setViewportSize({ width: 1024, height: 720 });
+    await expectCommitLayout();
     await expect(
       page.getByLabel("Commit message", { exact: true }),
-    ).toBeInViewport();
+    ).toHaveValue("Handle connection errors");
+    await page.evaluate(() => {
+      (window as any).narrowDiffNode = document.querySelector(
+        ".center-panel .diff-panel",
+      );
+    });
+    const layoutWrites = f.calls.filter(
+      (command) => command === "set_repository_layout",
+    ).length;
+    const filesToggle = page.locator("#files-toggle");
+    await expect(filesToggle).toHaveAttribute("aria-expanded", "true");
+    await filesToggle.click();
+    await expect(page.locator("#commit-preparation")).toBeHidden();
+    await expect(filesToggle).toHaveAttribute("aria-expanded", "false");
+    await filesToggle.click();
+    await expect(page.locator("#commit-preparation")).toBeVisible();
+    await expect(filesToggle).toHaveAttribute("aria-expanded", "true");
     await expect(
-      page
-        .locator(".commit-workspace")
-        .getByRole("button", { name: "Commit", exact: false })
-        .first(),
-    ).toBeInViewport();
+      page.getByLabel("Commit message", { exact: true }),
+    ).toHaveValue("Handle connection errors");
+    expect(
+      f.calls.filter((command) => command === "set_repository_layout"),
+    ).toHaveLength(layoutWrites);
+    await page.getByRole("tab", { name: /Local changes/ }).click();
+    await page.getByRole("tab", { name: /^Commit/ }).click();
+    await expect(
+      page.getByLabel("Commit message", { exact: true }),
+    ).toHaveValue("Handle connection errors");
+    expect(
+      await page.evaluate(
+        () =>
+          (window as any).narrowDiffNode ===
+          document.querySelector(".center-panel .diff-panel"),
+      ),
+    ).toBe(true);
+    await expectCommitLayout();
     await page.screenshot({ path: join(shots, "commit-narrow.png") });
     await page.setViewportSize({ width: 1440, height: 900 });
     await f.invoke("set_ui_language", { language: "zh-CN" });

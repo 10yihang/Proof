@@ -1,0 +1,91 @@
+:root {
+  --motion-feedback: 120ms;
+  --motion-popup: 180ms;
+  --motion-exit: 100ms;
+  --motion-fast: var(--motion-feedback);
+  --motion-panel: 220ms;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* Animate the popup surface; its positioner remains anchored to the trigger. */
+.proof-popup-motion {
+  --popup-offset-x: 0px;
+  --popup-offset-y: 0px;
+  transform-origin: var(--transform-origin);
+  animation: none;
+  transition:
+    opacity var(--motion-popup) var(--ease-out),
+    scale var(--motion-popup) var(--ease-out),
+    translate var(--motion-popup) var(--ease-out);
+}
+.proof-popup-motion[data-side="top"] {
+  --popup-offset-y: 2px;
+}
+.proof-popup-motion[data-side="bottom"] {
+  --popup-offset-y: -2px;
+}
+.proof-popup-motion[data-side="left"] {
+  --popup-offset-x: 2px;
+}
+.proof-popup-motion[data-side="right"] {
+  --popup-offset-x: -2px;
+}
+.proof-popup-motion[data-starting-style],
+.proof-popup-motion[data-ending-style] {
+  opacity: 0;
+  scale: 0.98;
+  translate: var(--popup-offset-x) var(--popup-offset-y);
+}
+.proof-popup-motion[data-slot="tooltip-content"] {
+  transition-duration: var(--motion-feedback);
+}
+.proof-popup-motion[data-ending-style],
+[data-slot="toast"][data-ending-style] {
+  transition-duration: var(--motion-exit);
+}
+
+/* Only the active background moves; labels and Base UI focus targets stay put. */
+[data-slot="segmented"] > button {
+  position: relative;
+  isolation: isolate;
+  font-weight: 550;
+  transition: color var(--motion-feedback) var(--ease-out);
+}
+[data-slot="segmented"] > button[aria-pressed="true"] {
+  background: transparent;
+  box-shadow: none;
+}
+.proof-segment-indicator {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  background: var(--segment-active-bg, var(--surface-2));
+  box-shadow: var(--segment-active-shadow, none);
+  pointer-events: none;
+}
+.proof-segment-label {
+  position: relative;
+  z-index: 1;
+}
+.grouping-toolbar [data-slot="segmented"] {
+  --segment-active-bg: var(--bg);
+  --segment-active-shadow: 0 1px 3px #00000012;
+}
+.inspector-tabs[data-slot="segmented"] {
+  --segment-active-bg: var(--accent-soft);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .proof-popup-motion,
+  [data-slot="segmented"] > button,
+  [data-slot="toast"],
+  [data-slot="toast-content"] {
+    transition: none !important;
+  }
+  .proof-popup-motion[data-starting-style],
+  .proof-popup-motion[data-ending-style] {
+    scale: 1;
+    translate: none;
+  }
+}

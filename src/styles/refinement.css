@@ -1,0 +1,259 @@
+/* Quiet chrome, continuous reading surfaces, and task-level cards. */
+.app.layout-enabled .desktop-toolbar {
+  gap: 6px;
+  border-bottom-color: var(--border);
+}
+.desktop-toolbar .workspace-picker strong {
+  font-weight: 550;
+}
+.desktop-toolbar .branch-switcher,
+.workspace-tabs {
+  border-left: 0;
+}
+.desktop-toolbar .command-trigger {
+  box-shadow: none;
+  background: var(--hover);
+  border-color: transparent;
+}
+.workspace-tab-list {
+  gap: 2px;
+}
+.workspace-tabs .view-tab,
+.workspace-tabs .diff-tab-item {
+  align-self: center;
+  height: 32px;
+  isolation: isolate;
+  border-radius: 7px;
+}
+.workspace-tabs .view-tab:hover,
+.workspace-tabs .diff-tab-button:hover {
+  border-radius: 7px;
+}
+.workspace-tabs .diff-tab-item {
+  border-right: 0;
+}
+.workspace-tabs .tab-count {
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  color: var(--muted);
+  font-size: 11px;
+}
+.workspace-tab-indicator {
+  z-index: -1;
+  inset: 0;
+  height: auto;
+  border-radius: 7px;
+  background: var(--surface-raised);
+  box-shadow:
+    var(--shadow-card),
+    inset 0 0 0 1px var(--border);
+}
+.app .file-heading,
+.app .context-header,
+.app .repository-nav .sidebar-heading {
+  min-height: var(--panel-header-height);
+  height: var(--panel-header-height);
+  padding-inline: 12px;
+}
+.app .diff-topbar,
+.app .graph-toolbar {
+  min-height: var(--panel-header-height);
+  padding: 7px 14px;
+}
+.app .diff-topbar {
+  gap: 10px;
+}
+.app .repository-nav,
+.app .files-panel {
+  background: var(--surface);
+}
+.app .proof-panel-slot .files-panel,
+.app .proof-panel-slot > .context-panel {
+  border-inline: 0;
+}
+.app .repository-nav > button.active,
+.app .repo-ref.active,
+.app .file-tree-row.is-selected,
+.app .change-group-file.selected {
+  background: var(--accent-soft);
+  color: var(--text);
+  box-shadow: none;
+}
+.app .file-tree-row.is-selected .tree-file,
+.app .file-tree-row.is-selected .tree-filename,
+.app .file-tree-row.is-selected > .history-more-button {
+  color: var(--text);
+}
+.app .file-tree-row.is-selected .row-stage {
+  color: var(--accent);
+}
+.app .file-tree-row.is-selected > :is(.row-stage, .history-more-button) {
+  background: var(--accent-soft);
+}
+.app .file-tree-row.is-selected .file-status {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+.app .file-tree-row.is-selected .review-check {
+  color: var(--accent);
+}
+.app .file-tree-row small,
+.app .repo-ref small {
+  font-size: 11px;
+}
+.app .repository-nav .sidebar-heading,
+.app .refs-heading {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.app .repo-ref {
+  border-radius: 6px;
+}
+.app .graph-columns {
+  background: var(--bg);
+  border-top: 0;
+  font-weight: 500;
+}
+/* Row geometry belongs to the virtualizer and graph model. */
+.app .graph-row {
+  font-size: 13px;
+}
+.app .graph-row:nth-child(even) {
+  background: transparent;
+}
+.app .graph-row:hover {
+  background: var(--hover);
+}
+.app .graph-row.is-active {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 var(--accent);
+}
+.app .graph-subject {
+  font-weight: 400;
+}
+.app .graph-row.is-active .graph-subject,
+.app .graph-row.is-head .graph-subject > span:last-child {
+  font-weight: 550;
+}
+.app .graph-ref {
+  background: var(--surface);
+  border-color: transparent;
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 11px;
+  padding-block: 2px;
+}
+.app .graph-subject > button.graph-ref.is-current {
+  background: var(--accent-soft);
+  border-color: transparent;
+  color: var(--accent);
+}
+.app .graph-subject > button.graph-ref.is-remote {
+  background: var(--surface);
+  border-color: transparent;
+}
+.app .graph-head-badge,
+.app .current-ref-badge,
+.app .graph-head-location > code {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.app .author-avatar {
+  color: var(--muted);
+  background: var(--surface-2);
+  border-radius: 50%;
+  font-weight: 500;
+}
+.app .commit-history .history-git-toolbar .button {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+.app .commit-history .history-git-toolbar .button:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+.app .graph-head-location {
+  background: var(--surface);
+  border-color: transparent;
+}
+.app .graph-search {
+  background: var(--surface);
+  border-color: transparent;
+}
+.app .change-groups {
+  padding: 10px;
+  background: var(--surface);
+}
+.app .change-group {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  padding-block: 6px;
+  margin-bottom: 10px;
+}
+.app .change-group > header {
+  padding-inline: 6px;
+}
+.app .change-group-file {
+  margin-inline: 5px;
+  padding-inline: 5px;
+  border-radius: 5px;
+}
+.app .group-file-select {
+  font-size: 12px;
+}
+.app .context-body {
+  background: var(--surface);
+}
+.app .context-section {
+  padding: 16px;
+}
+.app .context-section.context-session-heading {
+  padding: 12px 16px;
+}
+.app .context-section.context-linked-session {
+  padding: 14px;
+  margin: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--bg);
+  box-shadow: var(--shadow-card);
+}
+.app .context-linked-session .activity-task {
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  padding: 12px 0 0;
+  box-shadow: none;
+}
+.app .context-section .section-title {
+  margin-bottom: 10px;
+}
+.app .context-section .section-title h3,
+.app .context-section p,
+.app .activity-row-title strong {
+  font-size: 12px;
+}
+.app .context-section p {
+  line-height: 1.7;
+}
+.app .context-linked-session .context-task {
+  font-size: 13px;
+  color: var(--text);
+}
+.app .activity-row-meta,
+.app .activity-task-stats,
+.app .context-explanation,
+.app .evidence-label {
+  font-size: 11px;
+}
+@media (max-width: 1180px) {
+  .workspace-tabs .view-tab {
+    padding-inline: 7px;
+  }
+}
