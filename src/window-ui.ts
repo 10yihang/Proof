@@ -15,7 +15,7 @@ export type WindowDialog =
   | "file-history"
   | null;
 export interface WindowUI {
-  tab: "changes" | "commit" | "repository" | `diff:${string}`;
+  tab: "changes" | "commit" | "repository" | "files" | `diff:${string}`;
   diffTabs: ComparisonTab[];
   dialog: WindowDialog;
   inspectorTab: "context" | "ai";

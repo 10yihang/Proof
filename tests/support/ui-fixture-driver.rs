@@ -208,6 +208,30 @@ fn dispatch(proof: &mut Proof, command: &str, a: &Value) -> Result<Value, Error>
             s("path"),
             a["loadLarge"].as_bool().unwrap_or(false)
         )?),
+        "list_files" => json!(proof.list_files(s("workspaceId"))?),
+        "history" => json!(proof.history(
+            s("workspaceId"),
+            a["offset"].as_u64().unwrap_or(0) as usize,
+            a["path"].as_str()
+        )?),
+        "read_text_file" => json!(proof.read_text_file(
+            s("workspaceId"),
+            s("path"),
+            a["revision"].as_str()
+        )?),
+        "save_text_file" => json!(proof.save_text_file(
+            s("workspaceId"),
+            s("path"),
+            s("content"),
+            a["expectedFingerprint"].as_str()
+        )?),
+        "create_text_file" => json!(proof.create_text_file(s("workspaceId"), s("path"))?),
+        "rename_text_file" => json!(proof.rename_text_file(
+            s("workspaceId"),
+            s("from"),
+            s("to")
+        )?),
+        "delete_text_file" => json!(proof.delete_text_file(s("workspaceId"), s("path"))?),
         "stage_files" => json!(proof.stage_files(
             s("workspaceId"),
             &serde_json::from_value::<Vec<String>>(a["paths"].clone())?,

@@ -2713,7 +2713,7 @@ dependencies = [
 
 [[package]]
 name = "proof-core"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "jsonc-parser",
  "libc",
@@ -2731,7 +2731,7 @@ dependencies = [
 
 [[package]]
 name = "proof-desktop"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "notify",
  "objc2",
@@ -2754,7 +2754,7 @@ dependencies = [
 
 [[package]]
 name = "proof-observer"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "libc",
  "proof-core",

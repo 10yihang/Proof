@@ -1,0 +1,505 @@
+/* 「文件」页：仓库文件浏览 + 内置编辑器 + 文件历史。 */
+.editor-view {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* ---------- 左栏：文件树 ---------- */
+.editor-sidebar {
+  width: 240px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+}
+.editor-file-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+/* 压紧复用的 .file-search（Changes 页尺寸偏大），与 26px 树行协调。
+   三重类选择器确保压过 chrome.css 的 .app .file-search 规则。 */
+.editor-sidebar .editor-file-heading .file-search {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 3px 7px;
+  gap: 5px;
+  min-height: 26px;
+  box-sizing: border-box;
+}
+.editor-sidebar .editor-file-heading .file-search svg {
+  width: 13px;
+  height: 13px;
+}
+.editor-sidebar .editor-file-heading .file-search input {
+  font-size: 11px;
+}
+.editor-file-heading .icon-button {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+}
+.editor-create-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+}
+.editor-create-row input,
+.editor-rename-input {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+.editor-file-list {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+  padding: 6px 6px;
+}
+.editor-tree-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 26px;
+  box-sizing: border-box;
+  padding-block: 2px;
+  display: flex;
+  align-items: center;
+  padding-right: 4px;
+}
+/* 层级缩进参考线：贴着父级折叠图标的中心。 */
+.editor-indent-guide {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border);
+  opacity: 0.55;
+  pointer-events: none;
+}
+.editor-tree-row:hover .editor-indent-guide {
+  opacity: 0.9;
+}
+.editor-tree-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 5px;
+  font-size: 12px;
+  color: var(--text);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.editor-tree-item > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.editor-tree-item svg {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.editor-tree-item:hover {
+  background: var(--hover);
+}
+.editor-tree-item.selected {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.editor-tree-item.selected svg {
+  color: var(--accent);
+}
+/* 行内操作：默认隐藏，悬浮行时浮现。 */
+.editor-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  opacity: 0;
+}
+.editor-tree-row:hover .editor-row-actions,
+.editor-row-actions:focus-within {
+  opacity: 1;
+}
+.editor-row-actions button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  color: var(--muted);
+}
+.editor-row-actions button:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+/* Git 状态角标。 */
+.editor-git-badge {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 600;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+.editor-titlebar .editor-git-badge {
+  margin-left: 0;
+}
+.editor-git-badge[data-badge="M"] {
+  color: var(--warning, #b38000);
+  background: color-mix(in srgb, var(--warning, #b38000) 14%, transparent);
+}
+.editor-git-badge[data-badge="A"],
+.editor-git-badge[data-badge="U"] {
+  color: var(--add, #1a7f37);
+  background: color-mix(in srgb, var(--add, #1a7f37) 14%, transparent);
+}
+.editor-git-badge[data-badge="D"],
+.editor-git-badge[data-badge="R"],
+.editor-git-badge[data-badge="C"] {
+  color: var(--del);
+  background: var(--del-bg);
+}
+.editor-dirty-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+.editor-tree-item .editor-dirty-dot {
+  margin-left: auto;
+}
+.editor-tree-item .editor-git-badge + .editor-dirty-dot {
+  margin-left: 0;
+}
+/* 文件类型图标配色（跟随 VS Code 常见色系）。 */
+.fi-ts { color: #3178c6 !important; }
+.fi-js { color: #c8a415 !important; }
+.fi-vue { color: #41b883 !important; }
+.fi-rs { color: #dea584 !important; }
+.fi-py { color: #3572a5 !important; }
+.fi-go { color: #00add8 !important; }
+.fi-java { color: #b07219 !important; }
+.fi-c { color: #555 !important; }
+.fi-html { color: #e34c26 !important; }
+.fi-css { color: #563d7c !important; }
+.fi-md { color: #6a9fb5 !important; }
+.fi-json { color: #b5a642 !important; }
+.fi-yaml { color: #cb7b5e !important; }
+.fi-sql { color: #e38c00 !important; }
+.fi-sh { color: #89e051 !important; }
+.fi-image { color: #a074c4 !important; }
+.fi-zip { color: #8b8b8b !important; }
+.fi-lock { color: #8b8b8b !important; }
+.fi-text { color: var(--muted) !important; }
+
+/* ---------- 中栏：编辑区 ---------- */
+.editor-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.editor-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.editor-titlebar > svg {
+  flex-shrink: 0;
+}
+.editor-path {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 12px;
+  font-weight: 500;
+  overflow: hidden;
+  white-space: nowrap;
+  min-width: 0;
+}
+.editor-path-segment {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  overflow: hidden;
+}
+.editor-path-segment svg {
+  color: var(--faint);
+  flex-shrink: 0;
+}
+.editor-path-dir {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.editor-path-file {
+  font-weight: 600;
+}
+.editor-revision-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.editor-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.editor-banner.warning {
+  color: var(--del);
+  background: var(--del-bg);
+}
+.editor-body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+.editor-surface {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+.editor-host {
+  position: absolute;
+  inset: 0;
+}
+.editor-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 12px;
+  z-index: 1;
+  background: var(--bg);
+}
+.editor-placeholder {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.editor-placeholder-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--faint);
+  margin-bottom: 2px;
+}
+.editor-placeholder-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+.editor-placeholder-hint {
+  font-size: 11px;
+  color: var(--faint);
+}
+.editor-empty-hint {
+  padding: 12px;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: center;
+}
+/* 状态栏。 */
+.editor-statusbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 24px;
+  padding: 0 10px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 11px;
+  color: var(--muted);
+  flex-shrink: 0;
+  user-select: none;
+}
+.editor-status-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.editor-status-item {
+  padding: 0 6px;
+}
+.editor-status-dirty {
+  padding: 0 6px;
+  color: var(--warning, #b38000);
+  font-weight: 600;
+}
+.editor-status-button {
+  padding: 0 6px;
+  height: 18px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.editor-status-button:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.editor-status-button.on {
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 600;
+}
+.editor-modal-hint {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* ---------- 右栏：文件历史 ---------- */
+.editor-history {
+  width: 250px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.editor-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.editor-history > ul {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.editor-history-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 7px 9px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  text-align: left;
+  color: var(--text);
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.editor-history-item:hover {
+  border-color: var(--accent);
+}
+.editor-history-item.selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.editor-history-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.editor-history-item code {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--accent);
+}
+.editor-history-latest {
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.editor-history-item.selected .editor-history-latest {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.editor-history-subject {
+  font-size: 11px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.editor-history-item small {
+  font-size: 10px;
+  color: var(--faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 900px) {
+  .editor-sidebar {
+    width: 200px;
+  }
+  .editor-history {
+    width: 210px;
+  }
+}

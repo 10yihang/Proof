@@ -1,6 +1,8 @@
 import * as monaco from "monaco-editor/editor/editor.api";
 import "monaco-editor/editor/contrib/clipboard/browser/clipboard";
 import "monaco-editor/editor/contrib/bracketMatching/browser/bracketMatching";
+import "monaco-editor/editor/contrib/find/browser/findController";
+import "monaco-editor/editor/contrib/folding/browser/folding";
 import EditorWorker from "monaco-editor/editor/editor.worker?worker";
 import { syntaxRanges } from "./syntax";
 import type { GitEditorDocument } from "./monaco-document";
@@ -109,6 +111,43 @@ export function registerGitTokens(document: GitEditorDocument, path: string) {
           if (span.end < line.length)
             tokens.push({ startIndex: span.end, scopes: "proof.foreground" });
         }
+      return { tokens, endState: new GitTokenState(index + 1) };
+    },
+  });
+  return {
+    id,
+    dispose() {
+      provider.dispose();
+      used.delete(id);
+    },
+  };
+}
+/** Color a plain text model (the built-in editor) with the Prism spans. */
+export function registerTextTokens(path: string) {
+  let id = registered.find((value) => !used.has(value));
+  if (!id) {
+    id = `proof-git-${registered.length}`;
+    registered.push(id);
+    monaco.languages.register({ id });
+  }
+  used.add(id);
+  const provider = monaco.languages.setTokensProvider(id, {
+    getInitialState: () => new GitTokenState(0),
+    tokenize(line, state) {
+      const index = (state as GitTokenState).line;
+      const tokens: monaco.languages.IToken[] = [
+        { startIndex: 0, scopes: "proof.foreground" },
+      ];
+      for (const span of syntaxRanges(line, path)) {
+        if (span.start >= line.length) break;
+        if (tokens[tokens.length - 1].startIndex === span.start) tokens.pop();
+        tokens.push({
+          startIndex: span.start,
+          scopes: `proof.${span.style.replace(/^syntax-/, "")}`,
+        });
+        if (span.end < line.length)
+          tokens.push({ startIndex: span.end, scopes: "proof.foreground" });
+      }
       return { tokens, endState: new GitTokenState(index + 1) };
     },
   });

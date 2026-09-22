@@ -6,6 +6,7 @@ import { useSortable, isSortable } from "@dnd-kit/react/sortable";
 import { LayoutGroup, motion, useReducedMotion } from "motion/react";
 import {
   ClockCounterClockwise,
+  FileCode,
   Files,
   GitCommit,
   GitDiff,
@@ -21,7 +22,7 @@ const tabPointer = PointerSensor.configure({
   ],
 });
 export type WorkspaceView =
-  "changes" | "commit" | "history" | `diff:${string}`;
+  "changes" | "commit" | "history" | "files" | `diff:${string}`;
 export interface ComparisonTab {
   id: `diff:${string}`;
   workspaceId: string;
@@ -71,6 +72,7 @@ export function WorkspaceTabs({
     },
     { id: "commit", label: t("Commit"), icon: GitCommit, count: stagedCount },
     { id: "history", label: t("History"), icon: ClockCounterClockwise },
+    { id: "files", label: t("Files"), icon: FileCode },
   ] as const;
   const indicator = (
     <motion.span

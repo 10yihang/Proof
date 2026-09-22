@@ -184,6 +184,29 @@ pub struct BlameLine {
     pub uncommitted: bool,
 }
 
+/// 「文件」页编辑器读取到的文本文件全文。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextFileContent {
+    pub workspace_id: String,
+    pub path: String,
+    pub revision: Option<String>,
+    pub content: String,
+    pub eol: String,
+    pub size: u64,
+    pub editable: bool,
+    pub fingerprint: String,
+}
+
+/// 保存成功后的文件状态（前端据此更新乐观锁指纹）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextFileState {
+    pub path: String,
+    pub size: u64,
+    pub fingerprint: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileBlame {

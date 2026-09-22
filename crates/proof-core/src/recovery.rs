@@ -97,6 +97,70 @@ impl Proof {
         Ok(points)
     }
 
+    /// 「文件」页删除：为当前文件建立恢复点（after=None，removes_file），
+    /// 随即经 perform_recovery 原子移除工作区文件。tracked 文件删除后也会出现在
+    /// 本地变更中；untracked 文件完全依赖此恢复点找回（保留 7 天）。
+    pub fn delete_text_file(&mut self, workspace_id: &str, path: &str) -> Result<RecoveryPoint> {
+        let workspace = self.store.workspace(workspace_id)?;
+        self.require_write(&workspace)?;
+        crate::git::checked_path(&workspace, path)?;
+        self.expire_recovery()?;
+        let git = self.git()?;
+        let point = {
+            let _lock = IndexLock::acquire(Path::new(&workspace.git_dir))?;
+            let file = BoundFile::open(Path::new(&workspace.path), path)?
+                .with_binary_content(true);
+            let before = file.read()?.ok_or_else(|| {
+                Error::new("FILE_MISSING", "文件不存在或已被移出工作区。", path)
+            })?;
+            let size = 2 * before.bytes.len() as u64 + 8192;
+            let used = self.recovery_usage()?;
+            if used.saturating_add(size) > CAPACITY {
+                return Err(Error::new(
+                    "RECOVERY_FULL",
+                    "恢复点已达到 256 MiB 上限，无法保存新恢复点，因此未执行删除。",
+                    format!("Used {used}, required {size}"),
+                ));
+            }
+            let created_at = now();
+            let point = RecoveryPoint {
+                id: uuid::Uuid::new_v4().to_string(),
+                workspace_id: workspace.id.clone(),
+                path: path.into(),
+                scope: "编辑器内删除文件，原内容保存在恢复点。".into(),
+                status: "prepared".into(),
+                created_at,
+                expires_at: created_at + RETENTION_MS,
+                bytes: size,
+                message: None,
+                removes_file: true,
+            };
+            let directory = self.recovery_directory(&point.id)?;
+            fs::create_dir_all(&directory)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
+            }
+            file.check_volume(&directory)?;
+            let record = Record {
+                schema_version: 1,
+                point: point.clone(),
+                guard: git.guard(&workspace, path, None)?,
+                context: git.context_guard(&workspace)?,
+                before: Some(before),
+                after: None,
+            };
+            if let Err(error) = self.save_recovery(&record) {
+                let _ = fs::remove_dir(&directory);
+                return Err(error);
+            }
+            point
+        };
+        // 与 discard 同一执行管线：应用 = 移除文件，可随时撤销。
+        self.perform_recovery(&point.id, false, false)?;
+        Ok(point)
+    }
     pub fn discard_files(
         &mut self,
         workspace_id: &str,

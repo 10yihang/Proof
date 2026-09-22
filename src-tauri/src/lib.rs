@@ -535,6 +535,33 @@ fn dispatch_with_progress(
             args["revision"].as_str(),
             args["offset"].as_u64().unwrap_or(0) as usize,
         )?),
+        "list_files" => {
+            serde_json::to_value(proof.list_files(string(&args, "workspaceId")?)?)
+        }
+        "read_text_file" => serde_json::to_value(proof.read_text_file(
+            string(&args, "workspaceId")?,
+            string(&args, "path")?,
+            args["revision"].as_str(),
+        )?),
+        "save_text_file" => serde_json::to_value(proof.save_text_file(
+            string(&args, "workspaceId")?,
+            string(&args, "path")?,
+            string(&args, "content")?,
+            args["expectedFingerprint"].as_str(),
+        )?),
+        "create_text_file" => serde_json::to_value(proof.create_text_file(
+            string(&args, "workspaceId")?,
+            string(&args, "path")?,
+        )?),
+        "rename_text_file" => serde_json::to_value(proof.rename_text_file(
+            string(&args, "workspaceId")?,
+            string(&args, "from")?,
+            string(&args, "to")?,
+        )?),
+        "delete_text_file" => serde_json::to_value(proof.delete_text_file(
+            string(&args, "workspaceId")?,
+            string(&args, "path")?,
+        )?),
         "commit_diff" => serde_json::to_value(proof.commit_diff(
             string(&args, "workspaceId")?,
             string(&args, "oid")?,

@@ -21,21 +21,7 @@ impl Proof {
         };
         let head = git.head(&workspace)?;
         let revision = revision
-            .map(|oid| {
-                if !(4..=64).contains(&oid.len()) || !oid.bytes().all(|c| c.is_ascii_hexdigit()) {
-                    return Err(Error::new(
-                        "INVALID_REVISION",
-                        "请选择有效的提交。",
-                        "Expected Git object ID",
-                    ));
-                }
-                Ok(git::text(git.query(
-                    &workspace,
-                    &["rev-parse", "--verify", &format!("{oid}^{{commit}}")],
-                )?)?
-                .trim()
-                .to_string())
-            })
+            .map(|oid| crate::text_files::verified_commit(&git, &workspace, oid))
             .transpose()?;
         let bytes = if let Some(revision) = &revision {
             git.query(

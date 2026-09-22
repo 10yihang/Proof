@@ -163,6 +163,21 @@ export interface FileBlame {
   hasMore: boolean;
   notice: string;
 }
+export interface TextFileContent {
+  workspaceId: string;
+  path: string;
+  revision: string | null;
+  content: string;
+  eol: "lf" | "crlf";
+  size: number;
+  editable: boolean;
+  fingerprint: string;
+}
+export interface TextFileState {
+  path: string;
+  size: number;
+  fingerprint: string;
+}
 export interface BranchEntry {
   name: string;
   current: boolean;

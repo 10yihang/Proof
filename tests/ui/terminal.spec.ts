@@ -226,7 +226,7 @@ test("Terminal drawer renders output and forwards keystrokes", async ({
   }
 });
 
-test("Terminal opens from the header while on another workspace tab", async ({
+test("Terminal opens from the header on any workspace tab", async ({
   page,
 }) => {
   const f = await fixture(page);
@@ -237,10 +237,26 @@ test("Terminal opens from the header while on another workspace tab", async ({
     const drawer = page.locator("#terminal-drawer");
     await expect(drawer).toBeVisible();
     await expect(drawer.locator(".xterm-rows")).toBeVisible();
-    // 顶栏按钮在非 Changes 标签页打开终端时先切回 Changes。
+    // 终端在所有标签页可用，不再强制切回 Changes。
     await expect(
-      page.getByRole("tab", { name: /^本地变更/ }).first(),
+      page.getByRole("tab", { name: "History", exact: true }),
     ).toHaveAttribute("aria-selected", "true");
+    // 在 History 页收起终端后，Changes 页再打开仍是同一会话。
+    // （终端聚焦时 Escape 留给终端程序本身；先把焦点移回页面再 Esc。）
+    await page.locator(".workspace-statusbar").click();
+    await page.keyboard.press("Escape");
+    await expect(drawer).toBeHidden();
+    await page
+      .getByRole("tab", { name: /^本地变更/ })
+      .first()
+      .click();
+    await page.keyboard.press("Control+`");
+    await expect(drawer).toBeVisible();
+    await expect
+      .poll(async () =>
+        page.evaluate(() => (window as any).terminals.spawns.length),
+      )
+      .toBe(1);
   } finally {
     f.close();
   }

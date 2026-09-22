@@ -64,6 +64,7 @@ import type {
 } from "./types";
 import { HistoryDiff, type HistoryComparison } from "./components/HistoryDiff";
 import { DiffView } from "./components/DiffView";
+import { EditorView } from "./components/EditorView";
 import { useAi, type DiffJump } from "./ai";
 import { AiReviewPanel } from "./components/AiReviewPanel";
 import { DiffFilePane } from "./components/DiffFilePane";
@@ -249,6 +250,7 @@ export default function App({
   }, [changes?.workspace.id]);
   const [repositoryVisited, setRepositoryVisited] = useState(false);
   const [commitVisited, setCommitVisited] = useState(false);
+  const [filesVisited, setFilesVisited] = useState(false);
   const [settingsSection, setSettingsSection] = useState<
     | "appearance"
     | "review"
@@ -265,6 +267,7 @@ export default function App({
   useEffect(() => {
     if (tab === "repository") setRepositoryVisited(true);
     if (tab === "commit") setCommitVisited(true);
+    if (tab === "files") setFilesVisited(true);
   }, [tab]);
   const [search, setSearch] = useState(""),
     [scope, setScope] = useState<"all" | "unstaged" | "staged">("all");
@@ -1436,15 +1439,18 @@ export default function App({
         !dialog &&
         changes &&
         (event.metaKey || event.ctrlKey) &&
-        /^[1-3]$/.test(event.key)
+        /^[1-4]$/.test(event.key)
       ) {
         event.preventDefault();
         selectWorkspaceView(
-          (["changes", "commit", "history"] as const)[Number(event.key) - 1],
+          (["changes", "commit", "history", "files"] as const)[
+            Number(event.key) - 1
+          ],
         );
         return;
       }
-      // Ctrl+` 开关嵌入式终端（与 VS Code 一致），不在终端/输入框聚焦时生效。
+      // Ctrl+` 开关嵌入式终端（与 VS Code 一致），任何标签页可用，
+      // 不在终端/输入框聚焦时生效。
       if (
         !dialog &&
         changes &&
@@ -1454,10 +1460,9 @@ export default function App({
       ) {
         event.preventDefault();
         setTerminalOpen((value) => !value);
-        if (tab !== "changes") setTab("changes");
         return;
       }
-      if (terminalOpen && tab === "changes" && event.key === "Escape") {
+      if (terminalOpen && event.key === "Escape") {
         setTerminalOpen(false);
         return;
       }
@@ -1485,6 +1490,10 @@ export default function App({
             ?.focus();
         else if (tab === "commit")
           document.getElementById("commit-file-search")?.focus();
+        else if (tab === "files")
+          document
+            .querySelector<HTMLInputElement>(".editor-file-search input")
+            ?.focus();
         else showFileSearch();
       }
       if (
@@ -1724,10 +1733,7 @@ export default function App({
             aria-expanded={terminalOpen}
             aria-controls="terminal-drawer"
             title={t("终端")}
-            onClick={() => {
-              setTerminalOpen((value) => !value);
-              if (tab !== "changes") setTab("changes");
-            }}
+            onClick={() => setTerminalOpen((value) => !value)}
           >
             <TerminalIcon size={17} />
           </Button>
@@ -2089,6 +2095,24 @@ export default function App({
           </Tabs.Panel>
           <Tabs.Panel
             keepMounted
+            hidden={tab !== "files"}
+            value="files"
+            className="workspace-page"
+          >
+            {(filesVisited || tab === "files") && (
+              <EditorView
+                key={changes.workspace.id}
+                workspaceId={changes.workspace.id}
+                fontSize={preferences.fontSize}
+                trusted={changes.workspace.trusted}
+                active={tab === "files"}
+                changedFiles={changes.files}
+                onChanged={() => void refresh()}
+              />
+            )}
+          </Tabs.Panel>
+          <Tabs.Panel
+            keepMounted
             hidden={tab !== "changes" && tab !== "commit"}
             value={tab === "commit" ? "commit" : "changes"}
             className="workspace-page"
@@ -2417,11 +2441,11 @@ export default function App({
           </Tabs.Panel>
         </>
       )}
-      {/* 终端抽屉位于全局状态栏之上、贴窗口底部（与 VS Code 面板一致）。 */}
+      {/* 终端抽屉位于全局状态栏之上、贴窗口底部；所有标签页共用同一会话。 */}
       {changes && isDesktop && (
         <TerminalDrawer
           key={changes.workspace.id}
-          open={terminalOpen && tab === "changes"}
+          open={terminalOpen}
           workspacePath={changes.workspace.path}
           onClose={() => setTerminalOpen(false)}
         />

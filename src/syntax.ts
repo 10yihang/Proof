@@ -87,6 +87,35 @@ export function clearSyntaxCache() {
   cache.clear();
   cacheBytes = 0;
 }
+/** 状态栏展示用的语言名（Prism 语言 id → 显示名）。 */
+const languageNames: Record<string, string> = {
+  typescript: "TypeScript",
+  tsx: "TSX",
+  javascript: "JavaScript",
+  jsx: "JSX",
+  go: "Go",
+  rust: "Rust",
+  python: "Python",
+  json: "JSON",
+  bash: "Shell",
+  yaml: "YAML",
+  toml: "TOML",
+  c: "C",
+  cpp: "C++",
+  java: "Java",
+  sql: "SQL",
+  markup: "HTML",
+  css: "CSS",
+  markdown: "Markdown",
+};
+export function languageLabel(path?: string): string {
+  const name = path?.split("/").pop() ?? "";
+  const dot = name.lastIndexOf(".");
+  const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
+  const label = languageNames[languages[ext] ?? ""];
+  if (label) return label;
+  return ext ? ext.toUpperCase() : "";
+}
 export function syntaxRanges(text: string, path?: string): SyntaxSpan[] {
   if (!text || text.length > 50_000) return [];
   const language = path

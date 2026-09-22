@@ -4,6 +4,7 @@
 @import "./styles/reading.css";
 @import "./styles/layout.css";
 @import "./styles/terminal.css";
+@import "./styles/editor.css";
 
 :root {
   font-family:
@@ -30,6 +31,7 @@
   --add-bg: #e9f6ee;
   --del: #aa3040;
   --del-bg: #fcedef;
+  --warning: #9a6700;
   --hunk: #f6f6f7;
   --keyword: #8751a8;
   --string: #245f86;
@@ -70,6 +72,7 @@
   --add-bg: #1d3429;
   --del: #ffadb5;
   --del-bg: #3a252b;
+  --warning: #e3b341;
   --hunk: #22252c;
   --keyword: #d3a4eb;
   --string: #9bcbea;

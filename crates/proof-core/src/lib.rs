@@ -33,6 +33,7 @@ mod service;
 mod staging;
 mod stash;
 mod store;
+mod text_files;
 mod transient;
 
 pub use adapter::*;
