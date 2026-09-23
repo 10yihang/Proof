@@ -19,6 +19,7 @@ pub(crate) struct FileGuard {
     pub token: String,
     pub base: String,
 }
+type FileAttributes = std::collections::HashMap<String, Vec<u8>>;
 impl Git {
     pub fn raw(&self, path: &Path, args: &[&str]) -> Result<Output> {
         let mut cmd = process::git_command(&self.executable, path);
@@ -340,6 +341,150 @@ impl Git {
                 branch.as_deref().unwrap_or("detached"),
             ),
         })
+    }
+
+    /// Capture a set of file guards using one repository/config/attribute read.
+    /// Tokens are byte-for-byte compatible with `capture_file_guard`: shared
+    /// inputs are reused only within this capture, never cached across requests.
+    pub(crate) fn capture_file_guards(
+        &self,
+        workspace: &Workspace,
+        files: &[ChangedFile],
+    ) -> Result<Vec<FileGuard>> {
+        if files.is_empty() {
+            return Ok(Vec::new());
+        }
+        let (_, repository_identity, workspace_identity) = self.discover(&workspace.path)?;
+        let ((head, branch, index), (config, attributes)) = read_pair(
+            || {
+                Ok((
+                    self.head(workspace)?,
+                    self.branch(workspace)?,
+                    self.index_bytes(workspace)?,
+                ))
+            },
+            || self.file_environments(workspace, files),
+        )?;
+        let base = format!(
+            "{}:{}",
+            head.as_deref().unwrap_or("unborn"),
+            branch.as_deref().unwrap_or("detached"),
+        );
+        files
+            .iter()
+            .map(|file| {
+                crate::check_read_cancellation()?;
+                let content = worktree_bytes(workspace, &file.path)?;
+                let old = file
+                    .old_path
+                    .as_deref()
+                    .map(|path| worktree_bytes(workspace, path))
+                    .transpose()?
+                    .unwrap_or_default();
+                let environment = fingerprint(&[
+                    &config,
+                    attributes
+                        .get(&file.path)
+                        .map(Vec::as_slice)
+                        .unwrap_or_default(),
+                ]);
+                Ok(FileGuard {
+                    token: fingerprint(&[
+                        workspace.id.as_bytes(),
+                        repository_identity.as_bytes(),
+                        workspace_identity.as_bytes(),
+                        head.as_deref().unwrap_or_default().as_bytes(),
+                        branch.as_deref().unwrap_or_default().as_bytes(),
+                        &index,
+                        &content,
+                        &old,
+                        environment.as_bytes(),
+                    ]),
+                    base: base.clone(),
+                })
+            })
+            .collect()
+    }
+
+    fn file_environments(
+        &self,
+        workspace: &Workspace,
+        files: &[ChangedFile],
+    ) -> Result<(Vec<u8>, FileAttributes)> {
+        let mut paths = std::collections::HashSet::new();
+        let mut input = Vec::new();
+        for file in files {
+            checked_path(workspace, &file.path)?;
+            // The same path can have staged and unstaged entries. Repeating it
+            // would duplicate its triples and break the existing single-file hash.
+            if paths.insert(file.path.as_str()) {
+                input.extend_from_slice(file.path.as_bytes());
+                input.push(0);
+            }
+        }
+        let (config, raw_attributes) = read_pair(
+            || {
+                process::checked(self.raw(
+                    Path::new(&workspace.path),
+                    &["config", "--null", "--list", "--includes"],
+                )?)
+            },
+            || {
+                let mut command = self.command(workspace)?;
+                command.args(["check-attr", "--all", "-z", "--stdin"]);
+                process::checked(process::run(
+                    command,
+                    Some(&input),
+                    Duration::from_secs(20),
+                )?)
+            },
+        )?;
+        let mut attributes = FileAttributes::new();
+        // Preserve Git's exact path/name/value bytes and ordering for each path.
+        // A path without attributes emits no record, just as in a single read.
+        let fields: Vec<_> = raw_attributes.split_inclusive(|byte| *byte == 0).collect();
+        if fields.len() % 3 != 0 || fields.iter().any(|field| field.last() != Some(&0)) {
+            return Err(Error::new(
+                "GIT_PARSE",
+                "Git 属性数据无法解析。",
+                "Invalid attribute triples",
+            ));
+        }
+        for triple in fields.chunks_exact(3) {
+            let path = std::str::from_utf8(&triple[0][..triple[0].len() - 1])
+                .map_err(|error| Error::new("GIT_PARSE", "Git 属性数据无法解析。", error))?;
+            if !paths.contains(path) {
+                return Err(Error::new(
+                    "GIT_PARSE",
+                    "Git 属性数据无法解析。",
+                    "Unexpected attribute path",
+                ));
+            }
+            let value = attributes.entry(path.to_owned()).or_default();
+            for field in triple {
+                value.extend_from_slice(field);
+            }
+        }
+        // Git's attribute registry is process-global: visiting another directory
+        // can change the order of `--all` records, even when values are identical.
+        // Zero/one-attribute paths are unambiguous. Re-read only multi-attribute
+        // paths independently to preserve tokens from existing editor snapshots
+        // and saved reviews, instead of silently changing the hash contract.
+        for (path, value) in &mut attributes {
+            if value.iter().filter(|byte| **byte == 0).count() > 3 {
+                crate::check_read_cancellation()?;
+                let mut input = path.as_bytes().to_vec();
+                input.push(0);
+                let mut command = self.command(workspace)?;
+                command.args(["check-attr", "--all", "-z", "--stdin"]);
+                *value = process::checked(process::run(
+                    command,
+                    Some(&input),
+                    Duration::from_secs(20),
+                )?)?;
+            }
+        }
+        Ok((config, attributes))
     }
 
     /// Diff also depends on effective attributes and config, including nested,

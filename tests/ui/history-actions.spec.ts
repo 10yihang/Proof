@@ -1304,7 +1304,69 @@ test("History menus support keyboard, clipboard, real Branch switching and renam
     f.close();
   }
 });
-test("History Pull previews explicit direction and Push updates only the selected remote Branch", async ({
+for (const overlapping of [false, true]) {
+  test(`History Merge ${overlapping ? "reports actual overwrite conflicts" : "preserves unrelated local edits"}`, async ({
+    page,
+  }) => {
+    const f = await fixture(page);
+    try {
+      f.git("switch", "feature/ui");
+      const targetPath = overlapping ? "code.txt" : "feature.txt";
+      writeFileSync(join(f.repo, targetPath), "feature change\n");
+      f.git("add", targetPath);
+      f.git("commit", "-m", "Feature update");
+      const feature = f.git("rev-parse", "HEAD");
+      f.git("switch", "main");
+      writeFileSync(join(f.repo, "main.txt"), "main change\n");
+      f.git("add", "main.txt");
+      f.git("commit", "-m", "Main update");
+      const head = f.git("rev-parse", "HEAD");
+      writeFileSync(join(f.repo, "code.txt"), "local edit\n");
+      writeFileSync(join(f.repo, "untracked.txt"), "local notes\n");
+      const before = f.git("status", "--porcelain");
+      await f.open();
+      await page
+        .locator(".repository-refs")
+        .getByRole("button", { name: "feature/ui 的 Branch 操作", exact: true })
+        .click();
+      await page
+        .getByRole("menuitem", { name: "Merge 到当前 Branch…", exact: true })
+        .click();
+      const modal = page.getByRole("dialog", {
+        name: "Merge 到当前 Branch…",
+        exact: true,
+      });
+      const execute = modal.getByRole("button", {
+        name: "执行 Merge",
+        exact: true,
+      });
+      await expect(execute).toBeEnabled();
+      await execute.click();
+      await expect(modal).not.toBeVisible();
+      const result = page.locator(".history-operation-result");
+      if (overlapping) {
+        await expect(result).toContainText("Git 操作未完成");
+        await expect(result).toContainText("code.txt");
+        expect(f.git("rev-parse", "HEAD")).toBe(head);
+      } else {
+        await expect(result).toContainText("Git 操作已完成");
+        f.git("merge-base", "--is-ancestor", feature, "HEAD");
+        expect(f.git("show", "HEAD:code.txt")).toBe("initial");
+      }
+      expect(f.git("status", "--porcelain")).toBe(before);
+      expect(readFileSync(join(f.repo, "code.txt"), "utf8")).toBe(
+        "local edit\n",
+      );
+      expect(readFileSync(join(f.repo, "untracked.txt"), "utf8")).toBe(
+        "local notes\n",
+      );
+    } finally {
+      f.close();
+    }
+  });
+}
+
+test("History Pull preserves local edits and Push updates only the selected remote Branch", async ({
   page,
 }) => {
   test.setTimeout(60000);
@@ -1317,6 +1379,9 @@ test("History Pull previews explicit direction and Push updates only the selecte
     f.git("commit", "-m", "Remote update");
     f.git("push", "origin", "feature/ui:main");
     f.git("switch", "main");
+    writeFileSync(join(f.repo, "code.txt"), "local edit\n");
+    writeFileSync(join(f.repo, "untracked.txt"), "local notes\n");
+    const before = f.git("status", "--porcelain");
     await f.open();
     await page.getByRole("button", { name: "Pull", exact: true }).click();
     const modal = page.getByRole("dialog", { name: "Pull", exact: true });
@@ -1332,6 +1397,11 @@ test("History Pull previews explicit direction and Push updates only the selecte
     expect(readFileSync(join(f.repo, "remote.txt"), "utf8")).toBe(
       "from remote\n",
     );
+    expect(f.git("status", "--porcelain")).toBe(before);
+    expect(readFileSync(join(f.repo, "code.txt"), "utf8")).toBe("local edit\n");
+    expect(readFileSync(join(f.repo, "untracked.txt"), "utf8")).toBe(
+      "local notes\n",
+    );
     await expect(
       page.locator(".graph-row").filter({ hasText: "Remote update" }),
     ).toBeVisible();
@@ -1344,9 +1414,10 @@ test("History Pull previews explicit direction and Push updates only the selecte
       f.git("rev-parse", "HEAD"),
     );
     await expect(
-      page
-        .locator(".repository-refs .repo-ref")
-        .filter({ hasText: "origin/published" }),
+      page.locator(".repository-refs").getByRole("button", {
+        name: "origin/published 的 Branch 操作",
+        exact: true,
+      }),
     ).toBeVisible();
   } finally {
     f.close();

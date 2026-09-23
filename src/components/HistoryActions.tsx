@@ -86,9 +86,9 @@ export function useHistoryActions(
       void request<boolean>("history_auto_fetch", {
         workspaceId: changes.workspace.id,
       })
-        .then((fetched) => {
-          // 真正拉到新对象才重走提交图；否则只保留上面的便宜校对。
-          if (fetchOwner.current === changes.workspace.id && fetched)
+        .then((refsChanged) => {
+          // A successful no-op Fetch keeps the current graph snapshot/pages.
+          if (fetchOwner.current === changes.workspace.id && refsChanged)
             setGraphRevision((value) => value + 1);
         })
         .catch(() => {

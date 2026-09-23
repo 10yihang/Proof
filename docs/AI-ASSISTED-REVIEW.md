@@ -152,3 +152,14 @@ Commit 页的 **AI Commit** 仅生成 message：正常模式仅使用完整 Inde
 结果提供复制 CLI 恢复命令的入口。原生 CLI 管理这些会话；清除 Proof 数据不会删除它们。Codex 默认 picker 可能需 `--include-non-interactive`；Claude 的 print 会话按原生规则通过 `--resume <session-id>` 继续，而不一定出现在默认 picker，见 [Codex CLI reference](https://learn.chatgpt.com/docs/developer-commands?surface=cli) 和 [Claude sessions](https://code.claude.com/docs/en/sessions)。
 
 本机 Codewiz 0.1.99 的原生 export 曾在退出前只向管道写出 1024 bytes。主动分析和 export 现在使用权限 0600 的专用文件作为 stdout，由同一个受限进程循环持续读取；保留实时活动、输出上限与取消，退出后读完最后一个事件。真实回环测试覆盖 32 KB 最终结果、完整会话导入以及已有 ID 防覆盖，不使用公司模型或额度。
+
+
+## 2026-09-23：Local AI 输入批量捕获
+
+Local Grouping、Review 和 AI Commit 准备输入时，共用整批文件的仓库身份、HEAD / Branch、Index、有效配置与 attributes 捕获，不再为每个文件调用完整 UI File Diff 读取链路。每个文件仍由 Git 独立生成 canonical patch，保持 rename、Staged / Unstaged、binary、符号链接、特殊路径及单文件读取限制的既有语义。准备前后的文件原始字节、权限、rename 来源以及全局 Changes token 都要一致；中途变化或取消不产生有效任务。
+
+FileDiff 的构建规则与 UI 共用，保留 token、base、kind、hunk 行范围和 Review 状态；AI 证据不再注册或复制到 UI snapshot cache，因此大量文件分析不会挤掉当前打开的 Diff。没有改变 Agent 的调用、Prompt、会话保存或只读权限，也没有用 AI 结果替代 Git Diff。
+
+Git 在一个进程中查询多个目录的 `check-attr --all` 时，属性输出顺序可能受此前路径影响。为保持既有 UI snapshot / Review token，零或一个 attribute 的路径批量读取；多个 attributes 的路径单独读取原始顺序。前后两轮都执行这一规则，避免通过更改 hash 规则掩盖兼容问题。含多个 attributes 的项目会比普通夹具多一些 Git 查询。
+
+实测方法及进程计数见 [PERFORMANCE.md](PERFORMANCE.md)。回归覆盖普通 UI Diff 与批量 AI 证据的逐字段比较、混合两侧、rename / 重建来源、binary、文件类型和 symlink、特殊 UTF-8 路径、attributes 顺序、配置 / Index / HEAD / 文件变化和取消。自动测试仅准备输入，不运行真实 Agent 或使用模型额度。

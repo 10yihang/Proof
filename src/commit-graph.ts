@@ -18,43 +18,61 @@ export interface GraphRow {
   incoming: boolean;
   through: GraphLine[];
   parents: GraphLine[];
-  before: GraphLane[];
-  after: GraphLane[];
+}
+export interface CommitGraphLayout {
+  rows: GraphRow[];
+  columns: number;
+  remaining: GraphLane[];
+  nextColor: number;
 }
 export const GRAPH_ROW_HEIGHT = 32;
 export const GRAPH_ROW_CENTER = GRAPH_ROW_HEIGHT / 2;
 export const GRAPH_LANE_WIDTH = 18;
 
 /** Layout only: every outgoing edge retains the real parent object ID. */
-export function layoutCommitGraph(commits: readonly CommitEntry[]) {
-  let lanes: GraphLane[] = [];
-  let nextColor = 0;
-  let columns = 1;
-  const rows: GraphRow[] = [];
+export function layoutCommitGraph(
+  commits: readonly CommitEntry[],
+): CommitGraphLayout {
+  return appendCommitGraph(
+    { rows: [], columns: 1, remaining: [], nextColor: 0 },
+    commits,
+  );
+}
+
+/** Continue only within the same immutable Git snapshot and commit order. */
+export function appendCommitGraph(
+  previous: CommitGraphLayout,
+  commits: readonly CommitEntry[],
+): CommitGraphLayout {
+  if (!commits.length) return previous;
+  let lanes = previous.remaining;
+  let nextColor = previous.nextColor;
+  let columns = previous.columns;
+  const rows = [...previous.rows];
   for (const commit of commits) {
-    const before = lanes.map((lane) => ({ ...lane }));
-    let column = lanes.findIndex((lane) => lane.oid === commit.oid);
+    const before = lanes;
+    let column = before.findIndex((lane) => lane.oid === commit.oid);
     const incoming = column >= 0;
-    if (!incoming) {
-      column = lanes.length;
-      lanes.push({ oid: commit.oid, color: nextColor++ });
-    }
-    const color = lanes[column].color;
-    const after = lanes.filter((_, index) => index !== column);
+    if (!incoming) column = before.length;
+    const color = incoming ? before[column].color : nextColor++;
+    const after = before.filter((_, index) => index !== column);
+    const pending = new Set(after.map((lane) => lane.oid));
     commit.parents.forEach((parent, index) => {
-      if (after.some((lane) => lane.oid === parent)) return;
+      if (pending.has(parent)) return;
+      pending.add(parent);
       after.splice(Math.min(column + index, after.length), 0, {
         oid: parent,
         color: index === 0 ? color : nextColor++,
       });
     });
+    const positions = new Map(after.map((lane, index) => [lane.oid, index]));
     const through = before.flatMap((lane, from) => {
       if (lane.oid === commit.oid) return [];
-      const to = after.findIndex((candidate) => candidate.oid === lane.oid);
+      const to = positions.get(lane.oid)!;
       return [{ from, to, color: lane.color }];
     });
     const parents = commit.parents.map((parent) => {
-      const to = after.findIndex((lane) => lane.oid === parent);
+      const to = positions.get(parent)!;
       return { from: column, to, color: after[to].color, parent };
     });
     columns = Math.max(columns, before.length, column + 1, after.length);
@@ -65,12 +83,10 @@ export function layoutCommitGraph(commits: readonly CommitEntry[]) {
       incoming,
       through,
       parents,
-      before,
-      after,
     });
-    lanes = after.map((lane) => ({ ...lane }));
+    lanes = after;
   }
-  return { rows, columns, remaining: lanes };
+  return { rows, columns, remaining: lanes, nextColor };
 }
 
 export function graphX(column: number) {

@@ -333,21 +333,9 @@ impl Proof {
         } else {
             self.require_write(&workspace)?;
         }
-        // Rebase（含 pull --rebase）显式带 --autostash：脏工作区先自动
-        // stash、变基后回放，不再需要用户手动清空工作区。其余操作仍要求干净，
-        // 避免 merge/cherry-pick 与未提交改动纠缠出难以解释的结果。
-        let autostashed = matches!(request.kind, Rebase)
-            || (request.kind == Pull && request.mode.as_deref() == Some("rebase"));
-        if matches!(request.kind, Merge | Rebase | CherryPick | Revert | Pull)
-            && !autostashed
-            && !changes.files.is_empty()
-        {
-            return Err(Error::new(
-                "HISTORY_CLEAN_REQUIRED",
-                "请先 Commit 或 Stash 本地修改，再执行此操作。",
-                "A clean index and Worktree are required; Proof does not autostash",
-            ));
-        }
+        // Local edits alone do not block an action. Git checks which paths and
+        // index states the specific command can preserve and reports any
+        // overwrite rejection. Rebase retains its explicit --autostash below.
         let guard = operation_guard(&git, &workspace, &changes)?;
         let mut args: Vec<String> = Vec::new();
         let mut target_oid = None;

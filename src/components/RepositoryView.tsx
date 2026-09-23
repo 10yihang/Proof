@@ -32,6 +32,7 @@ import type { HistoryActions } from "./HistoryActions";
 export type RepositorySection = "history" | "worktrees";
 
 export function RepositoryView({
+  active,
   actions,
   section,
   onSection,
@@ -42,6 +43,7 @@ export function RepositoryView({
   onOpenDiff,
   branchDelimiter = "/",
 }: {
+  active: boolean;
   actions: HistoryActions;
   section: RepositorySection;
   onSection: (section: RepositorySection) => void;
@@ -345,6 +347,7 @@ export function RepositoryView({
           <div className="repository-page" hidden={section !== "history"}>
             {(historyVisited || section === "history") && (
               <CommitHistory
+                active={active && section === "history"}
                 actions={actions}
                 branches={branches}
                 branchNavigation={{

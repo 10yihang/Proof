@@ -185,7 +185,7 @@ impl Proof {
         }
         // The displayed and persisted base must come from the same references
         // as the validated content, not a preceding repository-list read.
-        let base = before.base;
+        let base = before.base.clone();
         let raw_patch = match raw_patch {
             Ok(patch) => patch,
             Err(error) if error.code == "DIFF_OUTPUT_LIMIT" => {
@@ -225,6 +225,52 @@ impl Proof {
                 },
             });
         }
+        let diff = self.build_file_diff(&workspace, &file, before, raw_patch, operation)?;
+        let snapshot = diff.clone();
+        let bytes = snapshot.retained_bytes();
+        const SNAPSHOT_BYTES: usize = 64 * 1024 * 1024;
+        if bytes > SNAPSHOT_BYTES {
+            return Ok(crate::DiffRead::Deferred {
+                summary: crate::DiffSummary {
+                    workspace_id: diff.workspace_id,
+                    path: diff.path,
+                    old_path: diff.old_path,
+                    side,
+                    base: diff.base,
+                    captured_at: diff.captured_at,
+                    patch_bytes: Some(diff.patch.len()),
+                    reason: "read_limit".into(),
+                    can_load: false,
+                },
+            });
+        }
+        self.snapshot_bytes += bytes;
+        self.snapshot_order.push_back(diff.id.clone());
+        self.snapshots.insert(diff.id.clone(), snapshot);
+        while self.snapshot_order.len() > 64 || self.snapshot_bytes > SNAPSHOT_BYTES {
+            if let Some(old) = self.snapshot_order.pop_front() {
+                if let Some(expired) = self.snapshots.remove(&old) {
+                    self.snapshot_bytes -= expired.retained_bytes();
+                }
+                self.contexts.retain(|context| context.snapshot_id != old);
+            }
+        }
+        Ok(crate::DiffRead::Ready { diff })
+    }
+    /// Construct identical Diff evidence for the editor and active AI tasks.
+    /// Only the editor read path registers a writable UI snapshot/cache entry.
+    pub(crate) fn build_file_diff(
+        &self,
+        workspace: &Workspace,
+        file: &ChangedFile,
+        before: git::FileGuard,
+        raw_patch: String,
+        operation: Option<String>,
+    ) -> Result<FileDiff> {
+        let workspace_id = workspace.id.as_str();
+        let path = file.path.as_str();
+        let side = file.side;
+        let base = before.base;
         let identity = fingerprint(&[
             workspace_id.as_bytes(),
             side.as_str().as_bytes(),
@@ -347,36 +393,7 @@ impl Proof {
             discard_reason: (!can_discard).then(|| "支持未暂存的普通文本/二进制修改和 untracked 普通文件；暂存、重命名、符号链接和属性变化不在 Discard 范围内。".into()),
             guard: before.token,
         };
-        let snapshot = diff.clone();
-        let bytes = snapshot.retained_bytes();
-        const SNAPSHOT_BYTES: usize = 64 * 1024 * 1024;
-        if bytes > SNAPSHOT_BYTES {
-            return Ok(crate::DiffRead::Deferred {
-                summary: crate::DiffSummary {
-                    workspace_id: diff.workspace_id,
-                    path: diff.path,
-                    old_path: diff.old_path,
-                    side,
-                    base: diff.base,
-                    captured_at: diff.captured_at,
-                    patch_bytes: Some(diff.patch.len()),
-                    reason: "read_limit".into(),
-                    can_load: false,
-                },
-            });
-        }
-        self.snapshot_bytes += bytes;
-        self.snapshot_order.push_back(diff.id.clone());
-        self.snapshots.insert(diff.id.clone(), snapshot);
-        while self.snapshot_order.len() > 64 || self.snapshot_bytes > SNAPSHOT_BYTES {
-            if let Some(old) = self.snapshot_order.pop_front() {
-                if let Some(expired) = self.snapshots.remove(&old) {
-                    self.snapshot_bytes -= expired.retained_bytes();
-                }
-                self.contexts.retain(|context| context.snapshot_id != old);
-            }
-        }
-        Ok(crate::DiffRead::Ready { diff })
+        Ok(diff)
     }
     pub(crate) fn snapshot(&self, id: &str) -> Result<FileDiff> {
         self.snapshots

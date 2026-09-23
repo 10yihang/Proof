@@ -174,115 +174,400 @@ async function fixture(page: Page) {
   };
 }
 
-test.beforeEach(() =>
-  test.skip(
-    !process.env.PROOF_UI_CORE_BINARY,
-    "Build ui-fixture-driver for native Git tests.",
-  ),
-);
+test.describe("Terminal integration", () => {
+  test.beforeEach(() =>
+    test.skip(
+      !process.env.PROOF_UI_CORE_BINARY,
+      "Build ui-fixture-driver for native Git tests.",
+    ),
+  );
 
-test("Terminal drawer renders output and forwards keystrokes", async ({
-  page,
-}) => {
-  const f = await fixture(page);
-  try {
-    await f.open();
-    await page.getByRole("button", { name: "打开终端", exact: true }).click();
-    const drawer = page.locator("#terminal-drawer");
-    await expect(drawer).toBeVisible();
-    // xterm 按需加载完成并打开后会渲染 .xterm-rows。
-    await expect(drawer.locator(".xterm-rows")).toBeVisible();
-    const spawn = await page.evaluate(
-      () => (window as any).terminals.spawns[0],
-    );
-    expect(spawn.cwd).toBe(realpathSync(f.repo));
-    expect(spawn.cols).toBeGreaterThan(0);
-    expect(spawn.rows).toBeGreaterThan(0);
-    // Channel 下发二进制输出 → xterm 渲染。
-    await page.evaluate((id) => {
-      const channel = (window as any).terminals.channels.get(id);
-      channel.onmessage(new TextEncoder().encode("proof-terminal-ok").buffer);
-    }, spawn.id);
-    await expect(drawer.locator(".xterm-rows")).toContainText(
-      "proof-terminal-ok",
-    );
-    // 按键 → terminal_write 字节回传。
-    await drawer.locator(".xterm").click();
-    await page.keyboard.type("ab");
-    await expect
-      .poll(async () =>
-        page.evaluate(() =>
-          (window as any).terminals.writes.flatMap((w: any) => w.data),
-        ),
-      )
-      .toEqual(expect.arrayContaining([97, 98]));
-    // Ctrl+` 收起抽屉，会话保留（不触发 close）。
-    await page.keyboard.press("Control+`");
-    await expect(drawer).toBeHidden();
-    const closes = await page.evaluate(() => (window as any).terminals.closes);
-    expect(closes).toEqual([]);
-  } finally {
-    f.close();
-  }
+  test("Terminal drawer renders output and forwards keystrokes", async ({
+    page,
+  }) => {
+    const f = await fixture(page);
+    try {
+      await f.open();
+      await page.getByRole("button", { name: "打开终端", exact: true }).click();
+      const drawer = page.locator("#terminal-drawer");
+      await expect(drawer).toBeVisible();
+      // xterm 按需加载完成并打开后会渲染 .xterm-rows。
+      await expect(drawer.locator(".xterm-rows")).toBeVisible();
+      const spawn = await page.evaluate(
+        () => (window as any).terminals.spawns[0],
+      );
+      expect(spawn.cwd).toBe(realpathSync(f.repo));
+      expect(spawn.cols).toBeGreaterThan(0);
+      expect(spawn.rows).toBeGreaterThan(0);
+      // Channel 下发二进制输出 → xterm 渲染。
+      await page.evaluate((id) => {
+        const channel = (window as any).terminals.channels.get(id);
+        channel.onmessage(new TextEncoder().encode("proof-terminal-ok").buffer);
+      }, spawn.id);
+      await expect(drawer.locator(".xterm-rows")).toContainText(
+        "proof-terminal-ok",
+      );
+      // 按键 → terminal_write 字节回传。
+      await drawer.locator(".xterm").click();
+      await page.keyboard.type("ab");
+      await expect
+        .poll(async () =>
+          page.evaluate(() =>
+            (window as any).terminals.writes.flatMap((w: any) => w.data),
+          ),
+        )
+        .toEqual(expect.arrayContaining([97, 98]));
+      // Ctrl+` 收起抽屉，会话保留（不触发 close）。
+      await page.keyboard.press("Control+`");
+      await expect(drawer).toBeHidden();
+      const closes = await page.evaluate(
+        () => (window as any).terminals.closes,
+      );
+      expect(closes).toEqual([]);
+    } finally {
+      f.close();
+    }
+  });
+
+  test("Terminal opens from the header on any workspace tab", async ({
+    page,
+  }) => {
+    const f = await fixture(page);
+    try {
+      await f.open();
+      await page.getByRole("tab", { name: "History", exact: true }).click();
+      await page.getByRole("button", { name: "打开终端", exact: true }).click();
+      const drawer = page.locator("#terminal-drawer");
+      await expect(drawer).toBeVisible();
+      await expect(drawer.locator(".xterm-rows")).toBeVisible();
+      // 终端在所有标签页可用，不再强制切回 Changes。
+      await expect(
+        page.getByRole("tab", { name: "History", exact: true }),
+      ).toHaveAttribute("aria-selected", "true");
+      // 在 History 页收起终端后，Changes 页再打开仍是同一会话。
+      // （终端聚焦时 Escape 留给终端程序本身；先把焦点移回页面再 Esc。）
+      await page.locator(".workspace-statusbar").click();
+      await page.keyboard.press("Escape");
+      await expect(drawer).toBeHidden();
+      await page
+        .getByRole("tab", { name: /^本地变更/ })
+        .first()
+        .click();
+      await page.keyboard.press("Control+`");
+      await expect(drawer).toBeVisible();
+      await expect
+        .poll(async () =>
+          page.evaluate(() => (window as any).terminals.spawns.length),
+        )
+        .toBe(1);
+    } finally {
+      f.close();
+    }
+  });
+
+  test("Terminal shows exited state when the shell exits", async ({ page }) => {
+    const f = await fixture(page);
+    try {
+      await f.open();
+      await page.getByRole("button", { name: "打开终端", exact: true }).click();
+      const drawer = page.locator("#terminal-drawer");
+      await expect(drawer.locator(".xterm-rows")).toBeVisible();
+      const spawn = await page.evaluate(
+        () => (window as any).terminals.spawns[0],
+      );
+      await page.evaluate(
+        (id) => (window as any).emitTerminalExit(id),
+        spawn.id,
+      );
+      await expect(
+        drawer.getByText("进程已退出", { exact: true }),
+      ).toBeVisible();
+      await expect(drawer.locator(".xterm-rows")).toContainText(
+        "终端进程已退出",
+      );
+      // 重新启动会 spawn 新会话；已退出的旧会话由后端 reader EOF 自动回收。
+      await drawer.getByRole("button", { name: "重新启动" }).click();
+      await expect
+        .poll(async () =>
+          page.evaluate(() => (window as any).terminals.spawns.length),
+        )
+        .toBe(2);
+    } finally {
+      f.close();
+    }
+  });
 });
 
-test("Terminal opens from the header on any workspace tab", async ({
-  page,
-}) => {
-  const f = await fixture(page);
-  try {
-    await f.open();
-    await page.getByRole("tab", { name: "History", exact: true }).click();
-    await page.getByRole("button", { name: "打开终端", exact: true }).click();
-    const drawer = page.locator("#terminal-drawer");
-    await expect(drawer).toBeVisible();
-    await expect(drawer.locator(".xterm-rows")).toBeVisible();
-    // 终端在所有标签页可用，不再强制切回 Changes。
-    await expect(
-      page.getByRole("tab", { name: "History", exact: true }),
-    ).toHaveAttribute("aria-selected", "true");
-    // 在 History 页收起终端后，Changes 页再打开仍是同一会话。
-    // （终端聚焦时 Escape 留给终端程序本身；先把焦点移回页面再 Esc。）
-    await page.locator(".workspace-statusbar").click();
-    await page.keyboard.press("Escape");
-    await expect(drawer).toBeHidden();
-    await page
-      .getByRole("tab", { name: /^本地变更/ })
-      .first()
-      .click();
-    await page.keyboard.press("Control+`");
-    await expect(drawer).toBeVisible();
+// These tests do not need a native fixture: delayed native replies are controlled
+// explicitly, while mounting the real component and xterm in the browser.
+async function controlledTerminal(page: Page, failSpawn = false) {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(String(error)));
+  await page.addInitScript((initialFailSpawn) => {
+    const callbacks = new Map<number, (event: any) => void>();
+    const listeners = new Map<number, { event: string; handler: number }>();
+    let identifier = 0;
+    const state = {
+      spawns: [] as { id: string; cwd: string }[],
+      closes: [] as string[],
+      writes: [] as string[],
+      channels: new Map<string, any>(),
+      pendingSpawns: new Map<string, () => void>(),
+      pendingListeners: [] as (() => void)[],
+      pastListeners: [] as ((event: any) => void)[],
+      listeners,
+      holdListeners: false,
+      failSpawn: initialFailSpawn,
+      failListener: false,
+      resolveSpawn(id: string) {
+        state.pendingSpawns.get(id)?.();
+      },
+      resolveListeners() {
+        state.pendingListeners.splice(0).forEach((resolve) => resolve());
+      },
+      emitExit(id: string) {
+        for (const entry of [...listeners.values()]) {
+          if (entry.event === "terminal-exit")
+            callbacks.get(entry.handler)?.({ payload: { id } });
+        }
+      },
+      emitStaleExit(id: string) {
+        for (const callback of state.pastListeners)
+          callback({ payload: { id } });
+      },
+    };
+    Object.assign(window, {
+      terminalControl: state,
+      __TAURI_EVENT_PLUGIN_INTERNALS__: {
+        unregisterListener: (_: string, id: number) => listeners.delete(id),
+      },
+      __TAURI_INTERNALS__: {
+        metadata: {
+          currentWindow: { label: "terminal-test" },
+          currentWebview: { label: "terminal-test" },
+        },
+        transformCallback(callback: (event: any) => void) {
+          const id = ++identifier;
+          callbacks.set(id, callback);
+          return id;
+        },
+        unregisterCallback: (id: number) => callbacks.delete(id),
+        invoke(name: string, payload: any = {}) {
+          if (name === "terminal_spawn") {
+            const id = `controlled-pty-${state.spawns.length + 1}`;
+            state.spawns.push({ id, cwd: payload.cwd });
+            state.channels.set(id, payload.onData);
+            if (state.failSpawn)
+              return Promise.reject(new Error("Spawn failed"));
+            return new Promise<string>((resolve) =>
+              state.pendingSpawns.set(id, () => resolve(id)),
+            );
+          }
+          if (name === "terminal_close") {
+            state.closes.push(payload.id);
+            return Promise.resolve();
+          }
+          if (name === "terminal_write") {
+            state.writes.push(payload.id);
+            return Promise.resolve();
+          }
+          if (name === "plugin:event|listen") {
+            if (state.failListener)
+              return Promise.reject(new Error("Listen failed"));
+            const id = ++identifier;
+            listeners.set(id, payload);
+            state.pastListeners.push(callbacks.get(payload.handler)!);
+            if (state.holdListeners)
+              return new Promise<number>((resolve) =>
+                state.pendingListeners.push(() => resolve(id)),
+              );
+            return Promise.resolve(id);
+          }
+          if (name === "plugin:event|unlisten")
+            listeners.delete(payload.eventId);
+          return Promise.resolve();
+        },
+      },
+    });
+  }, failSpawn);
+  await page.goto("/tests/support/terminal-lifecycle.html");
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as any).terminalControl.spawns.length),
+    )
+    .toBe(1);
+  return {
+    errors,
+    resolve: (id: number) =>
+      page.evaluate(
+        (id) =>
+          (window as any).terminalControl.resolveSpawn(`controlled-pty-${id}`),
+        id,
+      ),
+    state: () =>
+      page.evaluate(() => {
+        const state = (window as any).terminalControl;
+        return {
+          closes: state.closes,
+          listeners: state.listeners.size,
+          spawns: state.spawns.length,
+          writes: state.writes,
+        };
+      }),
+  };
+}
+
+for (const order of [
+  [1, 2],
+  [2, 1],
+]) {
+  test(`Terminal lifecycle: workspace switch reclaims delayed spawns in order ${order.join("-")}`, async ({
+    page,
+  }) => {
+    const f = await controlledTerminal(page);
+    await page.getByRole("button", { name: "Switch workspace" }).click();
+    await expect.poll(async () => (await f.state()).spawns).toBe(2);
+    await f.resolve(order[0]);
     await expect
-      .poll(async () =>
-        page.evaluate(() => (window as any).terminals.spawns.length),
-      )
+      .poll(async () => {
+        const s = await f.state();
+        return s.closes.length + s.listeners;
+      })
       .toBe(1);
-  } finally {
-    f.close();
-  }
+    await f.resolve(order[1]);
+    await expect
+      .poll(f.state)
+      .toMatchObject({ closes: ["controlled-pty-1"], listeners: 1 });
+    // Late output and exit from the disposed terminal cannot affect its successor.
+    await page.evaluate(() => {
+      const state = (window as any).terminalControl;
+      state.channels
+        .get("controlled-pty-1")
+        .onmessage(new TextEncoder().encode("stale output").buffer);
+      state.emitStaleExit("controlled-pty-1");
+    });
+    await expect(page.locator("#terminal-drawer")).not.toContainText(
+      "进程已退出",
+    );
+    await page.locator(".xterm-helper-textarea").focus();
+    await page.keyboard.type("x");
+    await expect
+      .poll(async () => (await f.state()).writes)
+      .toContain("controlled-pty-2");
+    await page.getByRole("button", { name: "Unmount terminal" }).click();
+    await expect.poll(f.state).toMatchObject({
+      closes: ["controlled-pty-1", "controlled-pty-2"],
+      listeners: 0,
+    });
+    expect(f.errors).toEqual([]);
+  });
+}
+
+test("Terminal lifecycle: unmount during event subscription releases the late listener", async ({
+  page,
+}) => {
+  const f = await controlledTerminal(page);
+  await page.evaluate(() => {
+    (window as any).terminalControl.holdListeners = true;
+  });
+  await f.resolve(1);
+  await expect.poll(async () => (await f.state()).listeners).toBe(1);
+  await page.getByRole("button", { name: "Unmount terminal" }).click();
+  await expect
+    .poll(async () => (await f.state()).closes)
+    .toEqual(["controlled-pty-1"]);
+  await page.evaluate(() => (window as any).terminalControl.resolveListeners());
+  await expect.poll(async () => (await f.state()).listeners).toBe(0);
+  expect(f.errors).toEqual([]);
 });
 
-test("Terminal shows exited state when the shell exits", async ({ page }) => {
-  const f = await fixture(page);
-  try {
-    await f.open();
-    await page.getByRole("button", { name: "打开终端", exact: true }).click();
-    const drawer = page.locator("#terminal-drawer");
-    await expect(drawer.locator(".xterm-rows")).toBeVisible();
-    const spawn = await page.evaluate(
-      () => (window as any).terminals.spawns[0],
-    );
-    await page.evaluate((id) => (window as any).emitTerminalExit(id), spawn.id);
-    await expect(drawer.getByText("进程已退出", { exact: true })).toBeVisible();
-    await expect(drawer.locator(".xterm-rows")).toContainText("终端进程已退出");
-    // 重新启动会 spawn 新会话；已退出的旧会话由后端 reader EOF 自动回收。
-    await drawer.getByRole("button", { name: "重新启动" }).click();
-    await expect
-      .poll(async () =>
-        page.evaluate(() => (window as any).terminals.spawns.length),
-      )
-      .toBe(2);
-  } finally {
-    f.close();
-  }
+test("Terminal lifecycle: exit while subscription is pending stays exited and restarts cleanly", async ({
+  page,
+}) => {
+  const f = await controlledTerminal(page);
+  await page.evaluate(() => {
+    (window as any).terminalControl.holdListeners = true;
+  });
+  await f.resolve(1);
+  await expect.poll(async () => (await f.state()).listeners).toBe(1);
+  await page.evaluate(() => {
+    const state = (window as any).terminalControl;
+    state.emitExit("controlled-pty-1");
+    state.resolveListeners();
+    state.holdListeners = false;
+  });
+  const drawer = page.locator("#terminal-drawer");
+  await expect(drawer.getByText("进程已退出", { exact: true })).toBeVisible();
+  await expect.poll(async () => (await f.state()).listeners).toBe(0);
+  await drawer.getByRole("button", { name: "重新启动", exact: true }).click();
+  await expect.poll(async () => (await f.state()).spawns).toBe(2);
+  await f.resolve(2);
+  await expect.poll(async () => (await f.state()).listeners).toBe(1);
+  await page.evaluate(() =>
+    (window as any).terminalControl.emitStaleExit("controlled-pty-1"),
+  );
+  await expect(drawer.getByText("进程已退出", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Toggle visibility" }).click();
+  await expect(drawer).toBeHidden();
+  await page.getByRole("button", { name: "Toggle visibility" }).click();
+  await expect(drawer).toBeVisible();
+  expect(await f.state()).toMatchObject({
+    spawns: 2,
+    closes: [],
+    listeners: 1,
+  });
+  await page.getByRole("button", { name: "Unmount terminal" }).click();
+  await expect
+    .poll(f.state)
+    .toMatchObject({ closes: ["controlled-pty-2"], listeners: 0 });
+  expect(f.errors).toEqual([]);
+});
+
+test("Terminal lifecycle: subscription failure closes the spawned session before retry", async ({
+  page,
+}) => {
+  const f = await controlledTerminal(page);
+  await page.evaluate(() => {
+    (window as any).terminalControl.failListener = true;
+  });
+  await f.resolve(1);
+  await expect(page.getByText("终端启动失败", { exact: true })).toBeVisible();
+  await expect
+    .poll(f.state)
+    .toMatchObject({ closes: ["controlled-pty-1"], listeners: 0 });
+  await expect(page.locator(".xterm")).toHaveCount(0);
+  await page.evaluate(() => {
+    (window as any).terminalControl.failListener = false;
+  });
+  await page.getByRole("button", { name: "重新启动", exact: true }).click();
+  await expect.poll(async () => (await f.state()).spawns).toBe(2);
+  await f.resolve(2);
+  await expect.poll(async () => (await f.state()).listeners).toBe(1);
+  await page.getByRole("button", { name: "Unmount terminal" }).click();
+  await expect.poll(f.state).toMatchObject({
+    closes: ["controlled-pty-1", "controlled-pty-2"],
+    listeners: 0,
+  });
+  expect(f.errors).toEqual([]);
+});
+
+test("Terminal lifecycle: spawn failure disposes xterm and permits a clean retry", async ({
+  page,
+}) => {
+  const f = await controlledTerminal(page, true);
+  await expect(page.getByText("终端启动失败", { exact: true })).toBeVisible();
+  await expect(page.locator(".xterm")).toHaveCount(0);
+  expect(await f.state()).toMatchObject({ closes: [], listeners: 0 });
+  await page.evaluate(() => {
+    (window as any).terminalControl.failSpawn = false;
+  });
+  await page.getByRole("button", { name: "重新启动", exact: true }).click();
+  await expect.poll(async () => (await f.state()).spawns).toBe(2);
+  await f.resolve(2);
+  await expect.poll(async () => (await f.state()).listeners).toBe(1);
+  await page.getByRole("button", { name: "Unmount terminal" }).click();
+  await expect
+    .poll(f.state)
+    .toMatchObject({ closes: ["controlled-pty-2"], listeners: 0 });
+  expect(f.errors).toEqual([]);
 });

@@ -57,8 +57,6 @@ export function TerminalDrawer({
   const host = useRef<HTMLDivElement>(null);
   const term = useRef<XTermTerminal | null>(null);
   const fit = useRef<FitAddon | null>(null);
-  const session = useRef<string | null>(null);
-  const disposed = useRef(false);
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState("");
   const [generation, setGeneration] = useState(0);
@@ -71,81 +69,94 @@ export function TerminalDrawer({
 
   useEffect(() => {
     if (!mounted || !isDesktop) return;
-    let cancelled = false;
+    // Async spawn/listen callbacks belong to this effect, not the next workspace.
+    let active = true;
+    let sessionId: string | null = null;
+    let terminal: XTermTerminal | undefined;
+    let fitAddon: FitAddon | undefined;
     let unlisten: (() => void) | undefined;
-    disposed.current = false;
-    (async () => {
-      setStatus("starting");
-      let bundle: XtermBundle;
-      try {
-        bundle = await loadXterm();
-      } catch (cause) {
-        if (!cancelled) {
-          setError(String(cause));
-          setStatus("failed");
-        }
-        return;
+    const release = () => {
+      active = false;
+      unlisten?.();
+      unlisten = undefined;
+      if (sessionId) {
+        void closeTerminal(sessionId);
+        sessionId = null;
       }
-      if (cancelled || !host.current) return;
-      const terminal = new bundle.Terminal({
-        scrollback: 2000,
-        fontSize: 12.5,
-        fontFamily:
-          getComputedStyle(document.documentElement)
-            .getPropertyValue("--font-mono")
-            .trim() || "SFMono-Regular, Menlo, Consolas, monospace",
-        cursorBlink: true,
-        theme: terminalTheme(),
-      });
-      const fitAddon = new bundle.FitAddon();
-      terminal.loadAddon(fitAddon);
-      terminal.open(host.current);
-      fitAddon.fit();
-      term.current = terminal;
-      fit.current = fitAddon;
+      if (term.current === terminal) term.current = null;
+      if (fit.current === fitAddon) fit.current = null;
+      terminal?.dispose();
+      terminal = undefined;
+      fitAddon = undefined;
+    };
+    (async () => {
+      setError("");
+      setStatus("starting");
       try {
+        const bundle = await loadXterm();
+        if (!active || !host.current) return;
+        const instance = new bundle.Terminal({
+          scrollback: 2000,
+          fontSize: 12.5,
+          fontFamily:
+            getComputedStyle(document.documentElement)
+              .getPropertyValue("--font-mono")
+              .trim() || "SFMono-Regular, Menlo, Consolas, monospace",
+          cursorBlink: true,
+          theme: terminalTheme(),
+        });
+        terminal = instance;
+        fitAddon = new bundle.FitAddon();
+        instance.loadAddon(fitAddon);
+        instance.open(host.current);
+        fitAddon.fit();
+        term.current = instance;
+        fit.current = fitAddon;
         const id = await spawnTerminal({
           cwd: workspacePath,
-          cols: terminal.cols,
-          rows: terminal.rows,
-          onData: (chunk) => terminal.write(chunk),
+          cols: instance.cols,
+          rows: instance.rows,
+          onData: (chunk) => {
+            if (active) instance.write(chunk);
+          },
         });
-        if (disposed.current) {
+        if (!active) {
           void closeTerminal(id);
           return;
         }
-        session.current = id;
-        terminal.onData((data) => void writeTerminal(id, data));
-        terminal.onResize(
-          ({ cols, rows }) => void resizeTerminal(id, cols, rows),
-        );
-        unlisten = await onTerminalExit(id, () => {
-          session.current = null;
-          setStatus("exited");
-          terminal.write(`\r\n\x1b[2m${t("终端进程已退出。")}\x1b[0m\r\n`);
+        sessionId = id;
+        instance.onData((data) => {
+          if (active && sessionId === id) void writeTerminal(id, data);
         });
+        instance.onResize(({ cols, rows }) => {
+          if (active && sessionId === id) void resizeTerminal(id, cols, rows);
+        });
+        const stopListening = await onTerminalExit(id, () => {
+          if (!active || sessionId !== id) return;
+          sessionId = null;
+          unlisten?.();
+          unlisten = undefined;
+          setStatus("exited");
+          instance.write(`\r\n\x1b[2m${t("终端进程已退出。")}\x1b[0m\r\n`);
+        });
+        // Unmount or exit may happen while native event registration is pending.
+        if (!active || sessionId !== id) {
+          stopListening();
+          return;
+        }
+        unlisten = stopListening;
         setStatus("running");
-        terminal.focus();
+        instance.focus();
       } catch (cause) {
-        if (!cancelled) {
+        if (active) {
           const failure = cause as { message?: string };
           setError(uiMessage(failure?.message ?? String(cause)));
           setStatus("failed");
+          release();
         }
       }
     })();
-    return () => {
-      cancelled = true;
-      disposed.current = true;
-      unlisten?.();
-      if (session.current) {
-        void closeTerminal(session.current);
-        session.current = null;
-      }
-      term.current?.dispose();
-      term.current = null;
-      fit.current = null;
-    };
+    return release;
     // generation 变化即“重新启动”：整体重建会话与实例。
   }, [mounted, workspacePath, generation]);
 

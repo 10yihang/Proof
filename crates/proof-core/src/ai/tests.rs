@@ -1166,3 +1166,353 @@ fn ai_commit_uses_only_index_supports_amend_and_never_changes_git() {
         .unwrap()
         .contains(&format!("AMEND message for commit {head}")));
 }
+
+#[cfg(unix)]
+#[test]
+fn batch_capture_preserves_canonical_diff_tokens_for_mixed_file_kinds() {
+    use std::os::unix::fs::symlink;
+    let (temp, mut proof, workspace) = fixture();
+    let repo = Path::new(&workspace.path);
+    git(repo, &["reset", "--hard", "HEAD"]);
+    fs::create_dir(repo.join("nested")).unwrap();
+    for (folder, attributes) in [
+        ("attribute-a", "*.txt z-last=set a-first=set\n"),
+        ("attribute-b", "*.txt a-first=set z-last=set\n"),
+    ] {
+        fs::create_dir(repo.join(folder)).unwrap();
+        fs::write(repo.join(folder).join(".gitattributes"), attributes).unwrap();
+        fs::write(repo.join(folder).join("code.txt"), "before\n").unwrap();
+    }
+    let unusual = "nested/文件\tline\n[literal].txt";
+    for path in ["rename-source.txt", "type.txt", unusual] {
+        fs::write(repo.join(path), "before\n").unwrap();
+    }
+    fs::write(repo.join("binary.dat"), b"before\0binary\n").unwrap();
+    fs::write(
+        repo.join(".gitattributes"),
+        "*.rs proof-kind=source\nnested/* proof-kind=nested\n*.dat -text\n",
+    )
+    .unwrap();
+    let outside = temp.path().join("outside-secret");
+    fs::write(&outside, "must not be read through a symlink\n").unwrap();
+    symlink("auth.rs", repo.join("link")).unwrap();
+    git(repo, &["add", "."]);
+    git(repo, &["commit", "-m", "capture fixtures"]);
+    fs::write(
+        repo.join(".git/capture-config"),
+        "[diff]\n algorithm = patience\n",
+    )
+    .unwrap();
+    git(repo, &["config", "include.path", "capture-config"]);
+    fs::write(
+        repo.join(".git/info/attributes"),
+        "auth.rs proof-extra=value\n",
+    )
+    .unwrap();
+
+    fs::write(repo.join("auth.rs"), "fn auth() { staged(); }\n").unwrap();
+    git(repo, &["add", "auth.rs"]);
+    fs::write(repo.join("auth.rs"), "fn auth() { unstaged(); }\n").unwrap();
+    fs::write(repo.join("pool.rs"), "fn pool() { changed(); }\n").unwrap();
+    git(repo, &["mv", "rename-source.txt", "renamed.txt"]);
+    fs::write(repo.join("rename-source.txt"), "recreated original path\n").unwrap();
+    fs::write(repo.join("binary.dat"), b"after\0binary\n").unwrap();
+    fs::write(repo.join(unusual), "after\n").unwrap();
+    for folder in ["attribute-a", "attribute-b"] {
+        fs::write(repo.join(folder).join("code.txt"), "after\n").unwrap();
+    }
+    fs::write(repo.join("untracked 文件.txt"), "new file\n").unwrap();
+    fs::remove_file(repo.join("type.txt")).unwrap();
+    symlink(&outside, repo.join("type.txt")).unwrap();
+    fs::remove_file(repo.join("link")).unwrap();
+    symlink(&outside, repo.join("link")).unwrap();
+    symlink(&outside, repo.join("untracked-link")).unwrap();
+
+    let changes = proof.changes(&workspace.id).unwrap();
+    assert!(changes.files.iter().any(|file| file.old_path.is_some()));
+    assert_eq!(
+        changes
+            .files
+            .iter()
+            .filter(|file| file.path == "auth.rs")
+            .count(),
+        2
+    );
+    let expected: Vec<_> = changes
+        .files
+        .iter()
+        .map(|file| {
+            proof
+                .file_diff(&workspace.id, &file.path, file.side)
+                .unwrap()
+        })
+        .collect();
+    let index = fs::read(repo.join(".git/index")).unwrap();
+    let job = proof
+        .prepare_ai_task(AiRequest {
+            amend: false,
+            provider: AgentKind::Codex,
+            task: AiTask::Review,
+            scope: AiScope::Local {
+                workspace_id: workspace.id.clone(),
+                expected_token: changes.token,
+                files: None,
+            },
+        })
+        .unwrap();
+    assert_eq!(job.diffs.len(), expected.len());
+    for (actual, expected) in job.diffs.iter().zip(&expected) {
+        assert_eq!(
+            actual.guard, expected.guard,
+            "{} {:?}",
+            actual.path, actual.side
+        );
+        let stable = |diff: &FileDiff| {
+            let mut value = serde_json::to_value(diff).unwrap();
+            let fields = value.as_object_mut().unwrap();
+            fields.remove("id");
+            fields.remove("capturedAt");
+            value
+        };
+        assert_eq!(
+            stable(actual),
+            stable(expected),
+            "{} {:?}",
+            actual.path,
+            actual.side
+        );
+        assert!(!actual.patch.contains("must not be read through a symlink"));
+    }
+    assert_eq!(fs::read(repo.join(".git/index")).unwrap(), index);
+    assert_eq!(
+        fs::read_to_string(outside).unwrap(),
+        "must not be read through a symlink\n"
+    );
+}
+
+#[test]
+fn batch_capture_rejects_changes_to_earlier_later_and_shared_inputs() {
+    use std::cell::Cell;
+    for mutation in ["earlier", "later", "config", "attributes", "index", "head"] {
+        let (_temp, mut proof, workspace) = fixture();
+        let repo = Path::new(&workspace.path);
+        fs::write(
+            repo.join(".git/capture-config"),
+            "[diff]\n algorithm = patience\n",
+        )
+        .unwrap();
+        git(repo, &["config", "include.path", "capture-config"]);
+        fs::write(
+            repo.join(".git/info/attributes"),
+            "auth.rs proof-extra=before\n",
+        )
+        .unwrap();
+        let head = git(repo, &["rev-parse", "HEAD"]);
+        let tree = git(repo, &["rev-parse", "HEAD^{tree}"]);
+        let next_head = git(
+            repo,
+            &["commit-tree", &tree, "-p", &head, "-m", "next head"],
+        );
+        let request = request(&proof, &workspace, AiTask::Review);
+        let changed = Cell::new(false);
+        let result = proof.prepare_ai_task_with_progress(request, &|progress| {
+            if progress.completed != Some(1) || changed.replace(true) {
+                return;
+            }
+            match mutation {
+                "earlier" => {
+                    fs::write(repo.join("auth.rs"), "fn auth() { external(); }\n").unwrap()
+                }
+                "later" => fs::write(repo.join("pool.rs"), "fn pool() { external(); }\n").unwrap(),
+                "config" => fs::write(
+                    repo.join(".git/capture-config"),
+                    "[diff]\n algorithm = histogram\n",
+                )
+                .unwrap(),
+                "attributes" => fs::write(
+                    repo.join(".git/info/attributes"),
+                    "auth.rs proof-extra=after\n",
+                )
+                .unwrap(),
+                "index" => {
+                    git(repo, &["add", "auth.rs"]);
+                }
+                "head" => {
+                    git(repo, &["update-ref", "HEAD", &next_head]);
+                }
+                _ => unreachable!(),
+            }
+        });
+        assert!(
+            changed.get(),
+            "{mutation}: fixture must interrupt an actual capture"
+        );
+        assert_eq!(result.err().unwrap().code, "STALE_CONTENT", "{mutation}");
+        assert!(!proof.has_active_ai_task());
+        assert!(proof
+            .ai_review_reports(&workspace.id, "local")
+            .unwrap()
+            .is_empty());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn batch_capture_shares_git_metadata_queries_for_one_hundred_plain_files() {
+    use std::os::unix::fs::PermissionsExt;
+    let (temp, mut proof, workspace) = fixture();
+    let repo = Path::new(&workspace.path);
+    for index in 0..100 {
+        fs::write(repo.join(format!("capture-{index:03}.txt")), "before\n").unwrap();
+    }
+    git(repo, &["add", "."]);
+    git(repo, &["commit", "-m", "hundred files"]);
+    for index in 0..100 {
+        fs::write(repo.join(format!("capture-{index:03}.txt")), "after\n").unwrap();
+    }
+    let wrapper = temp.path().join("count-git");
+    let calls = temp.path().join("count-git.calls");
+    fs::write(
+        &wrapper,
+        r#"#!/bin/sh
+kind=other
+for arg in "$@"; do
+ case "$arg" in
+  rev-parse|symbolic-ref|status|config|check-attr|diff|--version)
+   kind="$arg"
+   break
+   ;;
+ esac
+done
+printf '%s\n' "$kind" >> "$0.calls"
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_ATTR_NOSYSTEM=1
+exec /usr/bin/git -c core.attributesFile=/dev/null "$@"
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o700)).unwrap();
+    let mut preferences = proof.preferences().unwrap();
+    preferences.git_path = wrapper.to_str().unwrap().into();
+    proof.set_preferences(preferences).unwrap();
+    let displayed = proof
+        .file_diff(&workspace.id, "capture-000.txt", Side::Unstaged)
+        .unwrap();
+    let request = request(&proof, &workspace, AiTask::Review);
+    fs::write(&calls, "").unwrap();
+    let job = proof.prepare_ai_task(request).unwrap();
+    let recorded = fs::read_to_string(calls).unwrap();
+    let calls: Vec<_> = recorded.lines().collect();
+    assert_eq!(job.diffs.len(), 100);
+    assert_eq!(
+        calls.iter().filter(|command| **command == "diff").count(),
+        100
+    );
+    for command in ["status", "config", "check-attr", "symbolic-ref"] {
+        let count = calls
+            .iter()
+            .filter(|captured| **captured == command)
+            .count();
+        assert!(count <= 5, "{command} repeated {count} times for 100 files");
+    }
+    assert!(
+        calls.len() <= 150,
+        "100 patches spawned {} Git processes",
+        calls.len()
+    );
+    assert!(
+        proof.snapshot(&displayed.id).is_ok(),
+        "AI evidence must not evict the editor's current snapshot"
+    );
+}
+
+#[test]
+fn batch_capture_cancellation_releases_task_capacity_and_keeps_git_unchanged() {
+    let (_temp, mut proof, workspace) = fixture();
+    let repo = Path::new(&workspace.path);
+    let before = proof.changes(&workspace.id).unwrap().token;
+    let index = fs::read(repo.join(".git/index")).unwrap();
+    let cancellation = ReadCancellation::default();
+    let input = request(&proof, &workspace, AiTask::Review);
+    let result = cancellation.run(|| {
+        proof.prepare_ai_task_with_progress(input, &|progress| {
+            if progress.path.is_some() {
+                cancellation.cancel();
+            }
+        })
+    });
+    assert_eq!(result.err().unwrap().code, "READ_CANCELLED");
+    assert!(!proof.has_active_ai_task());
+    assert_eq!(fs::read(repo.join(".git/index")).unwrap(), index);
+    assert_eq!(proof.changes(&workspace.id).unwrap().token, before);
+    let job = proof
+        .prepare_ai_task(request(&proof, &workspace, AiTask::Review))
+        .unwrap();
+    assert_eq!(job.diffs.len(), 2);
+}
+
+#[test]
+fn batch_capture_uses_linked_worktree_identity_index_and_content() {
+    let (temp, mut proof, workspace) = fixture();
+    let repo = Path::new(&workspace.path);
+    let linked = temp.path().join("linked");
+    git(
+        repo,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "capture-linked",
+            linked.to_str().unwrap(),
+            "HEAD",
+        ],
+    );
+    fs::write(linked.join("auth.rs"), "fn auth() { linked_only(); }\n").unwrap();
+    let linked_workspace = proof.open_workspace(linked.to_str().unwrap()).unwrap();
+    proof.set_trust(&linked_workspace.id, true).unwrap();
+    let displayed = proof
+        .file_diff(&linked_workspace.id, "auth.rs", Side::Unstaged)
+        .unwrap();
+    let primary_index = fs::read(Path::new(&workspace.git_dir).join("index")).unwrap();
+    let linked_index = fs::read(Path::new(&linked_workspace.git_dir).join("index")).unwrap();
+    let primary_content = fs::read(repo.join("auth.rs")).unwrap();
+    let job = proof
+        .prepare_ai_task(request(&proof, &linked_workspace, AiTask::Review))
+        .unwrap();
+    assert_eq!(job.diffs.len(), 1);
+    assert_eq!(job.diffs[0].token, displayed.token);
+    assert_eq!(job.diffs[0].workspace_id, linked_workspace.id);
+    assert!(job.diffs[0].base.ends_with(":capture-linked"));
+    assert!(job.diffs[0].patch.contains("linked_only"));
+    assert!(!job.diffs[0].patch.contains("allow(true)"));
+    assert_eq!(
+        fs::read(Path::new(&workspace.git_dir).join("index")).unwrap(),
+        primary_index
+    );
+    assert_eq!(
+        fs::read(Path::new(&linked_workspace.git_dir).join("index")).unwrap(),
+        linked_index
+    );
+    assert_eq!(fs::read(repo.join("auth.rs")).unwrap(), primary_content);
+}
+
+#[test]
+fn batch_capture_keeps_file_and_diff_line_limits() {
+    for limit in ["file_bytes", "diff_lines"] {
+        let (_temp, mut proof, workspace) = fixture();
+        let repo = Path::new(&workspace.path);
+        let path = repo.join("auth.rs");
+        if limit == "file_bytes" {
+            fs::File::create(&path)
+                .unwrap()
+                .set_len(32 * 1024 * 1024 + 1)
+                .unwrap();
+        } else {
+            fs::write(&path, "new line\n".repeat(100_001)).unwrap();
+        }
+        let index = fs::read(repo.join(".git/index")).unwrap();
+        let result = proof.prepare_ai_task(request(&proof, &workspace, AiTask::Review));
+        assert_eq!(result.err().unwrap().code, "DIFF_READ_LIMIT", "{limit}");
+        assert!(!proof.has_active_ai_task());
+        assert_eq!(fs::read(repo.join(".git/index")).unwrap(), index);
+    }
+}

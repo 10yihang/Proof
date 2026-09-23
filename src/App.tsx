@@ -2084,6 +2084,7 @@ export default function App({
           >
             {(repositoryVisited || tab === "repository") && (
               <RepositoryView
+                active={tab === "repository"}
                 actions={gitActions}
                 key={changes.workspace.id}
                 onOpenDiff={openHistoryDiff}

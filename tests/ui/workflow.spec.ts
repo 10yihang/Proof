@@ -2171,6 +2171,7 @@ async function openFixture(
                 historyCount: 0,
                 hasMore: false,
               };
+            if (command === "history_graph_version") return graph.snapshotId;
             if (command === "commit_graph") return graph;
             if (command === "compare_commit")
               return {
@@ -3862,6 +3863,11 @@ test("History graph preserves connected lanes across virtual scrolling", async (
     .click();
   const graph = page.getByRole("listbox", { name: "提交列表与分支关系" });
   const rows = graph.getByRole("option");
+  // The fixture's unchanged HEAD is in segment 8 and is automatically
+  // revealed. Select row 1 explicitly before testing its offscreen retention.
+  await expect(rows.first()).toBeVisible();
+  await graph.press("Home");
+  await expect(rows.first()).toHaveAttribute("aria-posinset", "1");
   await rows.first().click();
   await expectJoinedGraphRows(rows);
   await graph.evaluate((element) => {
@@ -4170,8 +4176,7 @@ test("Branch comparison opens a Diff tab and an older file response cannot repla
   await expect(panel.locator(".compare-empty")).toContainText("没有文件差异");
   await page.getByRole("button", { name: "返回 History", exact: true }).click();
   const branch = page
-    .locator(".repository-refs .repo-ref")
-    .filter({ hasText: "feature/" })
+    .locator('.repository-refs .repo-ref[title*="feature/"]')
     .first();
   await branch.click({ button: "right" });
   await page

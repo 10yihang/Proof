@@ -1,5 +1,25 @@
 # Git 操作性能测量
 
+## 2026-09-23：Local AI 准备阶段的重复 Git 查询
+
+针对 100 个文件各修改一行的复现，优化前 Local Grouping / Review / AI Commit 通过 UI File Diff 链路逐文件读取整个仓库的 status、refs、Index、配置和 attributes。现在批量复用前后两轮 guard 的共享输入，仍按原规则检查每个路径的原始字节、权限及 rename 来源，仍由 Git 为每个文件生成原始 patch。AI 使用共用构建器但不把证据注册到 UI snapshot cache。
+
+下列 Git 进程数由 Git TRACE2 统计，计数只覆盖 `prepare_ai_task`，不包含夹具创建、前置 Changes 读取或 Agent 推理。所有夹具都是新的临时仓库，没有 remote；普通文件无自定义 attributes。基准和固定的优化前源码、Release 可执行文件存放在 `.artifacts/ai-preparation-performance/`。
+
+| 文件数 | 优化前 Git 进程 | 优化后 Git 进程 | 优化前 / 后 status |
+| ---: | ---: | ---: | ---: |
+| 10 | 153 | 43 | 13 / 3 |
+| 100 | 1,323 | 133 | 103 / 3 |
+| 1,000 | 未重测 | 1,033 | 未重测 / 3 |
+
+不启用 TRACE2 的三次独立夹具测量，100 文件准备耗时中位数从 **9.103 秒降至 1.330 秒**（减少约 85%）；10 文件从 1.062 秒降至 0.335 秒。1,000 文件优化后中位数 11.711 秒，没有补测优化前值，也不作推算。这些时间仅包含 Release Core 准备输入，不包含模型推理、UI 绘制或项目冷启动。计时期间停止其他测试 / 编译；早期受并行测试影响的一组测量单独保留，不用于此处结论。
+
+优化后的固定部分为 33 次查询（status 3、config 5、check-attr 5、rev-parse 12、symbolic-ref 5、Git version 3）；其余每文件 1 次 canonical diff。100 文件减少 1,190 个 Git 进程，约 90%。保留单文件 patch 查询是为了复用现有 rename、binary、类型变化、路径与读取上限语义，没有通过拆分一个拼接 Diff 猜测文件归属。
+
+特殊情况：Git 多路径 `check-attr --all` 的属性顺序受此前路径影响，直接散列批量输出会使新旧 token 不一致。零或一个 attribute 的路径可以直接复用批量结果；多个 attributes 的路径回退到单路径读取。其余仓库身份、refs、Index、配置和全局 status 查询仍然共享。此类项目的进程数会高于表中的普通文件夹具。
+
+逐个清单条目的 patch 与 canonical Git 输出核对，优化前后的 patch SHA-256 一致。新增回归约束元数据查询次数、UI snapshot 保留、混合两侧、特殊文件与 token 一致性；捕获中途改变文件、配置 / attributes、Index 或 HEAD 时必须拒绝任务，并保留取消、Linked worktree 与读取上限。方法细节见同目录基准报告；完整 Rust 回归 333 passed / 12 ignored，cargo check、Clippy 与本次 Rust 文件格式检查通过。
+
 ## 范围
 
 `scripts/measure-git-baseline.py` 通过真实 Release Core 的测试 NDJSON 驱动测量 Changes、无 Core 缓存的 File Diff，以及 Stage / Unstage。计时从写出请求到完整解析响应，包含传输与 JSON；不包含 WebView、点击处理、操作后的界面刷新或绘制。

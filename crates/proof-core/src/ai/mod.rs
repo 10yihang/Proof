@@ -300,13 +300,49 @@ impl Proof {
                 }
                 let mut keys = HashSet::new();
                 let total = selected.len();
-                for file in selected {
-                    emit(AiProgress::capture(&file.path, diffs.len(), total));
+                for file in &selected {
                     crate::check_read_cancellation()?;
                     if !keys.insert((file.path.clone(), file.side.as_str())) {
                         return Err(invalid("Duplicate input file"));
                     }
-                    let diff = self.file_diff(workspace_id, &file.path, file.side)?;
+                    let path = crate::git::checked_path(&workspace, &file.path)?;
+                    if std::fs::symlink_metadata(path).is_ok_and(|metadata| {
+                        metadata.is_file() && metadata.len() > 32 * 1024 * 1024
+                    }) {
+                        return Err(diff_read_limit());
+                    }
+                }
+                // A batch shares repository/ref/index/config reads, but retains
+                // every file's raw-content guard and canonical single-file patch.
+                let git = self.git()?;
+                let guards = git.capture_file_guards(&workspace, &selected)?;
+                for (file, guard) in selected.iter().zip(guards) {
+                    emit(AiProgress::capture(&file.path, diffs.len(), total));
+                    crate::check_read_cancellation()?;
+                    let patch = git
+                        .patch_for_read(&workspace, file, crate::diff_load::read_limit(true))
+                        .map_err(|error| {
+                            if error.code == "DIFF_OUTPUT_LIMIT" {
+                                diff_read_limit()
+                            } else {
+                                error
+                            }
+                        })?;
+                    if crate::diff_load::load_reason(&patch, true).is_some() {
+                        return Err(diff_read_limit());
+                    }
+                    let diff = self.build_file_diff(
+                        &workspace,
+                        file,
+                        guard,
+                        patch,
+                        before.operation.clone(),
+                    )?;
+                    // Keep the same per-file owned-payload bound as file_diff,
+                    // without cloning or registering AI evidence in the UI cache.
+                    if diff.retained_bytes() > 64 * 1024 * 1024 {
+                        return Err(diff_read_limit());
+                    }
                     if let Some(id) = files
                         .as_ref()
                         .and_then(|fs| {
@@ -320,6 +356,14 @@ impl Proof {
                         }
                     }
                     add_diff(&mut diffs, &mut bytes, diff)?;
+                }
+                let after = git.capture_file_guards(&workspace, &selected)?;
+                if diffs
+                    .iter()
+                    .zip(after)
+                    .any(|(diff, after)| diff.guard != after.token)
+                {
+                    return Err(Error::stale());
                 }
                 if self.changes(workspace_id)?.token != before.token {
                     return Err(Error::stale());
@@ -385,6 +429,13 @@ impl Proof {
             amend_head,
         })
     }
+}
+fn diff_read_limit() -> Error {
+    Error::new(
+        "DIFF_READ_LIMIT",
+        "此 Diff 超过读取上限，请使用外部 Git 工具查看。",
+        "Patch exceeds the bounded reader limit",
+    )
 }
 fn check_count(files: &[ChangedFile]) -> Result<()> {
     if files.is_empty() {

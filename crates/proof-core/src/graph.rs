@@ -23,6 +23,28 @@ pub(crate) struct GraphSnapshot {
 }
 
 impl Proof {
+    /// Cheap change detection for a renderer's cached history. Include tags,
+    /// non-current local/remote branches and topology overrides, not only HEAD.
+    /// Each renderer compares its own version, so one window cannot consume
+    /// another window's invalidation.
+    pub fn history_graph_version(&self, workspace_id: &str) -> Result<String> {
+        let workspace = self.store.workspace(workspace_id)?;
+        let git = self.git()?;
+        let refs = git.query(
+            &workspace,
+            &["for-each-ref", "--format=%(refname)%00%(objectname)"],
+        )?;
+        let head = git.head(&workspace)?.unwrap_or_default();
+        let branch = git.branch(&workspace)?.unwrap_or_default();
+        let shape = graph_shape(&git, &workspace)?;
+        Ok(fingerprint(&[
+            &refs,
+            head.as_bytes(),
+            branch.as_bytes(),
+            shape.fingerprint.as_bytes(),
+        ]))
+    }
+
     /// The root object IDs and ref labels are captured once. Later pages walk
     /// the same commits even if an external process moves or removes a branch.
     pub fn commit_graph(

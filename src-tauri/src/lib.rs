@@ -281,9 +281,9 @@ fn dispatch_with_progress(
         let job =
             session(core, data_epoch)?.prepare_history_fetch(string(&args, "workspaceId")?)?;
         if let Some(job) = job {
-            job.execute()?;
+            let refs_changed = job.execute()?;
             drop(session(core, data_epoch)?);
-            return Ok(serde_json::json!(true));
+            return Ok(serde_json::json!(refs_changed));
         }
         return Ok(serde_json::json!(false));
     }
@@ -523,6 +523,9 @@ fn dispatch_with_progress(
             args["offset"].as_u64().unwrap_or(0) as usize,
             args["path"].as_str(),
         )?),
+        "history_graph_version" => {
+            serde_json::to_value(proof.history_graph_version(string(&args, "workspaceId")?)?)
+        }
         "commit_graph" => serde_json::to_value(proof.commit_graph(
             string(&args, "workspaceId")?,
             args["snapshotId"].as_str(),

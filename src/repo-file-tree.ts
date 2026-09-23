@@ -38,7 +38,12 @@ export function repoTreeRows(
       if (slash < 0) direct.push(path);
       else {
         const name = rest.slice(0, slash);
-        folders.set(name, [...(folders.get(name) ?? []), path]);
+        let files = folders.get(name);
+        if (!files) {
+          files = [];
+          folders.set(name, files);
+        }
+        files.push(path);
       }
     }
     for (const [name, files] of [...folders].sort(([a], [b]) =>

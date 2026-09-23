@@ -26,6 +26,7 @@ import type {
 } from "../types";
 import { repoTreeRows } from "../repo-file-tree";
 import { formatSize, toDiskEol } from "../editor-text";
+import { EditorRefreshLane, LatestEditorRead } from "../editor-refresh";
 import { fileKind } from "../file-kind";
 import { languageLabel } from "../syntax";
 import { relativeTime } from "../relative-time";
@@ -59,7 +60,7 @@ export function EditorView({
   workspaceId: string;
   fontSize: number;
   trusted: boolean;
-  /** 仅在本页可见时响应快捷键。 */
+  /** 仅在本页可见时响应快捷键和刷新外部变更。 */
   active: boolean;
   /** 本地变更文件列表，用于树内 Git 状态角标。 */
   changedFiles?: ChangedFile[];
@@ -100,8 +101,23 @@ export function EditorView({
   const surface = useRef<TextSurfaceHandle | null>(null);
   const listParent = useRef<HTMLDivElement>(null);
   // 供异步回调读取最新文档/状态，避免闭包陈旧。
-  const live = useRef({ doc, dirty, saving, selected, eol });
-  live.current = { doc, dirty, saving, selected, eol };
+  const live = useRef({
+    doc,
+    dirty,
+    saving,
+    selected,
+    eol,
+    active,
+    loadingFile,
+  });
+  live.current = { doc, dirty, saving, selected, eol, active, loadingFile };
+  const refreshScope = useRef<{
+    workspaceId: string;
+    files: EditorRefreshLane;
+    document: EditorRefreshLane;
+    reads: LatestEditorRead<TextFileContent>;
+    syncVisibility: () => void;
+  } | null>(null);
 
   const rows = useMemo(
     () => repoTreeRows(files ?? [], search, expandedFolders),
@@ -128,22 +144,147 @@ export function EditorView({
   }, [changedFiles]);
 
   const refreshFiles = useCallback(async () => {
-    try {
-      setFiles(await request<string[]>("list_files", { workspaceId }));
-    } catch (cause) {
-      setError(uiMessage(asError(cause).message));
-    }
-  }, [request, workspaceId]);
+    await refreshScope.current?.files.flush();
+  }, []);
+
+  // Keep dirty text and undo history mounted. Only native reads are suspended
+  // while another tab is active or the application window is hidden.
   useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    const reads = new LatestEditorRead<TextFileContent>();
+    const isVisible = () => live.current.active && !document.hidden;
+    const scope = {
+      workspaceId,
+      reads,
+      files: new EditorRefreshLane(async () => {
+        try {
+          const next = await request<string[]>("list_files", { workspaceId });
+          if (disposed) return;
+          if (!isVisible()) {
+            scope.syncVisibility();
+            scope.files.invalidate();
+            return;
+          }
+          setFiles((previous) =>
+            previous?.length === next.length &&
+            previous.every((path, index) => path === next[index])
+              ? previous
+              : next,
+          );
+        } catch (cause) {
+          if (disposed) return;
+          if (!isVisible()) {
+            scope.syncVisibility();
+            scope.files.invalidate();
+          } else setError(uiMessage(asError(cause).message));
+        }
+      }),
+      document: new EditorRefreshLane(async () => {
+        const current = live.current.doc;
+        if (!current || current.revision || current.workspaceId !== workspaceId)
+          return;
+        const gen = generation.current;
+        try {
+          const fresh = await reads.read(() =>
+            request<TextFileContent>("read_text_file", {
+              workspaceId,
+              path: current.path,
+            }),
+          );
+          if (disposed || !fresh || gen !== generation.current) return;
+          const now = live.current.doc;
+          if (!now || now.path !== current.path || now.revision) return;
+          if (!isVisible() || live.current.saving || live.current.loadingFile) {
+            scope.syncVisibility();
+            scope.document.invalidate();
+            return;
+          }
+          if (fresh.fingerprint === now.fingerprint) return;
+          if (live.current.dirty) {
+            setStaleExternal(true);
+            return;
+          }
+          ++generation.current;
+          ++loadSeq.current;
+          live.current.doc = fresh;
+          setDoc(fresh);
+          setEol(fresh.eol === "crlf" ? "crlf" : "lf");
+          setError(null);
+        } catch {
+          // Keep an invalidation that failed after leaving the tab. Visible
+          // failures await the next event, avoiding an automatic retry loop.
+          if (!disposed && !isVisible()) {
+            scope.syncVisibility();
+            scope.document.invalidate();
+          }
+        }
+      }),
+      syncVisibility() {
+        reads.setEnabled(isVisible());
+        scope.files.setEnabled(isVisible());
+        scope.document.setEnabled(
+          isVisible() && !live.current.saving && !live.current.loadingFile,
+        );
+      },
+    };
+    refreshScope.current = scope;
+    ++generation.current;
     setFiles(null);
     setSelected(null);
     setDoc(null);
     setError(null);
-    void refreshFiles();
-  }, [refreshFiles]);
+    setDirty(false);
+    setSaving(false);
+    setLoadingFile(false);
+    setStaleExternal(false);
+    setStaleDialog(false);
+    setPendingRevision(null);
+    scope.files.invalidate();
+    scope.syncVisibility();
+    const visibilityChanged = () => scope.syncVisibility();
+    document.addEventListener("visibilitychange", visibilityChanged);
+    void listen<string>("workspace-invalidated", (event) => {
+      if (disposed || event.payload !== workspaceId) return;
+      // Read visibility at event time as well as after React's active prop effect.
+      scope.syncVisibility();
+      scope.files.invalidate();
+      scope.document.invalidate();
+    }).then((stop) => {
+      if (disposed) stop();
+      else unlisten = stop;
+    });
+    return () => {
+      disposed = true;
+      ++generation.current;
+      scope.files.dispose();
+      scope.document.dispose();
+      reads.dispose();
+      if (refreshScope.current === scope) refreshScope.current = null;
+      document.removeEventListener("visibilitychange", visibilityChanged);
+      unlisten?.();
+    };
+  }, [request, workspaceId]);
+  useEffect(() => {
+    refreshScope.current?.syncVisibility();
+  }, [active, saving, loadingFile]);
+
+  function readDocument(path: string, revision?: string | null) {
+    const scope = refreshScope.current;
+    if (!scope || scope.workspaceId !== workspaceId)
+      return Promise.resolve(undefined);
+    return scope.reads.read(() =>
+      request<TextFileContent>("read_text_file", {
+        workspaceId,
+        path,
+        revision,
+      }),
+    );
+  }
 
   async function openPath(path: string) {
     const gen = ++generation.current;
+    refreshScope.current?.document.setEnabled(false);
     setSelected(path);
     setDoc(null);
     setError(null);
@@ -151,11 +292,8 @@ export function EditorView({
     setStaleExternal(false);
     setLoadingFile(true);
     try {
-      const content = await request<TextFileContent>("read_text_file", {
-        workspaceId,
-        path,
-      });
-      if (gen !== generation.current) return;
+      const content = await readDocument(path);
+      if (!content || gen !== generation.current) return;
       ++loadSeq.current;
       setDoc(content);
       setEol(content.eol === "crlf" ? "crlf" : "lf");
@@ -172,15 +310,12 @@ export function EditorView({
     const path = live.current.selected;
     if (!path) return;
     const gen = ++generation.current;
+    refreshScope.current?.document.setEnabled(false);
     setError(null);
     setLoadingFile(true);
     try {
-      const content = await request<TextFileContent>("read_text_file", {
-        workspaceId,
-        path,
-        revision,
-      });
-      if (gen !== generation.current) return;
+      const content = await readDocument(path, revision);
+      if (!content || gen !== generation.current) return;
       ++loadSeq.current;
       setDoc(content);
       setEol(content.eol === "crlf" ? "crlf" : "lf");
@@ -203,6 +338,10 @@ export function EditorView({
     if (!current || current.revision || !current.editable) return;
     if (!live.current.dirty || live.current.saving) return;
     const text = raw ?? surface.current?.getValue() ?? "";
+    const gen = ++generation.current;
+    const scope = refreshScope.current;
+    live.current.saving = true;
+    scope?.document.setEnabled(false);
     setSaving(true);
     setError(null);
     try {
@@ -212,17 +351,31 @@ export function EditorView({
         content: toDiskEol(text, live.current.eol),
         expectedFingerprint: current.fingerprint,
       });
-      surface.current?.markSaved();
-      setDoc({ ...current, fingerprint: saved.fingerprint, size: saved.size });
-      setDirty(false);
+      if (scope !== refreshScope.current || gen !== generation.current) return;
+      // Edits made while saving remain dirty; only the submitted text is saved.
+      if (surface.current?.getValue() === text) {
+        surface.current.markSaved();
+        setDirty(false);
+      }
+      const next = {
+        ...current,
+        fingerprint: saved.fingerprint,
+        size: saved.size,
+      };
+      live.current.doc = next;
+      setDoc(next);
       setStaleExternal(false);
       onChanged();
     } catch (cause) {
+      if (scope !== refreshScope.current || gen !== generation.current) return;
       const failure = asError(cause);
       if (failure.code === "STALE_CONTENT") setStaleDialog(true);
       else setError(uiMessage(failure.message));
     } finally {
-      setSaving(false);
+      if (scope === refreshScope.current) {
+        live.current.saving = false;
+        setSaving(false);
+      }
     }
   }
 
@@ -231,6 +384,10 @@ export function EditorView({
     const current = live.current.doc;
     if (!current || live.current.saving) return;
     const text = surface.current?.getValue() ?? "";
+    const gen = ++generation.current;
+    const scope = refreshScope.current;
+    live.current.saving = true;
+    scope?.document.setEnabled(false);
     setSaving(true);
     setError(null);
     try {
@@ -240,15 +397,29 @@ export function EditorView({
         content: toDiskEol(text, live.current.eol),
         expectedFingerprint: null,
       });
-      surface.current?.markSaved();
-      setDoc({ ...current, fingerprint: saved.fingerprint, size: saved.size });
-      setDirty(false);
+      if (scope !== refreshScope.current || gen !== generation.current) return;
+      // Edits made while saving remain dirty; only the submitted text is saved.
+      if (surface.current?.getValue() === text) {
+        surface.current.markSaved();
+        setDirty(false);
+      }
+      const next = {
+        ...current,
+        fingerprint: saved.fingerprint,
+        size: saved.size,
+      };
+      live.current.doc = next;
+      setDoc(next);
       setStaleExternal(false);
       onChanged();
     } catch (cause) {
-      setError(uiMessage(asError(cause).message));
+      if (scope === refreshScope.current && gen === generation.current)
+        setError(uiMessage(asError(cause).message));
     } finally {
-      setSaving(false);
+      if (scope === refreshScope.current) {
+        live.current.saving = false;
+        setSaving(false);
+      }
     }
   }
 
@@ -323,6 +494,7 @@ export function EditorView({
   }
 
   const handleDirtyChange = useCallback((value: boolean) => {
+    live.current.dirty = value;
     setDirty(value);
     if (value) setEditTick((tick) => tick + 1);
   }, []);
@@ -360,48 +532,6 @@ export function EditorView({
     return () => window.removeEventListener("keydown", handler);
     // save 经 live ref 读取最新状态，只需随 active 重挂。
   }, [active]);
-
-  // 外部变更：刷新文件列表；当前文件按指纹比对决定静默重载或提示。
-  useEffect(() => {
-    let disposed = false;
-    let unlisten: (() => void) | undefined;
-    void listen<string>("workspace-invalidated", (event) => {
-      if (event.payload !== workspaceId) return;
-      void refreshFiles();
-      const current = live.current.doc;
-      if (
-        !current ||
-        current.revision ||
-        live.current.saving ||
-        !live.current.selected
-      )
-        return;
-      const path = current.path;
-      void request<TextFileContent>("read_text_file", { workspaceId, path })
-        .then((fresh) => {
-          const now = live.current.doc;
-          if (!now || now.path !== path || now.revision) return;
-          if (fresh.fingerprint === now.fingerprint) return;
-          if (live.current.dirty) {
-            setStaleExternal(true);
-            return;
-          }
-          ++generation.current;
-          ++loadSeq.current;
-          setDoc(fresh);
-          setEol(fresh.eol === "crlf" ? "crlf" : "lf");
-          setError(null);
-        })
-        .catch(() => undefined);
-    }).then((stop) => {
-      if (disposed) stop();
-      else unlisten = stop;
-    });
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
-  }, [request, workspaceId, refreshFiles]);
 
   // 历史栏：打开且有选中文件时加载该文件的提交历史。
   useEffect(() => {

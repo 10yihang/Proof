@@ -174,6 +174,7 @@ fn dispatch(proof: &mut Proof, command: &str, a: &Value) -> Result<Value, Error>
             s("expectedRevision")
         )?),
         "observer_file_context" => json!(proof.observer_file_context(s("workspaceId"), s("path"))?),
+        "history_graph_version" => json!(proof.history_graph_version(s("workspaceId"))?),
         "commit_graph" => json!(proof.commit_graph(
             s("workspaceId"),
             a["snapshotId"].as_str(),
@@ -275,8 +276,7 @@ fn dispatch(proof: &mut Proof, command: &str, a: &Value) -> Result<Value, Error>
         )?),
         "history_auto_fetch" => {
             if let Some(job) = proof.prepare_history_fetch(s("workspaceId"))? {
-                job.execute()?;
-                json!(true)
+                json!(job.execute()?)
             } else {
                 json!(false)
             }

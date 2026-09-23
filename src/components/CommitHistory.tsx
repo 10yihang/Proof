@@ -43,10 +43,12 @@ import {
   GRAPH_ROW_CENTER,
   graphPath,
   graphX,
+  appendCommitGraph,
   layoutCommitGraph,
 } from "../commit-graph";
 
 export function CommitHistory({
+  active,
   changes,
   demo,
   scope,
@@ -59,6 +61,7 @@ export function CommitHistory({
   branches,
   branchNavigation,
 }: {
+  active: boolean;
   actions: HistoryActions;
   branches: BranchEntry[];
   branchNavigation: {
@@ -78,7 +81,10 @@ export function CommitHistory({
   const request = useRequest();
   const currentBranchLabel = useId();
   const [page, setPage] = useState<CommitGraphPage | null>(null);
-  const [commits, setCommits] = useState<CommitEntry[]>([]);
+  const [{ commits, graph }, setHistory] = useState(() => ({
+    commits: [] as CommitEntry[],
+    graph: layoutCommitGraph([]),
+  }));
   const [selected, setSelected] = useState<CommitEntry | null>(null);
   const [compared, setCompared] = useState<CommitEntry | null>(null);
   const [branchComparison, setBranchComparison] =
@@ -121,7 +127,22 @@ export function CommitHistory({
   const [busy, setBusy] = useState(false);
   const [revision, setRevision] = useState(0);
   const [search, setSearch] = useState("");
+  const [windowVisible, setWindowVisible] = useState(
+    document.visibilityState !== "hidden",
+  );
   const sequence = useRef(0);
+  // Includes quiet version checks, which deliberately do not show a loader.
+  // A page append must never race a check that may replace its snapshot.
+  const readingHistory = useRef(false);
+  useEffect(() => {
+    const changed = () => {
+      // Invalidate a reply immediately, before React runs effect cleanup.
+      if (document.visibilityState === "hidden") sequence.current++;
+      setWindowVisible(document.visibilityState !== "hidden");
+    };
+    document.addEventListener("visibilitychange", changed);
+    return () => document.removeEventListener("visibilitychange", changed);
+  }, []);
   const scroll = useRef<HTMLDivElement>(null);
   const locateAfterLoad = useRef<string | null>(null);
   useEffect(() => {
@@ -129,6 +150,7 @@ export function CommitHistory({
   }, [changes.workspace.id]);
   const columnHeader = useRef<HTMLDivElement>(null);
   const viewIdentity = useRef("");
+  const loadedRequest = useRef("");
   const loadedCommits = useRef(commits);
   loadedCommits.current = commits;
   const scrollAnchor = useRef<{
@@ -146,20 +168,50 @@ export function CommitHistory({
   }, [commits]);
   useEffect(() => {
     const generation = ++sequence.current;
+    // Keep the navigation state while hidden, but defer expensive page walks.
+    // Only a completed request marks this exact Git view as clean.
+    if (!active || !windowVisible) {
+      readingHistory.current = false;
+      setBusy(false);
+      return;
+    }
+    readingHistory.current = true;
     const identity = `${changes.workspace.id}:${scope}:${demo}`;
     const preserve =
       viewIdentity.current === identity && loadedCommits.current.length > 0;
     viewIdentity.current = identity;
-    setBusy(true);
-    setError(null);
     if (!preserve) {
+      loadedRequest.current = "";
       setPage(null);
-      setCommits([]);
+      setHistory({ commits: [], graph: layoutCommitGraph([]) });
       setSelected(null);
       setCompared(null);
       setParent(0);
     }
     const load = async () => {
+      // Bind the cached graph to a version read *before* its capture. Entry or
+      // focus only checks this cheap token; a no-op never flashes the loader.
+      // A failed version read leaves the previous graph and its key intact.
+      const version = demo
+        ? "demo"
+        : await request<string>("history_graph_version", {
+            workspaceId: changes.workspace.id,
+          });
+      if (sequence.current !== generation) return null;
+      const requestKey = JSON.stringify([
+        identity,
+        version,
+        changes.head,
+        changes.branch,
+        revision,
+        actions.graphRevision,
+      ]);
+      if (loadedRequest.current === requestKey) {
+        setError(null);
+        return null;
+      }
+      setBusy(true);
+      setError(null);
       let value = demo
         ? demoGraphPage(scope)
         : await request<CommitGraphPage>("commit_graph", {
@@ -184,11 +236,12 @@ export function CommitHistory({
         if (!value.commits.length) break;
         all.push(...value.commits);
       }
-      return { ...value, commits: all };
+      return { value: { ...value, commits: all }, requestKey };
     };
     void load()
-      .then((value) => {
-        if (sequence.current !== generation) return;
+      .then((loaded) => {
+        if (!loaded || sequence.current !== generation) return;
+        const { value, requestKey } = loaded;
         if (preserve && scroll.current) {
           const top = scroll.current.scrollTop;
           const row = loadedCommits.current[Math.floor(top / GRAPH_ROW_HEIGHT)];
@@ -215,7 +268,11 @@ export function CommitHistory({
           }
         }
         setPage(value);
-        setCommits(value.commits);
+        setHistory({
+          commits: value.commits,
+          graph: layoutCommitGraph(value.commits),
+        });
+        loadedRequest.current = requestKey;
         setSelected(
           (previous) =>
             (preserve &&
@@ -239,12 +296,17 @@ export function CommitHistory({
         }
       })
       .finally(() => {
-        if (sequence.current === generation) setBusy(false);
+        if (sequence.current === generation) {
+          readingHistory.current = false;
+          setBusy(false);
+        }
       });
     return () => {
       sequence.current++;
     };
   }, [
+    active,
+    windowVisible,
     changes.workspace.id,
     changes.head,
     changes.branch,
@@ -252,9 +314,9 @@ export function CommitHistory({
     scope,
     revision,
     actions.graphRevision,
+    actions.revision,
   ]);
 
-  const graph = useMemo(() => layoutCommitGraph(commits), [commits]);
   const query = search.trim().toLowerCase();
   const matches = useMemo(
     () =>
@@ -322,8 +384,10 @@ export function CommitHistory({
     select(target);
   }
   async function more() {
-    if (!page || busy) return;
+    if (!active || !windowVisible || !page || busy || readingHistory.current)
+      return;
     const generation = sequence.current;
+    readingHistory.current = true;
     setBusy(true);
     setError(null);
     try {
@@ -334,12 +398,18 @@ export function CommitHistory({
         scope,
       });
       if (generation !== sequence.current) return;
-      setCommits((previous) => [...previous, ...next.commits]);
+      setHistory((previous) => ({
+        commits: [...previous.commits, ...next.commits],
+        graph: appendCommitGraph(previous.graph, next.commits),
+      }));
       setPage(next);
     } catch (cause) {
       if (generation === sequence.current) setError(asError(cause));
     } finally {
-      if (generation === sequence.current) setBusy(false);
+      if (generation === sequence.current) {
+        readingHistory.current = false;
+        setBusy(false);
+      }
     }
   }
   function focusHead(index: number) {

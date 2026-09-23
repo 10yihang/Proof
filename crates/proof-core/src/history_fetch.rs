@@ -49,7 +49,17 @@ pub struct HistoryFetch {
     _permit: FetchPermit,
 }
 impl HistoryFetch {
-    pub fn execute(self) -> Result<()> {
+    /// Returns whether the refs changed, not merely whether Fetch ran. A
+    /// partial fetch can move refs before another remote fails; the graph must
+    /// still invalidate in that case. Automatic Fetch has no error UI.
+    pub fn execute(self) -> Result<bool> {
+        let refs = || {
+            self.git.query(
+                &self.workspace,
+                &["for-each-ref", "--format=%(refname)%00%(objectname)"],
+            )
+        };
+        let before = refs()?;
         let mut first_error = None;
         for remote in &self.remotes {
             let mut command = self.git.command(&self.workspace)?;
@@ -90,7 +100,11 @@ impl HistoryFetch {
                 first_error.get_or_insert(error);
             }
         }
-        first_error.map_or(Ok(()), Err)
+        if before != refs()? {
+            Ok(true)
+        } else {
+            first_error.map_or(Ok(false), Err)
+        }
     }
 }
 

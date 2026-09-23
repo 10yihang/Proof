@@ -855,6 +855,251 @@ fn push_rejection_keeps_remote_history() {
     assert!(git(&peer, &["ls-remote", "origin", "refs/heads/main"]).starts_with(&remote_head));
 }
 #[test]
+fn merge_preserves_unrelated_unstaged_and_untracked_changes() {
+    for diverged in [false, true] {
+        let mut f = Fixture::new();
+        git(&f.repo, &["switch", "-c", "feature"]);
+        let feature = f.commit("feature.txt", "feature change\n");
+        git(&f.repo, &["switch", "main"]);
+        if diverged {
+            f.commit("main.txt", "main change\n");
+        }
+        fs::write(f.repo.join("code.txt"), "local edit\n").unwrap();
+        fs::write(f.repo.join("untracked.txt"), "local notes\n").unwrap();
+        let before = git(&f.repo, &["status", "--porcelain"]);
+
+        let result = f.run(action(Kind::Merge, Some("refs/heads/feature")));
+
+        assert!(result.ok, "{}", result.detail);
+        git(&f.repo, &["merge-base", "--is-ancestor", &feature, "HEAD"]);
+        assert_eq!(git(&f.repo, &["status", "--porcelain"]), before);
+        assert_eq!(git(&f.repo, &["show", "HEAD:code.txt"]), "initial");
+        assert_eq!(
+            fs::read_to_string(f.repo.join("code.txt")).unwrap(),
+            "local edit\n"
+        );
+        assert_eq!(
+            fs::read_to_string(f.repo.join("untracked.txt")).unwrap(),
+            "local notes\n"
+        );
+    }
+}
+
+#[test]
+fn cherry_pick_and_revert_preserve_unrelated_unstaged_and_untracked_changes() {
+    for kind in [Kind::CherryPick, Kind::Revert] {
+        let mut f = Fixture::new();
+        git(&f.repo, &["switch", "-c", "feature"]);
+        let feature = f.commit("feature.txt", "feature change\n");
+        if kind == Kind::CherryPick {
+            git(&f.repo, &["switch", "main"]);
+        }
+        let head = f.head();
+        fs::write(f.repo.join("code.txt"), "local edit\n").unwrap();
+        fs::write(f.repo.join("untracked.txt"), "local notes\n").unwrap();
+        let before = git(&f.repo, &["status", "--porcelain"]);
+
+        let result = f.run(action(kind, Some(&feature)));
+
+        assert!(result.ok, "{kind:?}: {}", result.detail);
+        assert_ne!(f.head(), head);
+        assert_eq!(
+            f.repo.join("feature.txt").exists(),
+            kind == Kind::CherryPick
+        );
+        assert_eq!(git(&f.repo, &["status", "--porcelain"]), before);
+        assert_eq!(git(&f.repo, &["show", "HEAD:code.txt"]), "initial");
+        assert_eq!(
+            fs::read_to_string(f.repo.join("code.txt")).unwrap(),
+            "local edit\n"
+        );
+        assert_eq!(
+            fs::read_to_string(f.repo.join("untracked.txt")).unwrap(),
+            "local notes\n"
+        );
+    }
+}
+
+#[test]
+fn pull_preserves_unrelated_unstaged_and_untracked_changes_for_every_strategy() {
+    for mode in ["ff-only", "merge", "rebase"] {
+        let mut f = Fixture::new();
+        let peer = f.remote();
+        if mode != "ff-only" {
+            f.commit("local.txt", "local commit\n");
+        }
+        fs::write(peer.join("remote.txt"), "remote change\n").unwrap();
+        git(&peer, &["add", "remote.txt"]);
+        git(&peer, &["commit", "-m", "Remote update"]);
+        git(&peer, &["push"]);
+        let remote = git(&peer, &["rev-parse", "HEAD"]);
+        fs::write(f.repo.join("code.txt"), "local edit\n").unwrap();
+        fs::write(f.repo.join("untracked.txt"), "local notes\n").unwrap();
+        let before = git(&f.repo, &["status", "--porcelain"]);
+
+        let result = f.remote_action(Kind::Pull, Some(mode));
+
+        assert!(result.ok, "{mode}: {}", result.detail);
+        git(&f.repo, &["merge-base", "--is-ancestor", &remote, "HEAD"]);
+        assert_eq!(git(&f.repo, &["status", "--porcelain"]), before);
+        assert_eq!(git(&f.repo, &["show", "HEAD:code.txt"]), "initial");
+        assert_eq!(
+            fs::read_to_string(f.repo.join("code.txt")).unwrap(),
+            "local edit\n"
+        );
+        assert_eq!(
+            fs::read_to_string(f.repo.join("untracked.txt")).unwrap(),
+            "local notes\n"
+        );
+    }
+}
+
+#[test]
+fn fast_forward_merge_and_pull_preserve_unrelated_staged_and_unstaged_changes() {
+    for kind in [Kind::Merge, Kind::Pull] {
+        let mut f = Fixture::new();
+        if kind == Kind::Pull {
+            f.remote();
+        }
+        git(&f.repo, &["switch", "-c", "feature"]);
+        let feature = f.commit("feature.txt", "feature change\n");
+        if kind == Kind::Pull {
+            git(&f.repo, &["push", "origin", "feature:main"]);
+        }
+        git(&f.repo, &["switch", "main"]);
+        fs::write(f.repo.join("code.txt"), "staged edit\n").unwrap();
+        git(&f.repo, &["add", "code.txt"]);
+        fs::write(f.repo.join("code.txt"), "unstaged edit\n").unwrap();
+        let before = git(&f.repo, &["status", "--porcelain"]);
+
+        let result = if kind == Kind::Pull {
+            f.remote_action(kind, None)
+        } else {
+            f.run(action(kind, Some("refs/heads/feature")))
+        };
+
+        assert!(result.ok, "{kind:?}: {}", result.detail);
+        assert_eq!(f.head(), feature);
+        assert_eq!(git(&f.repo, &["status", "--porcelain"]), before);
+        assert_eq!(git(&f.repo, &["show", "HEAD:code.txt"]), "initial");
+        assert_eq!(git(&f.repo, &["show", ":code.txt"]), "staged edit");
+        assert_eq!(
+            fs::read_to_string(f.repo.join("code.txt")).unwrap(),
+            "unstaged edit\n"
+        );
+    }
+}
+
+#[test]
+fn history_actions_report_git_rejections_without_overwriting_local_edits() {
+    for (kind, mode) in [
+        (Kind::Merge, None),
+        (Kind::CherryPick, None),
+        (Kind::Revert, None),
+        (Kind::Pull, Some("ff-only")),
+        (Kind::Pull, Some("merge")),
+        (Kind::Switch, None),
+        (Kind::CheckoutCommit, None),
+    ] {
+        let mut f = Fixture::new();
+        if kind == Kind::Pull {
+            f.remote();
+        }
+        git(&f.repo, &["switch", "-c", "feature"]);
+        let feature = f.commit("code.txt", "feature edit\n");
+        if kind == Kind::Pull {
+            git(&f.repo, &["push", "origin", "feature:main"]);
+        }
+        if kind != Kind::Revert {
+            git(&f.repo, &["switch", "main"]);
+        }
+        // Merge must still reject actual overwrites even if user config enables autostash.
+        git(&f.repo, &["config", "merge.autoStash", "true"]);
+        fs::write(f.repo.join("code.txt"), "local edit\n").unwrap();
+        let head = f.head();
+        let before = git(&f.repo, &["status", "--porcelain"]);
+        let staged = git(&f.repo, &["diff", "--cached"]);
+        let mut request = action(
+            kind,
+            Some(if matches!(kind, Kind::Merge | Kind::Switch) {
+                "refs/heads/feature"
+            } else {
+                &feature
+            }),
+        );
+        if kind == Kind::Pull {
+            request.target = None;
+            request.remote = Some("origin".into());
+            request.name = Some("main".into());
+            request.mode = mode.map(str::to_owned);
+        }
+
+        let result = f.run(request);
+
+        assert!(!result.ok, "{kind:?} {mode:?}: {}", result.detail);
+        assert!(result.detail.contains("code.txt"), "{}", result.detail);
+        assert_eq!(f.head(), head);
+        assert_eq!(git(&f.repo, &["status", "--porcelain"]), before);
+        assert_eq!(git(&f.repo, &["diff", "--cached"]), staged);
+        assert_eq!(
+            fs::read_to_string(f.repo.join("code.txt")).unwrap(),
+            "local edit\n"
+        );
+        assert!(git(&f.repo, &["stash", "list"]).is_empty());
+    }
+}
+
+#[test]
+fn merge_does_not_overwrite_an_obstructing_untracked_file() {
+    let mut f = Fixture::new();
+    git(&f.repo, &["switch", "-c", "feature"]);
+    f.commit("new.txt", "incoming content\n");
+    git(&f.repo, &["switch", "main"]);
+    fs::write(f.repo.join("new.txt"), "untracked content\n").unwrap();
+    let head = f.head();
+
+    let result = f.run(action(Kind::Merge, Some("refs/heads/feature")));
+
+    assert!(!result.ok);
+    assert!(result.detail.contains("new.txt"), "{}", result.detail);
+    assert_eq!(f.head(), head);
+    assert_eq!(git(&f.repo, &["status", "--porcelain"]), "?? new.txt");
+    assert_eq!(
+        fs::read_to_string(f.repo.join("new.txt")).unwrap(),
+        "untracked content\n"
+    );
+}
+
+#[test]
+fn commit_creating_actions_do_not_include_unrelated_staged_edits() {
+    for kind in [Kind::Merge, Kind::CherryPick, Kind::Revert] {
+        let mut f = Fixture::new();
+        git(&f.repo, &["switch", "-c", "feature"]);
+        let feature = f.commit("feature.txt", "feature change\n");
+        if kind != Kind::Revert {
+            git(&f.repo, &["switch", "main"]);
+            f.commit("main.txt", "main change\n");
+        }
+        fs::write(f.repo.join("code.txt"), "staged edit\n").unwrap();
+        git(&f.repo, &["add", "code.txt"]);
+        fs::write(f.repo.join("code.txt"), "unstaged edit\n").unwrap();
+        let head = f.head();
+        let before = git(&f.repo, &["status", "--porcelain"]);
+
+        let result = f.run(action(kind, Some(&feature)));
+
+        assert!(!result.ok, "{kind:?}: {}", result.detail);
+        assert_eq!(f.head(), head);
+        assert_eq!(git(&f.repo, &["status", "--porcelain"]), before);
+        assert_eq!(git(&f.repo, &["show", ":code.txt"]), "staged edit");
+        assert_eq!(
+            fs::read_to_string(f.repo.join("code.txt")).unwrap(),
+            "unstaged edit\n"
+        );
+    }
+}
+
+#[test]
 fn rebase_autostashes_dirty_worktree_and_replays_current_branch() {
     let mut f = Fixture::new();
     git(&f.repo, &["branch", "base"]);
@@ -879,14 +1124,6 @@ fn rebase_autostashes_dirty_worktree_and_replays_current_branch() {
     assert_eq!(fs::read_to_string(f.repo.join("local")).unwrap(), "dirty edit");
     assert_eq!(fs::read_to_string(f.repo.join("untracked")).unwrap(), "keep me");
     assert_eq!(git(&f.repo, &["status", "--porcelain"]), " M local\n?? untracked");
-    // 但 Merge 仍要求干净工作区（不随 rebase 放开）。
-    fs::write(f.repo.join("local"), "still dirty").unwrap();
-    assert_eq!(
-        f.prepare(action(Kind::Merge, Some("refs/heads/base")))
-            .unwrap_err()
-            .code,
-        "HISTORY_CLEAN_REQUIRED"
-    );
 }
 #[test]
 fn cherry_pick_revert_and_merge_parent_selection() {
@@ -948,10 +1185,13 @@ fn reset_modes_preserve_or_discard_exactly_as_previewed() {
 fn merge_conflicts_can_be_staged_and_continued_or_aborted() {
     for abort in [true, false] {
         let mut f = Fixture::new();
+        f.commit("local.txt", "committed content\n");
         git(&f.repo, &["switch", "-c", "feature"]);
         f.commit("code.txt", "feature\n");
         git(&f.repo, &["switch", "main"]);
         let original = f.commit("code.txt", "main\n");
+        fs::write(f.repo.join("local.txt"), "unrelated local edit\n").unwrap();
+        fs::write(f.repo.join("untracked.txt"), "local notes\n").unwrap();
         let result = f.run(action(Kind::Merge, Some("refs/heads/feature")));
         assert!(!result.ok);
         assert_eq!(result.operation.as_deref(), Some("Merge"));
@@ -984,6 +1224,18 @@ fn merge_conflicts_can_be_staged_and_continued_or_aborted() {
             .unwrap()
             .operation
             .is_none());
+        assert_eq!(
+            fs::read_to_string(f.repo.join("local.txt")).unwrap(),
+            "unrelated local edit\n"
+        );
+        assert_eq!(
+            fs::read_to_string(f.repo.join("untracked.txt")).unwrap(),
+            "local notes\n"
+        );
+        assert_eq!(
+            git(&f.repo, &["status", "--porcelain"]),
+            " M local.txt\n?? untracked.txt"
+        );
     }
 }
 #[test]
