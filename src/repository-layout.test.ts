@@ -22,6 +22,64 @@ function deferred() {
   return { promise, resolve, reject };
 }
 describe("repository layouts", () => {
+  it("fills missing card dimensions when reading a legacy layout without writing defaults", async () => {
+    const writes: RepositoryLayout[] = [];
+    const legacy: RepositoryLayout = {
+      sidebarWidth: 350,
+      contextWidth: 440,
+      sidebarOpen: false,
+      contextOpen: true,
+    };
+    const store = new RepositoryLayouts({
+      read: async () => legacy,
+      write: async (_, value) => {
+        writes.push(value);
+      },
+    });
+    await store.load(scope("a"));
+    expect(store.snapshot("a").value).toEqual({ ...defaults, ...legacy });
+    expect(writes).toEqual([]);
+    await store.update(scope("a"), { filesSidebarWidth: 310 });
+    expect(writes).toEqual([
+      { ...defaults, ...legacy, filesSidebarWidth: 310 },
+    ]);
+  });
+  it("merges queued page dimensions and rolls back only a failed final update", async () => {
+    const gate = deferred();
+    const writes: RepositoryLayout[] = [];
+    const saved = { ...defaults, historySidebarWidth: 306 };
+    const store = new RepositoryLayouts({
+      read: async () => saved,
+      write: async (_, value) => {
+        writes.push(value);
+        if (writes.length === 1) await gate.promise;
+        if (writes.length === 3) throw new Error("disk full");
+      },
+    });
+    await store.load(scope("a"));
+    const files = store.update(scope("a"), { filesSidebarWidth: 360 });
+    const history = store.update(scope("a", "linked-a"), {
+      historyDetailsHeight: 240,
+    });
+    const commit = store.update(scope("a"), { commitDetailsHeight: 420 });
+    expect(store.snapshot("a").value).toEqual({
+      ...saved,
+      filesSidebarWidth: 360,
+      historyDetailsHeight: 240,
+      commitDetailsHeight: 420,
+    });
+    gate.resolve();
+    await Promise.all([files, history, commit]);
+    expect(writes[1]).toEqual({
+      ...saved,
+      filesSidebarWidth: 360,
+      historyDetailsHeight: 240,
+    });
+    expect(writes[2]).toEqual({ ...writes[1], commitDetailsHeight: 420 });
+    expect(store.snapshot("a").value).toEqual(writes[1]);
+    expect(store.snapshot("a").error).not.toBeNull();
+    expect(store.snapshot("a").saving).toBe(false);
+  });
   it("retains saved intent while giving narrow windows usable code space", () => {
     const value = { ...defaults, sidebarWidth: 480, contextWidth: 520 };
     for (const width of [512, 640, 780, 781, 1024, 1101, 1280, 1440, 1920]) {

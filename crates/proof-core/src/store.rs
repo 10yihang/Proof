@@ -385,11 +385,16 @@ impl Store {
     fn validate_layout(layout: &RepositoryLayout) -> Result<()> {
         if !(180..=480).contains(&layout.sidebar_width)
             || !(240..=520).contains(&layout.context_width)
+            || !(160..=560).contains(&layout.history_sidebar_width)
+            || !(100..=640).contains(&layout.history_details_height)
+            || !(160..=560).contains(&layout.files_sidebar_width)
+            || !(160..=560).contains(&layout.files_history_width)
+            || !(160..=640).contains(&layout.commit_details_height)
         {
             return Err(Error::new(
                 "INVALID_LAYOUT",
-                "面板宽度超出支持范围。",
-                "Sidebar: 180–480 px; context: 240–520 px",
+                "面板尺寸超出支持范围。",
+                "Sidebar: 180–480 px; context: 240–520 px; history/files sidebars: 160–560 px; history details: 100–640 px; commit details: 160–640 px",
             ));
         }
         Ok(())

@@ -334,6 +334,31 @@ pub struct RepositoryLayout {
     pub sidebar_open: bool,
     /// None inherits the application's context-panel default.
     pub context_open: Option<bool>,
+    #[serde(default = "default_history_sidebar_width")]
+    pub history_sidebar_width: u16,
+    #[serde(default = "default_history_details_height")]
+    pub history_details_height: u16,
+    #[serde(default = "default_files_sidebar_width")]
+    pub files_sidebar_width: u16,
+    #[serde(default = "default_files_history_width")]
+    pub files_history_width: u16,
+    #[serde(default = "default_commit_details_height")]
+    pub commit_details_height: u16,
+}
+fn default_history_sidebar_width() -> u16 {
+    224
+}
+fn default_history_details_height() -> u16 {
+    180
+}
+fn default_files_sidebar_width() -> u16 {
+    240
+}
+fn default_files_history_width() -> u16 {
+    248
+}
+fn default_commit_details_height() -> u16 {
+    280
 }
 impl Default for RepositoryLayout {
     fn default() -> Self {
@@ -342,6 +367,11 @@ impl Default for RepositoryLayout {
             context_width: 300,
             sidebar_open: true,
             context_open: None,
+            history_sidebar_width: default_history_sidebar_width(),
+            history_details_height: default_history_details_height(),
+            files_sidebar_width: default_files_sidebar_width(),
+            files_history_width: default_files_history_width(),
+            commit_details_height: default_commit_details_height(),
         }
     }
 }

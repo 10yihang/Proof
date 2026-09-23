@@ -104,6 +104,11 @@ export interface RepositoryLayout {
   contextWidth: number;
   sidebarOpen: boolean;
   contextOpen: boolean | null;
+  historySidebarWidth?: number;
+  historyDetailsHeight?: number;
+  filesSidebarWidth?: number;
+  filesHistoryWidth?: number;
+  commitDetailsHeight?: number;
 }
 export interface CommitPreview {
   id: string;

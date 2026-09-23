@@ -980,6 +980,8 @@
   "仓库或工作区身份已变化，请重新打开并确认信任。": "Repository or Worktree identity changed. Reopen it and confirm trust.",
   "设置值超出支持范围。": "Setting is outside the supported range.",
   "面板宽度超出支持范围。": "Pane width is outside the supported range.",
+  "面板尺寸超出支持范围。": "Pane size is outside the supported range.",
+  "拖动调整大小；方向键微调；Esc 取消；双击恢复默认": "Drag or use arrow keys to resize; Esc cancels; double-click restores the default size",
   "Git 操作已完成；本地仓库记录已删除，因此未保存操作记录。": "Git operation completed. Local repository records were deleted, so its operation record was not saved.",
   "Agent 版本无法识别。": "Unrecognized Agent version.",
   "请先信任仓库，再授权观察。": "Trust the repository before authorizing observation.",

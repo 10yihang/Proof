@@ -6,7 +6,7 @@
 
 .app .history-page .repository-view,
 .app .files-page .editor-view {
-  gap: 12px;
+  gap: 0;
   min-width: 0;
   min-height: 0;
   overflow: visible;
@@ -15,6 +15,7 @@
 
 .app .history-page .repository-nav,
 .app .history-page .history-inspector,
+.app .history-page .history-graph-card,
 .app .history-page .repository-content:not(.is-history),
 .app .files-page :is(.editor-sidebar, .editor-main, .editor-history) {
   min-width: 0;
@@ -28,7 +29,8 @@
 
 /* The graph toolbar and table share one card; selection details live below it. */
 .app .history-page .repository-nav {
-  width: 224px;
+  width: 100%;
+  flex: 1;
   padding: 0 8px;
 }
 .app .history-page .repository-nav .sidebar-heading {
@@ -53,12 +55,16 @@
   padding: 20px;
   overflow: auto;
 }
+.app .history-page .history-graph-card {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+}
 .app .history-page .graph-toolbar {
   gap: 8px;
   padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-bottom: 0;
-  border-radius: var(--radius-card, 12px) var(--radius-card, 12px) 0 0;
+  border: 0;
+  border-radius: 0;
   background: var(--bg);
 }
 .app .history-page .graph-search {
@@ -68,15 +74,15 @@
   margin: 0;
 }
 .app .history-page .graph-error {
-  border-inline: 1px solid var(--border);
+  border-inline: 0;
 }
 .app .history-page .graph-table-wrap {
+  flex: 1;
   min-height: 0;
-  border: 1px solid var(--border);
-  border-top: 0;
-  border-radius: 0 0 var(--radius-card, 12px) var(--radius-card, 12px);
+  border: 0;
+  border-radius: 0;
   background: var(--bg);
-  box-shadow: var(--shadow-card);
+  box-shadow: none;
 }
 .app .history-page .graph-table-footer {
   flex-wrap: wrap;
@@ -85,8 +91,11 @@
   background: var(--bg);
 }
 .app .history-page .history-inspector {
-  margin-top: 12px;
+  flex: 1;
+  width: 100%;
+  margin: 0;
   padding-bottom: 12px;
+  overflow: auto;
 }
 .app .history-page .history-selection-header {
   padding: 12px 16px;
@@ -102,10 +111,12 @@
 
 /* Search, file navigation, and the code surface keep their own scroll areas. */
 .app .files-page .editor-sidebar {
-  width: 240px;
+  width: 100%;
+  flex: 1;
 }
 .app .files-page .editor-history {
-  width: 248px;
+  width: 100%;
+  flex: 1;
 }
 .app .files-page .editor-file-heading,
 .app .files-page .editor-titlebar,
@@ -149,13 +160,6 @@
 }
 
 @media (max-width: 1180px) {
-  .app .history-page .repository-nav,
-  .app .files-page .editor-sidebar {
-    width: 208px;
-  }
-  .app .files-page .editor-history {
-    width: 220px;
-  }
   .app .files-page .editor-titlebar {
     flex-wrap: wrap;
     gap: 6px;

@@ -1,6 +1,7 @@
 import { t } from "../i18n";
 import { useState, type ReactNode } from "react";
 import { FileTree } from "./FileTree";
+import { CardSplit } from "./CardSplit";
 import {
   type ChangedFile,
   type Changes,
@@ -33,27 +34,37 @@ export function CommitWorkspace({
   const [scope, setScope] = useState<"all" | Side>("all");
   return (
     <section className="commit-workspace" aria-label={t("Commit 工作区")}>
-      <section className="commit-stage-files" aria-label={t("选择提交文件")}>
-        <FileTree
-          files={changes.files}
-          selected={selected}
-          onSelect={onSelect}
-          search={search}
-          onSearch={setSearch}
-          searchId="commit-file-search"
-          loaded={loaded}
-          scope={scope}
-          onScope={setScope}
-          disabled={disabled}
-          onStage={onStage}
-          onDiscard={onDiscard}
-          onRecovery={onRecovery}
-          workspacePath={changes.workspace.path}
-        />
-      </section>
-      <aside className="commit-details" aria-label={t("提交说明与选项")}>
-        {children}
-      </aside>
+      <CardSplit
+        field="commitDetailsHeight"
+        orientation="vertical"
+        side="end"
+        contentMinSize={120}
+        label={t("提交说明与选项")}
+        panel={
+          <aside className="commit-details" aria-label={t("提交说明与选项")}>
+            {children}
+          </aside>
+        }
+      >
+        <section className="commit-stage-files" aria-label={t("选择提交文件")}>
+          <FileTree
+            files={changes.files}
+            selected={selected}
+            onSelect={onSelect}
+            search={search}
+            onSearch={setSearch}
+            searchId="commit-file-search"
+            loaded={loaded}
+            scope={scope}
+            onScope={setScope}
+            disabled={disabled}
+            onStage={onStage}
+            onDiscard={onDiscard}
+            onRecovery={onRecovery}
+            workspacePath={changes.workspace.path}
+          />
+        </section>
+      </CardSplit>
     </section>
   );
 }

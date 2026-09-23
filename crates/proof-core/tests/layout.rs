@@ -92,6 +92,11 @@ fn layout_shares_local_repository_survives_reopen_and_reset_preserves_work() {
         context_width: 410,
         sidebar_open: false,
         context_open: Some(true),
+        history_sidebar_width: 280,
+        history_details_height: 240,
+        files_sidebar_width: 300,
+        files_history_width: 320,
+        commit_details_height: 360,
     };
     proof.set_repository_layout(&a.id, layout.clone()).unwrap();
     assert_eq!(proof.repository_layout(&b.id).unwrap(), layout);
@@ -214,4 +219,108 @@ fn schema_three_migrates_without_replacing_existing_preferences() {
             .unwrap(),
         0
     );
+}
+
+#[test]
+fn legacy_layout_json_reads_card_defaults_without_rewriting_saved_value() {
+    let temp = tempfile::tempdir().unwrap();
+    let repo = temp.path().join("repo");
+    create_repo(&repo);
+    let data = temp.path().join("data");
+    let mut proof = Proof::open(&data).unwrap();
+    let workspace = proof.open_workspace(repo.to_str().unwrap()).unwrap();
+    let db = rusqlite::Connection::open(data.join("proof.sqlite3")).unwrap();
+    let legacy =
+        r#"{"sidebarWidth":350,"contextWidth":440,"sidebarOpen":false,"contextOpen":true}"#;
+    db.execute(
+        "INSERT INTO repository_layouts VALUES(?,?)",
+        rusqlite::params![workspace.repository_id, legacy],
+    )
+    .unwrap();
+    assert_eq!(
+        proof.repository_layout(&workspace.id).unwrap(),
+        RepositoryLayout {
+            sidebar_width: 350,
+            context_width: 440,
+            sidebar_open: false,
+            context_open: Some(true),
+            ..RepositoryLayout::default()
+        }
+    );
+    assert_eq!(
+        db.query_row(
+            "SELECT value FROM repository_layouts WHERE repository_id=?",
+            [&workspace.repository_id],
+            |row| row.get::<_, String>(0),
+        )
+        .unwrap(),
+        legacy
+    );
+    let mut unknown = serde_json::to_value(RepositoryLayout::default()).unwrap();
+    unknown["unexpectedPanelWidth"] = serde_json::json!(240);
+    assert!(serde_json::from_value::<RepositoryLayout>(unknown).is_err());
+}
+
+#[test]
+fn card_dimension_bounds_are_validated_on_write_and_read() {
+    let temp = tempfile::tempdir().unwrap();
+    let repo = temp.path().join("repo");
+    create_repo(&repo);
+    let data = temp.path().join("data");
+    let mut proof = Proof::open(&data).unwrap();
+    let workspace = proof.open_workspace(repo.to_str().unwrap()).unwrap();
+    let saved = RepositoryLayout::default();
+    proof
+        .set_repository_layout(&workspace.id, saved.clone())
+        .unwrap();
+    let db = rusqlite::Connection::open(data.join("proof.sqlite3")).unwrap();
+    for (field, min, max) in [
+        ("historySidebarWidth", 160, 560),
+        ("historyDetailsHeight", 100, 640),
+        ("filesSidebarWidth", 160, 560),
+        ("filesHistoryWidth", 160, 560),
+        ("commitDetailsHeight", 160, 640),
+    ] {
+        for value in [min, max] {
+            let mut valid = serde_json::to_value(&saved).unwrap();
+            valid[field] = serde_json::json!(value);
+            let valid: RepositoryLayout = serde_json::from_value(valid).unwrap();
+            proof
+                .set_repository_layout(&workspace.id, valid.clone())
+                .unwrap();
+            assert_eq!(proof.repository_layout(&workspace.id).unwrap(), valid);
+        }
+        proof
+            .set_repository_layout(&workspace.id, saved.clone())
+            .unwrap();
+        for value in [min - 1, max + 1] {
+            let mut invalid = serde_json::to_value(&saved).unwrap();
+            invalid[field] = serde_json::json!(value);
+            assert_eq!(
+                proof
+                    .set_repository_layout(
+                        &workspace.id,
+                        serde_json::from_value(invalid.clone()).unwrap(),
+                    )
+                    .unwrap_err()
+                    .code,
+                "INVALID_LAYOUT",
+                "{field}: {value}"
+            );
+            assert_eq!(proof.repository_layout(&workspace.id).unwrap(), saved);
+            db.execute(
+                "UPDATE repository_layouts SET value=? WHERE repository_id=?",
+                rusqlite::params![invalid.to_string(), workspace.repository_id],
+            )
+            .unwrap();
+            assert_eq!(
+                proof.repository_layout(&workspace.id).unwrap_err().code,
+                "INVALID_LAYOUT",
+                "stored {field}: {value}"
+            );
+            proof
+                .set_repository_layout(&workspace.id, saved.clone())
+                .unwrap();
+        }
+    }
 }

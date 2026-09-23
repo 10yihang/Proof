@@ -77,6 +77,7 @@ import { Settings } from "./components/Settings";
 import { RecoveryDialog } from "./components/RecoveryDialog";
 import { FileHistory } from "./components/FileHistory";
 import { ResizableWorkbench } from "./components/ResizableWorkbench";
+import { CardLayoutContext } from "./components/CardSplit";
 import { TerminalDrawer } from "./components/TerminalDrawer";
 import { useRepositoryLayout } from "./use-repository-layout";
 import { DiffCache, matchesGitBase } from "./diff-cache";
@@ -1658,7 +1659,7 @@ export default function App({
     else if (view === "commit") showCommit();
     else setTab(view);
   }
-  return (
+  const appContent = (
     <Tabs.Root
       value={workspaceView}
       onValueChange={(value) => {
@@ -2134,7 +2135,7 @@ export default function App({
                 tab === "commit" ? !focused : sidebarVisible && !compact
               }
               sidebarId={tab === "commit" ? "commit-files-pane" : "files-panel"}
-              gutterSize={tab === "changes" ? 12 : 4}
+              gutterSize={12}
               contextDocked={tab !== "commit" && contextOpen && !narrow}
               onChange={(partial) => {
                 void repositoryLayout.update(partial);
@@ -2972,6 +2973,11 @@ export default function App({
         </Modal>
       )}
     </Tabs.Root>
+  );
+  return (
+    <CardLayoutContext.Provider value={repositoryLayout}>
+      {appContent}
+    </CardLayoutContext.Provider>
   );
 }
 

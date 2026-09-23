@@ -1,3 +1,4 @@
+import { CardSplit } from "./CardSplit";
 import { DropdownMenuItem as MenuItem } from "./ui/dropdown-menu";
 import { Button } from "./ui/controls";
 import { t } from "../i18n";
@@ -160,7 +161,7 @@ export function RepositoryView({
       })
       .catch((e) => {
         if (!cancelled) onError(e);
-      })
+      });
     return () => {
       cancelled = true;
     };
@@ -197,9 +198,7 @@ export function RepositoryView({
         <Button
           className={`repo-ref ${branch.current ? "is-current" : ""} ${historyRef === `${branch.remote ? "remote" : "local"}:${branch.name}` ? "active" : ""}`}
           title={t(
-            branch.remote
-              ? "查看 {v0} 的本地历史"
-              : "查看 {v0} 的历史",
+            branch.remote ? "查看 {v0} 的本地历史" : "查看 {v0} 的历史",
             { v0: branch.name },
           )}
           onClick={(event) =>
@@ -253,10 +252,9 @@ export function RepositoryView({
           style={{ paddingLeft: `${indent}px` }}
           onClick={() => toggleRefGroup(node.path)}
           aria-expanded={!isCollapsed}
-          aria-label={t(
-            isCollapsed ? "展开 {v0} 分组" : "折叠 {v0} 分组",
-            { v0: node.path },
-          )}
+          aria-label={t(isCollapsed ? "展开 {v0} 分组" : "折叠 {v0} 分组", {
+            v0: node.path,
+          })}
         >
           {isCollapsed ? <CaretRight size={13} /> : <CaretDown size={13} />}
           <Folder size={14} />
@@ -277,122 +275,133 @@ export function RepositoryView({
 
   return (
     <main className="repository-view">
-      <aside className="repository-nav">
-        <span className="sidebar-heading">
-          <strong>{t("仓库与引用")}</strong>
-        </span>
-        <Button
-          className={section === "worktrees" ? "active" : ""}
-          onClick={() =>
-            onSection(section === "worktrees" ? "history" : "worktrees")
-          }
-        >
-          <HardDrives size={17} />
-          {t("Worktree")}
-          <span className="count-badge">{worktrees.length}</span>
-        </Button>
-        {section === "history" && (
-          <div className="repository-refs">
-            <div className="refs-heading">
-              <span>{t("本地分支")}</span>
-              <span>{branches.filter((branch) => !branch.remote).length}</span>
-            </div>
+      <CardSplit
+        field="historySidebarWidth"
+        label={t("仓库与引用")}
+        panel={
+          <aside className="repository-nav">
+            <span className="sidebar-heading">
+              <strong>{t("仓库与引用")}</strong>
+            </span>
             <Button
-              className={`repo-ref ${historyScope === "all" ? "active" : ""}`}
-              onClick={() => {
-                setHistoryScope("all");
-                setHistoryRef(null);
-              }}
+              className={section === "worktrees" ? "active" : ""}
+              onClick={() =>
+                onSection(section === "worktrees" ? "history" : "worktrees")
+              }
             >
-              <GitBranch size={15} />
-              <span>{t("所有分支")}</span>
+              <HardDrives size={17} />
+              {t("Worktree")}
+              <span className="count-badge">{worktrees.length}</span>
             </Button>
-            {sidebarTree.local.map((node) => renderSidebarNode(node, 0))}
-            {sidebarTree.remote.length > 0 && (
-              <>
+            {section === "history" && (
+              <div className="repository-refs">
                 <div className="refs-heading">
-                  <span>{t("远程引用")}</span>
-                  <span>{t("本地已知")}</span>
+                  <span>{t("本地分支")}</span>
+                  <span>
+                    {branches.filter((branch) => !branch.remote).length}
+                  </span>
                 </div>
-                {sidebarTree.remote.map((node) => renderSidebarNode(node, 0))}
-              </>
-            )}
-          </div>
-        )}
-        <div className="repository-meta" title={changes.gitVersion}>
-          <span>{t("Local repository")}</span>
-        </div>
-      </aside>
-      <section
-        className={`repository-content ${section === "history" ? "is-history" : ""}`}
-      >
-        {section !== "history" && (
-          <header className="repository-header">
-            <div>
-              <h2>Worktree</h2>
-              <p>{t("每个 worktree 的代码和审查进度独立保存。")}</p>
-            </div>
-          </header>
-        )}
-        <div className="repository-page" hidden={section !== "history"}>
-          {(historyVisited || section === "history") && (
-            <CommitHistory
-              actions={actions}
-              branches={branches}
-              branchNavigation={{
-                selected: branchAnchor,
-                compare: compareBranches,
-                show: (branch) => {
-                  chooseBranch(branch, false);
-                  onSection("history");
-                },
-              }}
-              changes={changes}
-              demo={demo}
-              onOpenDiff={onOpenDiff}
-              requestedComparison={comparison}
-              scope={historyScope}
-              scopeLabel={historyRef?.slice(historyRef.indexOf(":") + 1)}
-              onScope={(scope) => {
-                setComparison(null);
-                setHistoryScope(scope);
-                setHistoryRef(null);
-              }}
-              onBranches={setBranches}
-            />
-          )}
-        </div>
-        {section === "worktrees" && (
-          <div className="worktree-list">
-            {worktrees.map((tree) => (
-              <div key={tree.path} className="worktree-card">
-                <FolderOpen size={22} />
-                <div>
-                  <strong>{tree.branch ?? "Detached HEAD"}</strong>
-                  <code>{tree.path}</code>
-                  <small>
-                    {tree.head.slice(0, 8)}
-                    {tree.locked && t(" · 已锁定")}
-                  </small>
-                </div>
-                {tree.path === changes.workspace.path ? (
-                  <span className="tag active-tag">{t("当前 Worktree")}</span>
-                ) : (
-                  <Button
-                    className="button compact"
-                    disabled={demo}
-                    onClick={() => {
-                      void onOpen(tree.path);
-                    }}
-                  >
-                    {t("打开")}
-                  </Button>
+                <Button
+                  className={`repo-ref ${historyScope === "all" ? "active" : ""}`}
+                  onClick={() => {
+                    setHistoryScope("all");
+                    setHistoryRef(null);
+                  }}
+                >
+                  <GitBranch size={15} />
+                  <span>{t("所有分支")}</span>
+                </Button>
+                {sidebarTree.local.map((node) => renderSidebarNode(node, 0))}
+                {sidebarTree.remote.length > 0 && (
+                  <>
+                    <div className="refs-heading">
+                      <span>{t("远程引用")}</span>
+                      <span>{t("本地已知")}</span>
+                    </div>
+                    {sidebarTree.remote.map((node) =>
+                      renderSidebarNode(node, 0),
+                    )}
+                  </>
                 )}
               </div>
-            ))}
+            )}
+            <div className="repository-meta" title={changes.gitVersion}>
+              <span>{t("Local repository")}</span>
+            </div>
+          </aside>
+        }
+      >
+        <section
+          className={`repository-content ${section === "history" ? "is-history" : ""}`}
+        >
+          {section !== "history" && (
+            <header className="repository-header">
+              <div>
+                <h2>Worktree</h2>
+                <p>{t("每个 worktree 的代码和审查进度独立保存。")}</p>
+              </div>
+            </header>
+          )}
+          <div className="repository-page" hidden={section !== "history"}>
+            {(historyVisited || section === "history") && (
+              <CommitHistory
+                actions={actions}
+                branches={branches}
+                branchNavigation={{
+                  selected: branchAnchor,
+                  compare: compareBranches,
+                  show: (branch) => {
+                    chooseBranch(branch, false);
+                    onSection("history");
+                  },
+                }}
+                changes={changes}
+                demo={demo}
+                onOpenDiff={onOpenDiff}
+                requestedComparison={comparison}
+                scope={historyScope}
+                scopeLabel={historyRef?.slice(historyRef.indexOf(":") + 1)}
+                onScope={(scope) => {
+                  setComparison(null);
+                  setHistoryScope(scope);
+                  setHistoryRef(null);
+                }}
+                onBranches={setBranches}
+              />
+            )}
           </div>
-        )}
-      </section>
+          {section === "worktrees" && (
+            <div className="worktree-list">
+              {worktrees.map((tree) => (
+                <div key={tree.path} className="worktree-card">
+                  <FolderOpen size={22} />
+                  <div>
+                    <strong>{tree.branch ?? "Detached HEAD"}</strong>
+                    <code>{tree.path}</code>
+                    <small>
+                      {tree.head.slice(0, 8)}
+                      {tree.locked && t(" · 已锁定")}
+                    </small>
+                  </div>
+                  {tree.path === changes.workspace.path ? (
+                    <span className="tag active-tag">{t("当前 Worktree")}</span>
+                  ) : (
+                    <Button
+                      className="button compact"
+                      disabled={demo}
+                      onClick={() => {
+                        void onOpen(tree.path);
+                      }}
+                    >
+                      {t("打开")}
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      </CardSplit>
       {branchMenu && (
         <GitContextMenu
           x={branchMenu.x}

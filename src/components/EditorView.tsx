@@ -1,3 +1,4 @@
+import { CardSplit } from "./CardSplit";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { listen } from "@tauri-apps/api/event";
@@ -335,7 +336,16 @@ export function EditorView({
     if (staleDialog || error) return;
     const timer = setTimeout(() => void save(), 800);
     return () => clearTimeout(timer);
-  }, [autoSave, dirty, saving, editable, staleExternal, staleDialog, error, editTick]);
+  }, [
+    autoSave,
+    dirty,
+    saving,
+    editable,
+    staleExternal,
+    staleDialog,
+    error,
+    editTick,
+  ]);
 
   // ⌘S 在本页任何焦点位置都可保存（编辑器内由 Monaco action 捕获，不重复触发）。
   useEffect(() => {
@@ -443,413 +453,444 @@ export function EditorView({
 
   return (
     <section className="editor-view" aria-label={t("Files")}>
-      <aside className="editor-sidebar">
-        <div className="sidebar-heading editor-file-heading">
-          <div className="file-search editor-file-search">
-            <MagnifyingGlass size={15} />
-            <Input
-              aria-label={t("Filter files…")}
-              placeholder={t("Filter files…")}
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-            />
-          </div>
-          {trusted && (
-            <Button
-              className="icon-button"
-              aria-label={t("新建文件")}
-              title={t("新建文件")}
-              onClick={() => {
-                setNewName("");
-                setCreating(true);
-              }}
-            >
-              <FilePlus size={16} />
-            </Button>
-          )}
-        </div>
-        {creating && (
-          <div className="editor-create-row">
-            <FileText size={15} />
-            <input
-              autoFocus
-              placeholder={t("新文件路径，如 docs/note.md")}
-              value={newName}
-              onChange={(event) => setNewName(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.nativeEvent.isComposing) return;
-                if (event.key === "Enter") void createFile();
-                if (event.key === "Escape") setCreating(false);
-              }}
-              onBlur={() => setCreating(false)}
-            />
-          </div>
-        )}
-        <div className="editor-file-list" ref={listParent}>
-          {!files && error && (
-            <p className="editor-empty-hint" role="alert">
-              {error}
-            </p>
-          )}
-          {files && (
-            <div
-              style={{
-                height: virtualizer.getTotalSize(),
-                position: "relative",
-              }}
-            >
-              {virtualizer.getVirtualItems().map((item) => {
-                const row = rows[item.index];
-                const badge =
-                  row.kind === "file" ? badgeOf(statusByPath.get(row.path)) : null;
-                return (
-                  <div
-                    key={row.key}
-                    className={`editor-tree-row ${row.kind}`}
-                    style={{
-                      transform: `translateY(${item.start}px)`,
-                      paddingLeft: row.depth * 14 + 8,
-                    }}
-                  >
-                    {Array.from({ length: row.depth }, (_, guide) => (
-                      <i
-                        key={guide}
-                        className="editor-indent-guide"
-                        style={{ left: guide * 14 + 14 }}
-                      />
-                    ))}
-                    {renaming === row.path ? (
-                      <input
-                        className="editor-rename-input"
-                        autoFocus
-                        value={renameValue}
-                        onChange={(event) => setRenameValue(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (event.nativeEvent.isComposing) return;
-                          if (event.key === "Enter") void renameFile();
-                          if (event.key === "Escape") setRenaming(null);
+      <CardSplit
+        field="filesSidebarWidth"
+        label={t("Files")}
+        panel={
+          <aside className="editor-sidebar">
+            <div className="sidebar-heading editor-file-heading">
+              <div className="file-search editor-file-search">
+                <MagnifyingGlass size={15} />
+                <Input
+                  aria-label={t("Filter files…")}
+                  placeholder={t("Filter files…")}
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                />
+              </div>
+              {trusted && (
+                <Button
+                  className="icon-button"
+                  aria-label={t("新建文件")}
+                  title={t("新建文件")}
+                  onClick={() => {
+                    setNewName("");
+                    setCreating(true);
+                  }}
+                >
+                  <FilePlus size={16} />
+                </Button>
+              )}
+            </div>
+            {creating && (
+              <div className="editor-create-row">
+                <FileText size={15} />
+                <input
+                  autoFocus
+                  placeholder={t("新文件路径，如 docs/note.md")}
+                  value={newName}
+                  onChange={(event) => setNewName(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.nativeEvent.isComposing) return;
+                    if (event.key === "Enter") void createFile();
+                    if (event.key === "Escape") setCreating(false);
+                  }}
+                  onBlur={() => setCreating(false)}
+                />
+              </div>
+            )}
+            <div className="editor-file-list" ref={listParent}>
+              {!files && error && (
+                <p className="editor-empty-hint" role="alert">
+                  {error}
+                </p>
+              )}
+              {files && (
+                <div
+                  style={{
+                    height: virtualizer.getTotalSize(),
+                    position: "relative",
+                  }}
+                >
+                  {virtualizer.getVirtualItems().map((item) => {
+                    const row = rows[item.index];
+                    const badge =
+                      row.kind === "file"
+                        ? badgeOf(statusByPath.get(row.path))
+                        : null;
+                    return (
+                      <div
+                        key={row.key}
+                        className={`editor-tree-row ${row.kind}`}
+                        style={{
+                          transform: `translateY(${item.start}px)`,
+                          paddingLeft: row.depth * 14 + 8,
                         }}
-                        onBlur={() => setRenaming(null)}
-                      />
-                    ) : (
-                      <button
-                        className={`editor-tree-item ${row.kind === "file" && row.path === selected ? "selected" : ""}`}
-                        onClick={() =>
-                          row.kind === "folder"
-                            ? toggleFolder(row.key)
-                            : void openPath(row.path)
+                      >
+                        {Array.from({ length: row.depth }, (_, guide) => (
+                          <i
+                            key={guide}
+                            className="editor-indent-guide"
+                            style={{ left: guide * 14 + 14 }}
+                          />
+                        ))}
+                        {renaming === row.path ? (
+                          <input
+                            className="editor-rename-input"
+                            autoFocus
+                            value={renameValue}
+                            onChange={(event) =>
+                              setRenameValue(event.target.value)
+                            }
+                            onKeyDown={(event) => {
+                              if (event.nativeEvent.isComposing) return;
+                              if (event.key === "Enter") void renameFile();
+                              if (event.key === "Escape") setRenaming(null);
+                            }}
+                            onBlur={() => setRenaming(null)}
+                          />
+                        ) : (
+                          <button
+                            className={`editor-tree-item ${row.kind === "file" && row.path === selected ? "selected" : ""}`}
+                            onClick={() =>
+                              row.kind === "folder"
+                                ? toggleFolder(row.key)
+                                : void openPath(row.path)
+                            }
+                          >
+                            {row.kind === "folder" ? (
+                              <>
+                                {row.expanded ? (
+                                  <CaretDown size={12} />
+                                ) : (
+                                  <CaretRight size={12} />
+                                )}
+                                {row.expanded ? (
+                                  <FolderOpen size={15} />
+                                ) : (
+                                  <Folder size={15} />
+                                )}
+                                <span>{row.label}</span>
+                              </>
+                            ) : (
+                              (() => {
+                                const kind = fileKind(row.path);
+                                return (
+                                  <>
+                                    <kind.Icon
+                                      size={15}
+                                      className={kind.className}
+                                    />
+                                    <span>{row.label}</span>
+                                    {badge && (
+                                      <i
+                                        className="editor-git-badge"
+                                        data-badge={badge}
+                                      >
+                                        {badge}
+                                      </i>
+                                    )}
+                                    {row.path === selected && dirty && (
+                                      <i
+                                        className="editor-dirty-dot"
+                                        title={t("未保存的更改")}
+                                      />
+                                    )}
+                                  </>
+                                );
+                              })()
+                            )}
+                          </button>
+                        )}
+                        {row.kind === "file" &&
+                          trusted &&
+                          renaming !== row.path && (
+                            <span className="editor-row-actions">
+                              <button
+                                aria-label={t("重命名")}
+                                title={t("重命名")}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  startRename(row.path);
+                                }}
+                              >
+                                <PencilSimple size={12} />
+                              </button>
+                              <button
+                                aria-label={t("删除")}
+                                title={t("删除")}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setDeleting(row.path);
+                                }}
+                              >
+                                <Trash size={12} />
+                              </button>
+                            </span>
+                          )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {files && !rows.length && (
+                <p className="editor-empty-hint">{t("没有匹配的文件")}</p>
+              )}
+            </div>
+          </aside>
+        }
+      >
+        <CardSplit
+          field="filesHistoryWidth"
+          side="end"
+          label={t("文件历史")}
+          hidden={!historyOpen || !selected}
+          panel={
+            <aside className="editor-history">
+              <div className="editor-history-head">
+                <span>{t("文件历史")}</span>
+                <Button
+                  className="icon-button"
+                  aria-label={t("关闭文件历史")}
+                  onClick={() => setHistoryOpen(false)}
+                >
+                  <X size={14} />
+                </Button>
+              </div>
+              {historyError && (
+                <p className="editor-empty-hint" role="alert">
+                  {historyError}
+                </p>
+              )}
+              {!historyEntries && !historyError && (
+                <p className="editor-empty-hint">{t("正在读取提交关系…")}</p>
+              )}
+              <ul>
+                {historyEntries?.map((entry, index) => (
+                  <li key={entry.oid}>
+                    <button
+                      className={`editor-history-item ${viewingRevision === entry.oid ? "selected" : ""}`}
+                      onClick={() => askRevision(entry.oid)}
+                    >
+                      <span className="editor-history-top">
+                        <code>{entry.oid.slice(0, 8)}</code>
+                        {index === 0 && (
+                          <em className="editor-history-latest">{t("最新")}</em>
+                        )}
+                      </span>
+                      <span className="editor-history-subject">
+                        {entry.subject}
+                      </span>
+                      <small>
+                        {entry.author} · {relativeTime(entry.date)}
+                      </small>
+                    </button>
+                  </li>
+                ))}
+                {historyEntries && !historyEntries.length && (
+                  <li className="editor-empty-hint">{t("没有提交历史")}</li>
+                )}
+              </ul>
+            </aside>
+          }
+        >
+          <div className="editor-main">
+            {selected && doc && (
+              <header className="editor-titlebar">
+                {(() => {
+                  const kind = fileKind(doc.path);
+                  return <kind.Icon size={16} className={kind.className} />;
+                })()}
+                <strong className="editor-path" title={doc.path}>
+                  {doc.path.split("/").map((segment, index, all) => (
+                    <span key={index} className="editor-path-segment">
+                      {index > 0 && <CaretRight size={10} />}
+                      <span
+                        className={
+                          index === all.length - 1
+                            ? "editor-path-file"
+                            : "editor-path-dir"
                         }
                       >
-                        {row.kind === "folder" ? (
-                          <>
-                            {row.expanded ? (
-                              <CaretDown size={12} />
-                            ) : (
-                              <CaretRight size={12} />
-                            )}
-                            {row.expanded ? (
-                              <FolderOpen size={15} />
-                            ) : (
-                              <Folder size={15} />
-                            )}
-                            <span>{row.label}</span>
-                          </>
-                        ) : (
-                          (() => {
-                            const kind = fileKind(row.path);
-                            return (
-                              <>
-                                <kind.Icon size={15} className={kind.className} />
-                                <span>{row.label}</span>
-                                {badge && (
-                                  <i
-                                    className="editor-git-badge"
-                                    data-badge={badge}
-                                  >
-                                    {badge}
-                                  </i>
-                                )}
-                                {row.path === selected && dirty && (
-                                  <i
-                                    className="editor-dirty-dot"
-                                    title={t("未保存的更改")}
-                                  />
-                                )}
-                              </>
-                            );
-                          })()
-                        )}
-                      </button>
-                    )}
-                    {row.kind === "file" && trusted && renaming !== row.path && (
-                      <span className="editor-row-actions">
-                        <button
-                          aria-label={t("重命名")}
-                          title={t("重命名")}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            startRename(row.path);
-                          }}
-                        >
-                          <PencilSimple size={12} />
-                        </button>
-                        <button
-                          aria-label={t("删除")}
-                          title={t("删除")}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setDeleting(row.path);
-                          }}
-                        >
-                          <Trash size={12} />
-                        </button>
+                        {segment}
                       </span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          {files && !rows.length && (
-            <p className="editor-empty-hint">{t("没有匹配的文件")}</p>
-          )}
-        </div>
-      </aside>
-      <div className="editor-main">
-        {selected && doc && (
-          <header className="editor-titlebar">
-            {(() => {
-              const kind = fileKind(doc.path);
-              return <kind.Icon size={16} className={kind.className} />;
-            })()}
-            <strong className="editor-path" title={doc.path}>
-              {doc.path.split("/").map((segment, index, all) => (
-                <span key={index} className="editor-path-segment">
-                  {index > 0 && <CaretRight size={10} />}
-                  <span
-                    className={
-                      index === all.length - 1
-                        ? "editor-path-file"
-                        : "editor-path-dir"
-                    }
+                    </span>
+                  ))}
+                </strong>
+                {(() => {
+                  const badge = badgeOf(statusByPath.get(doc.path));
+                  return (
+                    badge &&
+                    !viewingRevision && (
+                      <i className="editor-git-badge" data-badge={badge}>
+                        {badge}
+                      </i>
+                    )
+                  );
+                })()}
+                {dirty && (
+                  <i className="editor-dirty-dot" title={t("未保存的更改")} />
+                )}
+                {viewingRevision && (
+                  <span className="editor-revision-badge">
+                    {viewingRevision.slice(0, 8)}
+                  </span>
+                )}
+                <span className="toolbar-spacer" />
+                {viewingRevision && (
+                  <Button
+                    className="button compact"
+                    onClick={() => void viewRevision(null)}
                   >
-                    {segment}
-                  </span>
-                </span>
-              ))}
-            </strong>
-            {(() => {
-              const badge = badgeOf(statusByPath.get(doc.path));
-              return (
-                badge &&
-                !viewingRevision && (
-                  <i className="editor-git-badge" data-badge={badge}>
-                    {badge}
-                  </i>
-                )
-              );
-            })()}
-            {dirty && (
-              <i className="editor-dirty-dot" title={t("未保存的更改")} />
+                    {t("返回当前版本")}
+                  </Button>
+                )}
+                {editable && (
+                  <Button
+                    className="button compact"
+                    disabled={!dirty || saving}
+                    title={t("保存文件")}
+                    onClick={() => void save()}
+                  >
+                    <FloppyDisk size={15} />
+                    {t("保存")}
+                  </Button>
+                )}
+                <Button
+                  className={`icon-button ${historyOpen ? "selected" : ""}`}
+                  aria-label={t("文件历史")}
+                  title={t("文件历史")}
+                  aria-pressed={historyOpen}
+                  onClick={() => setHistoryOpen((value) => !value)}
+                >
+                  <ClockCounterClockwise size={17} />
+                </Button>
+              </header>
             )}
             {viewingRevision && (
-              <span className="editor-revision-badge">
-                {viewingRevision.slice(0, 8)}
-              </span>
-            )}
-            <span className="toolbar-spacer" />
-            {viewingRevision && (
-              <Button
-                className="button compact"
-                onClick={() => void viewRevision(null)}
-              >
-                {t("返回当前版本")}
-              </Button>
-            )}
-            {editable && (
-              <Button
-                className="button compact"
-                disabled={!dirty || saving}
-                title={t("保存文件")}
-                onClick={() => void save()}
-              >
-                <FloppyDisk size={15} />
-                {t("保存")}
-              </Button>
-            )}
-            <Button
-              className={`icon-button ${historyOpen ? "selected" : ""}`}
-              aria-label={t("文件历史")}
-              title={t("文件历史")}
-              aria-pressed={historyOpen}
-              onClick={() => setHistoryOpen((value) => !value)}
-            >
-              <ClockCounterClockwise size={17} />
-            </Button>
-          </header>
-        )}
-        {viewingRevision && (
-          <p className="editor-banner" role="status">
-            {t("正在查看历史版本 {v0}", {
-              v0: viewingRevision.slice(0, 8),
-            })}
-          </p>
-        )}
-        {staleExternal && !viewingRevision && (
-          <p className="editor-banner warning" role="alert">
-            {t("文件已在磁盘上更改。")}
-            <Button
-              className="button compact"
-              onClick={() => void openPath(selected!)}
-            >
-              {t("重新加载")}
-            </Button>
-          </p>
-        )}
-        {!trusted && doc && !viewingRevision && (
-          <p className="editor-banner" role="status">
-            {t("此文件当前不可编辑")}
-          </p>
-        )}
-        <div className="editor-body">
-          {!selected && (
-            <div className="editor-placeholder">
-              <span className="editor-placeholder-icon">
-                <FileText size={26} />
-              </span>
-              <p className="editor-placeholder-title">
-                {t("选择要查看或编辑的文件")}
+              <p className="editor-banner" role="status">
+                {t("正在查看历史版本 {v0}", {
+                  v0: viewingRevision.slice(0, 8),
+                })}
               </p>
-              <p className="editor-placeholder-hint">{t("⌘P 快速筛选文件")}</p>
-            </div>
-          )}
-          {selected && loadingFile && !doc && (
-            <div className="editor-placeholder">
-              <p>{t("正在打开代码视图…")}</p>
-            </div>
-          )}
-          {selected && error && (
-            <div className="editor-placeholder" role="alert">
-              <p>{error}</p>
-              <Button
-                className="button compact"
-                onClick={() => void openPath(selected)}
-              >
-                {t("重新加载")}
-              </Button>
-            </div>
-          )}
-          {doc && (
-            <MonacoTextSurface
-              key={`${doc.path}|${doc.revision ?? "current"}|${loadSeq.current}`}
-              workspaceId={workspaceId}
-              path={doc.path}
-              contentKey={`${doc.path}|${doc.revision ?? "current"}|${loadSeq.current}`}
-              initialContent={doc.content}
-              readOnly={!editable}
-              fontSize={fontSize}
-              handleRef={surface}
-              onDirtyChange={handleDirtyChange}
-              onCursorChange={setCursor}
-              onSave={(content) => void save(content)}
-            />
-          )}
-        </div>
-        {doc && !error && (
-          <footer className="editor-statusbar">
-            <span className="editor-status-group">
-              {cursor && (
-                <span className="editor-status-item">
-                  {t("行 {v0}，列 {v1}", {
-                    v0: String(cursor.line),
-                    v1: String(cursor.column),
-                  })}
-                  {cursor.selected > 0 &&
-                    ` ${t("（已选择 {v0} 个字符）", {
-                      v0: String(cursor.selected),
-                    })}`}
-                </span>
-              )}
-              {dirty && !viewingRevision && (
-                <span className="editor-status-dirty">{t("未保存")}</span>
-              )}
-            </span>
-            <span className="editor-status-group">
-              {editable && (
-                <button
-                  className={`editor-status-button ${autoSave ? "on" : ""}`}
-                  aria-pressed={autoSave}
-                  title={t("自动保存：编辑停顿后自动写入磁盘")}
-                  onClick={toggleAutoSave}
-                >
-                  {t("自动保存")}
-                </button>
-              )}
-              <span className="editor-status-item">
-                {languageLabel(doc.path) || t("纯文本")}
-              </span>
-              {editable ? (
-                <button
-                  className="editor-status-button"
-                  title={t("切换行尾")}
-                  onClick={toggleEol}
-                >
-                  {eol.toUpperCase()}
-                </button>
-              ) : (
-                <span className="editor-status-item">{eol.toUpperCase()}</span>
-              )}
-              <span className="editor-status-item">{formatSize(doc.size)}</span>
-            </span>
-          </footer>
-        )}
-      </div>
-      {historyOpen && selected && (
-        <aside className="editor-history">
-          <div className="editor-history-head">
-            <span>{t("文件历史")}</span>
-            <Button
-              className="icon-button"
-              aria-label={t("关闭文件历史")}
-              onClick={() => setHistoryOpen(false)}
-            >
-              <X size={14} />
-            </Button>
-          </div>
-          {historyError && (
-            <p className="editor-empty-hint" role="alert">
-              {historyError}
-            </p>
-          )}
-          {!historyEntries && !historyError && (
-            <p className="editor-empty-hint">{t("正在读取提交关系…")}</p>
-          )}
-          <ul>
-            {historyEntries?.map((entry, index) => (
-              <li key={entry.oid}>
-                <button
-                  className={`editor-history-item ${viewingRevision === entry.oid ? "selected" : ""}`}
-                  onClick={() => askRevision(entry.oid)}
-                >
-                  <span className="editor-history-top">
-                    <code>{entry.oid.slice(0, 8)}</code>
-                    {index === 0 && (
-                      <em className="editor-history-latest">{t("最新")}</em>
-                    )}
-                  </span>
-                  <span className="editor-history-subject">{entry.subject}</span>
-                  <small>
-                    {entry.author} · {relativeTime(entry.date)}
-                  </small>
-                </button>
-              </li>
-            ))}
-            {historyEntries && !historyEntries.length && (
-              <li className="editor-empty-hint">{t("没有提交历史")}</li>
             )}
-          </ul>
-        </aside>
-      )}
+            {staleExternal && !viewingRevision && (
+              <p className="editor-banner warning" role="alert">
+                {t("文件已在磁盘上更改。")}
+                <Button
+                  className="button compact"
+                  onClick={() => void openPath(selected!)}
+                >
+                  {t("重新加载")}
+                </Button>
+              </p>
+            )}
+            {!trusted && doc && !viewingRevision && (
+              <p className="editor-banner" role="status">
+                {t("此文件当前不可编辑")}
+              </p>
+            )}
+            <div className="editor-body">
+              {!selected && (
+                <div className="editor-placeholder">
+                  <span className="editor-placeholder-icon">
+                    <FileText size={26} />
+                  </span>
+                  <p className="editor-placeholder-title">
+                    {t("选择要查看或编辑的文件")}
+                  </p>
+                  <p className="editor-placeholder-hint">
+                    {t("⌘P 快速筛选文件")}
+                  </p>
+                </div>
+              )}
+              {selected && loadingFile && !doc && (
+                <div className="editor-placeholder">
+                  <p>{t("正在打开代码视图…")}</p>
+                </div>
+              )}
+              {selected && error && (
+                <div className="editor-placeholder" role="alert">
+                  <p>{error}</p>
+                  <Button
+                    className="button compact"
+                    onClick={() => void openPath(selected)}
+                  >
+                    {t("重新加载")}
+                  </Button>
+                </div>
+              )}
+              {doc && (
+                <MonacoTextSurface
+                  key={`${doc.path}|${doc.revision ?? "current"}|${loadSeq.current}`}
+                  workspaceId={workspaceId}
+                  path={doc.path}
+                  contentKey={`${doc.path}|${doc.revision ?? "current"}|${loadSeq.current}`}
+                  initialContent={doc.content}
+                  readOnly={!editable}
+                  fontSize={fontSize}
+                  handleRef={surface}
+                  onDirtyChange={handleDirtyChange}
+                  onCursorChange={setCursor}
+                  onSave={(content) => void save(content)}
+                />
+              )}
+            </div>
+            {doc && !error && (
+              <footer className="editor-statusbar">
+                <span className="editor-status-group">
+                  {cursor && (
+                    <span className="editor-status-item">
+                      {t("行 {v0}，列 {v1}", {
+                        v0: String(cursor.line),
+                        v1: String(cursor.column),
+                      })}
+                      {cursor.selected > 0 &&
+                        ` ${t("（已选择 {v0} 个字符）", {
+                          v0: String(cursor.selected),
+                        })}`}
+                    </span>
+                  )}
+                  {dirty && !viewingRevision && (
+                    <span className="editor-status-dirty">{t("未保存")}</span>
+                  )}
+                </span>
+                <span className="editor-status-group">
+                  {editable && (
+                    <button
+                      className={`editor-status-button ${autoSave ? "on" : ""}`}
+                      aria-pressed={autoSave}
+                      title={t("自动保存：编辑停顿后自动写入磁盘")}
+                      onClick={toggleAutoSave}
+                    >
+                      {t("自动保存")}
+                    </button>
+                  )}
+                  <span className="editor-status-item">
+                    {languageLabel(doc.path) || t("纯文本")}
+                  </span>
+                  {editable ? (
+                    <button
+                      className="editor-status-button"
+                      title={t("切换行尾")}
+                      onClick={toggleEol}
+                    >
+                      {eol.toUpperCase()}
+                    </button>
+                  ) : (
+                    <span className="editor-status-item">
+                      {eol.toUpperCase()}
+                    </span>
+                  )}
+                  <span className="editor-status-item">
+                    {formatSize(doc.size)}
+                  </span>
+                </span>
+              </footer>
+            )}
+          </div>
+        </CardSplit>
+      </CardSplit>
       {staleDialog && doc && (
         <Modal
           title={t("文件已在磁盘上更改。")}
@@ -914,10 +955,7 @@ export function EditorView({
             <Button className="button" onClick={() => setDeleting(null)}>
               {t("取消")}
             </Button>
-            <Button
-              className="button danger"
-              onClick={() => void deleteFile()}
-            >
+            <Button className="button danger" onClick={() => void deleteFile()}>
               {t("删除")}
             </Button>
           </div>

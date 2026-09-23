@@ -1,17 +1,30 @@
 import type { ProofError, RepositoryLayout } from "./types";
 import { asError } from "./api";
 
-export const defaultRepositoryLayout: RepositoryLayout = {
+export const defaultRepositoryLayout: Required<RepositoryLayout> = {
   sidebarWidth: 320,
   contextWidth: 300,
   sidebarOpen: true,
   contextOpen: null,
+  historySidebarWidth: 224,
+  historyDetailsHeight: 180,
+  filesSidebarWidth: 240,
+  filesHistoryWidth: 248,
+  commitDetailsHeight: 280,
 };
 export const panelBounds = {
   sidebarWidth: { min: 180, max: 480 },
   contextWidth: { min: 240, max: 520 },
 };
 export type PanelWidth = keyof typeof panelBounds;
+export const cardPanelBounds = {
+  historySidebarWidth: { min: 160, max: 560 },
+  historyDetailsHeight: { min: 100, max: 640 },
+  filesSidebarWidth: { min: 160, max: 560 },
+  filesHistoryWidth: { min: 160, max: 560 },
+  commitDetailsHeight: { min: 160, max: 640 },
+};
+export type CardPanelDimension = keyof typeof cardPanelBounds;
 export const clamp = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, Math.round(value)));
 
@@ -108,8 +121,9 @@ export class RepositoryLayouts {
     target.load = this.io
       .read(scope)
       .then((value) => {
-        target.saved = value;
-        this.emit(target, { value, ready: true });
+        const normalized = { ...defaultRepositoryLayout, ...value };
+        target.saved = normalized;
+        this.emit(target, { value: normalized, ready: true });
       })
       .catch((error) => {
         this.emit(target, { error: asError(error) });
