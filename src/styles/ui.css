@@ -164,8 +164,8 @@
 }
 .proof-separator {
   position: relative;
-  width: 4px;
-  min-width: 4px;
+  width: var(--workbench-gutter, 4px);
+  min-width: var(--workbench-gutter, 4px);
   z-index: 20;
   cursor: col-resize;
   background: transparent;

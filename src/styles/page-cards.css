@@ -1,0 +1,166 @@
+/* Workspace cards frame whole tools; virtual rows and editor geometry stay intact. */
+.app .workspace-page:is(.history-page, .files-page) {
+  padding: 12px;
+  background: var(--surface);
+}
+
+.app .history-page .repository-view,
+.app .files-page .editor-view {
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  overflow: visible;
+  background: transparent;
+}
+
+.app .history-page .repository-nav,
+.app .history-page .history-inspector,
+.app .history-page .repository-content:not(.is-history),
+.app .files-page :is(.editor-sidebar, .editor-main, .editor-history) {
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card, 12px);
+  background: var(--bg);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+/* The graph toolbar and table share one card; selection details live below it. */
+.app .history-page .repository-nav {
+  width: 224px;
+  padding: 0 8px;
+}
+.app .history-page .repository-nav .sidebar-heading {
+  padding-inline: 8px;
+}
+.app .history-page .repository-refs {
+  flex: 1;
+  margin: 4px 0 0;
+  padding-inline: 2px;
+}
+.app .history-page .repository-meta {
+  flex-shrink: 0;
+  padding: 10px 8px;
+  border-top: 1px solid var(--border);
+}
+.app .history-page .repository-content.is-history,
+.app .history-page .commit-history {
+  overflow: visible;
+  background: transparent;
+}
+.app .history-page .repository-content:not(.is-history) {
+  padding: 20px;
+  overflow: auto;
+}
+.app .history-page .graph-toolbar {
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-bottom: 0;
+  border-radius: var(--radius-card, 12px) var(--radius-card, 12px) 0 0;
+  background: var(--bg);
+}
+.app .history-page .graph-search {
+  flex: 1 1 220px;
+  min-width: 180px;
+  max-width: none;
+  margin: 0;
+}
+.app .history-page .graph-error {
+  border-inline: 1px solid var(--border);
+}
+.app .history-page .graph-table-wrap {
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-top: 0;
+  border-radius: 0 0 var(--radius-card, 12px) var(--radius-card, 12px);
+  background: var(--bg);
+  box-shadow: var(--shadow-card);
+}
+.app .history-page .graph-table-footer {
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding: 7px 12px;
+  background: var(--bg);
+}
+.app .history-page .history-inspector {
+  margin-top: 12px;
+  padding-bottom: 12px;
+}
+.app .history-page .history-selection-header {
+  padding: 12px 16px;
+  background: transparent;
+}
+.app .history-page .history-selection-header strong {
+  font-size: 13px;
+}
+.app .history-page .history-selection-header small {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+/* Search, file navigation, and the code surface keep their own scroll areas. */
+.app .files-page .editor-sidebar {
+  width: 240px;
+}
+.app .files-page .editor-history {
+  width: 248px;
+}
+.app .files-page .editor-file-heading,
+.app .files-page .editor-titlebar,
+.app .files-page .editor-history-head {
+  min-height: var(--panel-header-height, 44px);
+  padding: 8px 12px;
+  background: var(--bg);
+}
+.app .files-page .editor-sidebar .editor-file-heading .file-search {
+  min-height: 28px;
+  border-radius: 6px;
+  background: var(--surface);
+}
+.app .files-page .editor-file-heading {
+  gap: 8px;
+}
+.app .files-page .editor-main {
+  flex: 1;
+}
+.app .files-page .editor-titlebar {
+  gap: 8px;
+  padding-block: 6px;
+}
+.app .files-page .editor-titlebar .editor-path {
+  flex: 1;
+}
+.app .files-page .editor-titlebar .toolbar-spacer {
+  display: none;
+}
+.app .files-page .editor-body {
+  min-width: 0;
+  overflow: hidden;
+}
+.app .files-page .editor-statusbar {
+  min-height: 28px;
+  overflow-x: auto;
+  background: var(--surface);
+}
+.app .files-page .editor-history-head {
+  font-size: 12px;
+}
+
+@media (max-width: 1180px) {
+  .app .history-page .repository-nav,
+  .app .files-page .editor-sidebar {
+    width: 208px;
+  }
+  .app .files-page .editor-history {
+    width: 220px;
+  }
+  .app .files-page .editor-titlebar {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .app .files-page .editor-titlebar .editor-path {
+    flex-basis: 120px;
+  }
+}

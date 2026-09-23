@@ -1,9 +1,10 @@
 # Proof UI refresh
 
-The September 2026 refresh follows the reviewed Changes/History concept and the
-two-card Commit concept. Cards group a complete task: selecting the files for a
-commit, writing its message, a change group, or a Context session. File rows and
-the Git graph retain continuous, dense reading surfaces.
+The September 2026 refresh uses card-style workspaces for Local changes, History
+and Files. The user's follow-up retains the original Commit layout: file selection
+and the composer in the left sidebar, with a full-height Diff on the right.
+Cards frame complete tools rather than individual rows; file lists and the Git
+graph retain continuous, dense reading surfaces.
 
 ## Visual system
 
@@ -17,21 +18,33 @@ retain their meaning.
 System fonts remain local. History subjects use 13px type; metadata uses 11px.
 Panel headers share a 44px baseline, with wrapping where controls need more room.
 Task cards use a 12px radius and subtle borders; controls use smaller radii.
-The panel separator still occupies the 4px geometry expected by the resize model,
-but paints only a 1px line and highlights during interaction. Virtualized row
-heights and Git graph coordinates are unchanged.
+Local changes uses 12px separator gutters shared with the resize model, so saved
+panel widths remain accurate. Other workbenches keep their 4px separators.
+Virtualized row heights and Git graph coordinates are unchanged.
+
+## Card workspaces
+
+- Local changes: file navigation, the main Diff and Context each have their own
+  rounded surface, with a quiet canvas and 12px gaps. Narrow windows use smaller
+  outer margins; existing overlay drawers still open above the Diff.
+- History: repository navigation, the continuous toolbar/commit graph surface,
+  and selected-commit details are distinct cards. Graph scrolling, parent links,
+  row heights and selection behavior stay intact.
+- Files: the repository file tree, editor and optional file-history pane are
+  distinct cards. Editor controls wrap when needed, with the existing code and
+  history scroll areas retained.
 
 ## Commit composition
 
-Commit places file selection and the message composer side by side above the
-existing Diff. The preparation area is bounded in height, while files and long
-AI results can scroll inside their cards. The commit action footer stays visible.
-Very narrow windows stack the cards and allow scrolling to the Diff.
+Commit keeps its original left-sidebar composition. File selection appears above
+the message composer, and the existing Diff fills the right side. The shared
+color and motion refinements still apply; the two-card preparation layout has
+been removed.
 
 Changes and Commit continue to share the same mounted Diff subtree. The composer
 keeps the existing canonical message field, draft ownership, AI lifecycle,
 explicit suggestion application, Stage/Amend actions, and submission confirmation.
-Focus review hides the preparation area and gives the space back to the Diff.
+Focus review hides the sidebar and gives the space back to the Diff.
 No Git or AI backend contract changed.
 
 ## Motion
@@ -47,8 +60,8 @@ was added.
 ## Validation
 
 Focused UI coverage checks card bounds, reachable controls, light/dark contrast,
-1024×720 layout, preserved drafts and the same live Diff node across page
-switching. Existing Stage/Commit/Amend and AI-generation race cases exercise the
+1024×720 layout, History/Files panel separation, preserved drafts and the same
+live Diff node across page switching. Existing Stage/Commit/Amend and AI-generation race cases exercise the
 unchanged workflow. Validation uses an isolated Vite port and a Rust Core driver
 with temporary Git repositories; packaged native WebView performance is a
-separate check. Local outputs are under `.artifacts/ui-refresh`.
+separate check. Local outputs are under `.artifacts/card-workbench`.

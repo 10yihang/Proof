@@ -530,16 +530,13 @@ test("Workspace density: Commit shows files, message and the same live Diff toge
     await expect(message).toBeInViewport({ ratio: 1 });
     const filesBox = (await files.boundingBox())!;
     const composerBox = (await composer.boundingBox())!;
+    const sidebar = (await page.locator(".commit-workspace").boundingBox())!;
     const diff = (await page
       .locator(".center-panel .diff-panel")
       .boundingBox())!;
-    expect(filesBox.x + filesBox.width).toBeLessThanOrEqual(composerBox.x + 1);
-    expect(diff.y + 1).toBeGreaterThanOrEqual(
-      Math.max(
-        filesBox.y + filesBox.height,
-        composerBox.y + composerBox.height,
-      ),
-    );
+    expect(filesBox.y + filesBox.height).toBeLessThanOrEqual(composerBox.y + 1);
+    expect(sidebar.x + sidebar.width).toBeLessThanOrEqual(diff.x + 1);
+    expect(diff.width).toBeGreaterThan(sidebar.width * 1.5);
     const codeLineHeight = await page
       .locator(".diff-scroll .view-line")
       .first()
@@ -643,11 +640,15 @@ test("Workspace density: Commit shows files, message and the same live Diff toge
     ).length;
     const filesToggle = page.locator("#files-toggle");
     await expect(filesToggle).toHaveAttribute("aria-expanded", "true");
+    await expect(filesToggle).toHaveAttribute(
+      "aria-controls",
+      "commit-files-pane",
+    );
     await filesToggle.click();
-    await expect(page.locator("#commit-preparation")).toBeHidden();
+    await expect(page.locator("#commit-files-pane")).toBeHidden();
     await expect(filesToggle).toHaveAttribute("aria-expanded", "false");
     await filesToggle.click();
-    await expect(page.locator("#commit-preparation")).toBeVisible();
+    await expect(page.locator("#commit-files-pane")).toBeVisible();
     await expect(filesToggle).toHaveAttribute("aria-expanded", "true");
     await expect(
       page.getByLabel("Commit message", { exact: true }),
@@ -1013,6 +1014,15 @@ test("Git basics: toolbar and file actions remain readable in light, dark and na
     await page.getByRole("tab", { name: "History", exact: true }).click();
     await page.setViewportSize({ width: 760, height: 820 });
     await expect(page.locator(".graph-row").first()).toBeVisible();
+    const navigation = page.locator(".repository-nav");
+    const history = page.locator(".repository-content");
+    await expect(navigation).toBeInViewport({ ratio: 1 });
+    await expect(history).toBeInViewport({ ratio: 1 });
+    const navigationBox = (await navigation.boundingBox())!;
+    const historyBox = (await history.boundingBox())!;
+    expect(navigationBox.x + navigationBox.width).toBeLessThanOrEqual(
+      historyBox.x + 1,
+    );
     await expect(
       page
         .getByLabel("Git actions", { exact: true })
@@ -1024,6 +1034,33 @@ test("Git basics: toolbar and file actions remain readable in light, dark and na
       ),
     ).toBe(true);
     await page.screenshot({ path: join(shots, "git-actions-narrow.png") });
+    await page.setViewportSize({ width: 1024, height: 720 });
+    await page.getByRole("tab", { name: "Files", exact: true }).click();
+    const fileFilter = page.locator(".editor-file-search input");
+    await expect(fileFilter).toBeInViewport({ ratio: 1 });
+    await fileFilter.fill("code.txt");
+    await page
+      .locator(".editor-tree-item")
+      .filter({ hasText: "code.txt" })
+      .click();
+    await expect(page.locator(".editor-body .view-lines")).toContainText(
+      "local modification",
+    );
+    const fileNavigation = page.locator(".editor-sidebar");
+    const editor = page.locator(".editor-main");
+    await expect(fileNavigation).toBeInViewport({ ratio: 1 });
+    await expect(editor).toBeInViewport({ ratio: 1 });
+    const fileNavigationBox = (await fileNavigation.boundingBox())!;
+    const editorBox = (await editor.boundingBox())!;
+    expect(fileNavigationBox.x + fileNavigationBox.width).toBeLessThanOrEqual(
+      editorBox.x + 1,
+    );
+    await page.screenshot({ path: join(shots, "files-card-dark.png") });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
   } finally {
     f.close();
   }

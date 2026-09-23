@@ -39,6 +39,7 @@ export function ResizableWorkbench({
   onCollapse,
   sidebarId = "files-panel",
   contextId = "context-panel",
+  gutterSize = 4,
 }: {
   layout: RepositoryLayout;
   scopeKey: string;
@@ -53,6 +54,7 @@ export function ResizableWorkbench({
   onCollapse: (side: PanelWidth) => void;
   sidebarId?: string;
   contextId?: string;
+  gutterSize?: number;
 }) {
   const id = useId(),
     left = `${id}-files`,
@@ -88,7 +90,7 @@ export function ResizableWorkbench({
     onChange,
     onCollapse,
   };
-  const gap = (Number(sidebarVisible) + Number(contextDocked)) * 4;
+  const gap = (Number(sidebarVisible) + Number(contextDocked)) * gutterSize;
   const fit = fitPanels(width - gap, layout, sidebarVisible, contextDocked);
   const desired = useMemo(
     () => ({
@@ -238,7 +240,10 @@ export function ResizableWorkbench({
       ref={root}
       className="workbench resizable proof-workbench"
       style={
-        { "--saved-context-width": `${layout.contextWidth}px` } as CSSProperties
+        {
+          "--saved-context-width": `${layout.contextWidth}px`,
+          "--workbench-gutter": `${gutterSize}px`,
+        } as CSSProperties
       }
     >
       <Group
