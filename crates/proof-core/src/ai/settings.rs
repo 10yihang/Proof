@@ -56,6 +56,8 @@ pub struct AgentSettings {
     #[serde(default)]
     pub codewiz: AgentOptions,
     #[serde(default)]
+    pub ocr: AgentOptions,
+    #[serde(default)]
     pub prompts: AgentPrompts,
 }
 impl Default for AgentSettings {
@@ -66,6 +68,7 @@ impl Default for AgentSettings {
             codex: AgentOptions::default(),
             claude_code: AgentOptions::default(),
             codewiz: AgentOptions::default(),
+            ocr: AgentOptions::default(),
             prompts: AgentPrompts::default(),
         }
     }
@@ -76,6 +79,7 @@ impl AgentSettings {
             AgentKind::Codex => &self.codex,
             AgentKind::ClaudeCode => &self.claude_code,
             AgentKind::Codewiz => &self.codewiz,
+            AgentKind::Ocr => &self.ocr,
         }
     }
 }
@@ -88,6 +92,8 @@ pub struct AgentSettingsUpdate {
     pub claude_code: AgentOptions,
     #[serde(default)]
     pub codewiz: Option<AgentOptions>,
+    #[serde(default)]
+    pub ocr: Option<AgentOptions>,
     #[serde(default)]
     pub prompts: Option<AgentPrompts>,
 }
@@ -152,11 +158,18 @@ impl Proof {
         if let Some(options) = &mut update.codewiz {
             clean(options)?;
         }
-        for kind in [AgentKind::Codex, AgentKind::ClaudeCode, AgentKind::Codewiz] {
+        if let Some(options) = &mut update.ocr {
+            clean(options)?;
+        }
+        for kind in [AgentKind::Codex, AgentKind::ClaudeCode, AgentKind::Codewiz, AgentKind::Ocr] {
             let options = match kind {
                 AgentKind::Codex => &update.codex,
                 AgentKind::ClaudeCode => &update.claude_code,
                 AgentKind::Codewiz => match &update.codewiz {
+                    Some(options) => options,
+                    None => continue,
+                },
+                AgentKind::Ocr => match &update.ocr {
                     Some(options) => options,
                     None => continue,
                 },
@@ -189,6 +202,7 @@ impl Proof {
             codex: update.codex,
             claude_code: update.claude_code,
             codewiz: update.codewiz.unwrap_or(previous.codewiz),
+            ocr: update.ocr.unwrap_or(previous.ocr),
             prompts: update.prompts.unwrap_or(previous.prompts),
         };
         tx.execute("INSERT INTO settings(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[KEY,&serde_json::to_string(&value)?])?;

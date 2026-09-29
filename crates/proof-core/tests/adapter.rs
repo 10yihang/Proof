@@ -62,8 +62,10 @@ fn every_registered_agent_exposes_active_and_passive_capabilities_from_one_adapt
     for adapter in proof_core::AGENT_ADAPTERS {
         assert_eq!(adapter.provider().kind(), adapter.kind);
         assert_eq!(adapter.kind.adapter().observer, adapter.observer);
-        assert_eq!(adapter.observer.adapter().kind, adapter.kind);
-        assert!(!proof_core::observer_hook_events_v1(adapter.observer).is_empty());
+        if let Some(observer) = adapter.observer {
+            assert_eq!(observer.adapter().kind, adapter.kind);
+            assert!(!proof_core::observer_hook_events_v1(observer).is_empty());
+        }
         assert_eq!(
             adapter.hook_installation_available(),
             adapter.hook_unavailable_reason().is_none()
@@ -81,6 +83,7 @@ fn every_registered_agent_exposes_active_and_passive_capabilities_from_one_adapt
                 executable_path: Some(f.program.to_str().unwrap().into()),
                 model: None,
             }),
+            ocr: None,
         })
         .unwrap();
     let active = f.proof.agent_providers().unwrap();

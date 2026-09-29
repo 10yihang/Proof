@@ -22,6 +22,7 @@ export interface AgentSettingsValue {
   codex: AgentOptions;
   claudeCode: AgentOptions;
   codewiz: AgentOptions;
+  ocr: AgentOptions;
   prompts: { grouping: string; review: string; commit: string };
 }
 interface ProbeResult {
@@ -39,6 +40,7 @@ const defaults = (): AgentSettingsValue => ({
   codex: { executablePath: null, model: null },
   claudeCode: { executablePath: null, model: null },
   codewiz: { executablePath: null, model: null },
+  ocr: { executablePath: null, model: null },
   prompts: { grouping: "", review: "", commit: "" },
 });
 export function AgentSettings({ demo }: { demo: boolean }) {
@@ -126,6 +128,7 @@ export function AgentSettings({ demo }: { demo: boolean }) {
           codex: draft.codex,
           claudeCode: draft.claudeCode,
           codewiz: draft.codewiz,
+          ocr: draft.ocr,
           prompts: draft.prompts,
         },
       });
@@ -320,6 +323,13 @@ export function AgentSettings({ demo }: { demo: boolean }) {
                 )}
               </p>
             )}
+            {kind === "ocr" && (
+              <p className="muted">
+                {t(
+                  "读取 ~/.opencodereview 的模型配置（ocr config）。仅支持代码审查；分组和提交信息请使用其他 Agent。",
+                )}
+              </p>
+            )}
             <label className="field-label" htmlFor={`${kind}-path`}>
               {t("CLI path")}
             </label>
@@ -360,23 +370,29 @@ export function AgentSettings({ demo }: { demo: boolean }) {
                   ? `Detected: ${found.path}`
                   : t("未找到 CLI，可手动指定已安装的程序路径。")}
             </p>
-            <label className="field-label" htmlFor={`${kind}-model`}>
-              {t("Model ")}
-              <span className="muted">{t("optional")}</span>
-            </label>
-            <Input
-              id={`${kind}-model`}
-              aria-label={t("{v0} model", { v0: name })}
-              spellCheck={false}
-              autoCapitalize="none"
-              autoCorrect="off"
-              value={options.model ?? ""}
-              placeholder={
-                kind === "codewiz" ? "provider/model" : t("CLI default")
-              }
-              disabled={loading || saving || !!checking || demo}
-              onChange={(e) => edit(kind, { model: e.target.value || null })}
-            />
+            {kind !== "ocr" && (
+              <>
+                <label className="field-label" htmlFor={`${kind}-model`}>
+                  {t("Model ")}
+                  <span className="muted">{t("optional")}</span>
+                </label>
+                <Input
+                  id={`${kind}-model`}
+                  aria-label={t("{v0} model", { v0: name })}
+                  spellCheck={false}
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  value={options.model ?? ""}
+                  placeholder={
+                    kind === "codewiz" ? "provider/model" : t("CLI default")
+                  }
+                  disabled={loading || saving || !!checking || demo}
+                  onChange={(e) =>
+                    edit(kind, { model: e.target.value || null })
+                  }
+                />
+              </>
+            )}
             <div className="agent-test-actions">
               <Button
                 className="button"

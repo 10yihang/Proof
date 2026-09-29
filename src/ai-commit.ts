@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { asError, useReadRequest } from "./api";
+import { t } from "./i18n";
 import {
   advanceAiProgress,
   startAiProgress,
@@ -45,6 +46,14 @@ export function useAiCommit(
 
   async function generate() {
     if (running.current) return;
+    if (provider === "ocr") {
+      setError({
+        code: "AI_ISOLATION_UNAVAILABLE",
+        message: t("OpenCodeReview 仅支持代码审查，提交信息请使用其他 Agent。"),
+        detail: "",
+      });
+      return;
+    }
     const current = live.current;
     const scope = scopeKey(current);
     const n = generation.current;

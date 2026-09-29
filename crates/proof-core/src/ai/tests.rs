@@ -180,7 +180,14 @@ fn exact_group_coverage_and_finding_anchors_are_validated_without_review_writes(
         .unwrap();
     assert!(job.validate(review()).is_ok());
     let mut value = review();
-    value["findings"][0]["line"] = json!(999);
+    value["findings"][0]["line"] = json!(0);
+    assert!(job.validate(value).is_err());
+    let mut value = review();
+    value["findings"][0]["line"] = json!(5);
+    value["findings"][0]["endLine"] = json!(4);
+    assert!(job.validate(value).is_err());
+    let mut value = review();
+    value["findings"][0]["endLine"] = json!(10_001);
     assert!(job.validate(value).is_err());
     let mut value = review();
     value["findings"][0]["side"] = json!("staged");
@@ -242,7 +249,7 @@ fn grouping_edits_persist_and_reject_late_ai_replacement() {
         .is_empty());
 }
 #[test]
-fn stale_input_busy_and_data_invalidation_leave_git_usable() {
+fn outdated_input_busy_and_data_invalidation_leave_git_usable() {
     let (_temp, mut proof, workspace) = fixture();
     let old = request(&proof, &workspace, AiTask::Review);
     fs::write(
@@ -250,10 +257,10 @@ fn stale_input_busy_and_data_invalidation_leave_git_usable() {
         "fn pool() { changed(); }\n",
     )
     .unwrap();
-    assert_eq!(
-        proof.prepare_ai_task(old).err().unwrap().code,
-        "STALE_CONTENT"
-    );
+    // Live mode: an outdated expected token no longer blocks preparation;
+    // the agent reviews whatever the live repository contains.
+    assert!(proof.prepare_ai_task(old).is_ok());
+    assert!(!proof.has_active_ai_task());
     let task = proof
         .prepare_ai_task(request(&proof, &workspace, AiTask::Review))
         .unwrap();
@@ -307,11 +314,8 @@ fn historical_review_uses_the_diff_tabs_frozen_commits() {
 }
 
 #[test]
-fn current_review_accepts_unchanged_content_across_new_snapshot_ids() {
+fn current_review_selects_live_files_without_snapshot_tokens() {
     let (_temp, mut proof, workspace) = fixture();
-    let displayed = proof
-        .file_diff(&workspace.id, "auth.rs", Side::Unstaged)
-        .unwrap();
     let token = proof.changes(&workspace.id).unwrap().token;
     let job = proof
         .prepare_ai_task(AiRequest {
@@ -322,21 +326,24 @@ fn current_review_accepts_unchanged_content_across_new_snapshot_ids() {
                 workspace_id: workspace.id.clone(),
                 expected_token: token,
                 files: Some(vec![AiFileSelection {
-                    path: displayed.path.clone(),
-                    side: displayed.side,
-                    snapshot_token: Some(displayed.token.clone()),
+                    path: "auth.rs".into(),
+                    side: Side::Unstaged,
+                    snapshot_token: None,
                 }]),
             },
         })
         .unwrap();
-    assert_ne!(job.diffs[0].id, displayed.id);
+    assert!(job.diffs.is_empty(), "live reviews capture no frozen patches");
+    assert_eq!(
+        job.selected,
+        vec![("auth.rs".to_string(), Side::Unstaged)]
+    );
     let report = job.validate(review()).unwrap();
-    assert_eq!(report.files[0].snapshot_token, displayed.token);
-    let refreshed = proof
-        .file_diff(&workspace.id, "auth.rs", Side::Unstaged)
-        .unwrap();
-    assert_eq!(refreshed.token, report.files[0].snapshot_token);
+    assert_eq!(report.files.len(), 1);
+    assert_eq!(report.files[0].path, "auth.rs");
+    assert!(report.files[0].snapshot_token.is_empty());
     drop(job);
+    // A stale snapshot token from an older display is ignored entirely.
     let mut input = request(&proof, &workspace, AiTask::Review);
     if let AiScope::Local { files, .. } = &mut input.scope {
         *files = Some(vec![AiFileSelection {
@@ -345,10 +352,7 @@ fn current_review_accepts_unchanged_content_across_new_snapshot_ids() {
             snapshot_token: Some("stale-fingerprint".into()),
         }]);
     }
-    assert_eq!(
-        proof.prepare_ai_task(input).err().unwrap().code,
-        "STALE_CONTENT"
-    );
+    assert!(proof.prepare_ai_task(input).is_ok());
 }
 
 #[cfg(unix)]
@@ -488,6 +492,7 @@ fn agent_settings_persist_defaults_paths_models_and_use_revision_cas() {
             model: Some("gpt-6-astra".into()),
         },
         codewiz: None,
+        ocr: None,
         claude_code: AgentOptions {
             executable_path: None,
             model: Some("sonnet".into()),
@@ -571,6 +576,7 @@ fn invalid_agent_paths_models_and_untrusted_sources_do_not_replace_settings() {
         },
         claude_code: AgentOptions::default(),
         codewiz: None,
+        ocr: None,
     };
     assert_eq!(
         proof.set_agent_settings(update.clone()).unwrap_err().code,
@@ -718,7 +724,7 @@ fn comparison_grouping_is_frozen_editable_and_separate_from_local_groups() {
 }
 
 #[test]
-fn review_ranges_validate_every_captured_line_and_legacy_single_lines() {
+fn review_ranges_validate_sanity_for_live_and_every_line_for_frozen_comparisons() {
     let (_temp, mut proof, workspace) = fixture();
     let repo = Path::new(&workspace.path);
     fs::write(repo.join("auth.rs"), "fn auth() {\n  allow(true);\n}\n").unwrap();
@@ -729,15 +735,18 @@ fn review_ranges_validate_every_captured_line_and_legacy_single_lines() {
     value["findings"][0]["endLine"] = json!(3);
     let result = job.validate(value.clone()).unwrap();
     assert_eq!(result.review.unwrap().findings[0].end_line, Some(3));
-    for (start, end) in [(0, 1), (3, 2), (1, 4), (1, u32::MAX)] {
+    // Live findings are only sanity-bounded: the working tree may shift
+    // while the agent diffs it, so line membership is not re-checked.
+    for (start, end) in [(0, 1), (3, 2), (1, 10_001)] {
         value["findings"][0]["line"] = json!(start);
         value["findings"][0]["endLine"] = json!(end);
-        assert!(job.validate(value.clone()).is_err());
+        assert!(job.validate(value.clone()).is_err(), "{start}-{end}");
     }
     value["findings"][0]["line"] = json!(1);
-    value["findings"][0]["endLine"] = json!(2);
+    value["findings"][0]["endLine"] = json!(200);
+    assert!(job.validate(value.clone()).is_ok(), "live ranges may exceed any single hunk");
     value["findings"][0]["lineSide"] = json!("old");
-    assert!(job.validate(value).is_err());
+    assert!(job.validate(value).is_ok());
     assert_eq!(
         job.validate(review()).unwrap().review.unwrap().findings[0].end_line,
         Some(1)
@@ -748,10 +757,12 @@ fn review_ranges_validate_every_captured_line_and_legacy_single_lines() {
         1
     );
     drop(job);
+    // Frozen comparisons keep the strict every-captured-line check.
     let original = (1..=40).map(|n| format!("line {n}\n")).collect::<String>();
     fs::write(repo.join("auth.rs"), &original).unwrap();
     git(repo, &["add", "auth.rs"]);
     git(repo, &["commit", "-m", "range fixture"]);
+    let base = git(repo, &["rev-parse", "HEAD"]);
     fs::write(
         repo.join("auth.rs"),
         original
@@ -759,15 +770,31 @@ fn review_ranges_validate_every_captured_line_and_legacy_single_lines() {
             .replace("line 40\n", "changed last\n"),
     )
     .unwrap();
+    git(repo, &["add", "auth.rs"]);
+    git(repo, &["commit", "-m", "range target"]);
+    let target = git(repo, &["rev-parse", "HEAD"]);
     let job = proof
-        .prepare_ai_task(request(&proof, &workspace, AiTask::Review))
+        .prepare_ai_task(AiRequest {
+            amend: false,
+            provider: AgentKind::Codex,
+            task: AiTask::Review,
+            scope: AiScope::Comparison {
+                workspace_id: workspace.id.clone(),
+                base,
+                target,
+                path: Some("auth.rs".into()),
+                paths: None,
+            },
+        })
         .unwrap();
     let mut value = review();
     value["findings"][0]["endLine"] = json!(40);
     assert!(
-        job.validate(value).is_err(),
+        job.validate(value.clone()).is_err(),
         "ranges cannot cross uncaptured gaps"
     );
+    value["findings"][0]["endLine"] = json!(1);
+    assert!(job.validate(value).is_ok());
 }
 
 #[test]
@@ -811,12 +838,9 @@ fn review_reports_and_decisions_survive_restart_without_git_or_review_mutations(
         .iter()
         .find(|file| file.path == "auth.rs")
         .unwrap();
-    assert_eq!(
-        proof
-            .file_diff(&workspace.id, "auth.rs", Side::Unstaged)
-            .unwrap()
-            .token,
-        capture.snapshot_token
+    assert!(
+        capture.snapshot_token.is_empty(),
+        "live local reports carry no frozen snapshot token"
     );
     let dismissed = proof
         .set_ai_finding_decision(&workspace.id, &report.id, 1, 0, FindingDecision::Dismissed)
@@ -978,7 +1002,8 @@ fn agent_reads_the_actual_project_including_ignored_context_without_copying_it()
     let job = proof
         .prepare_ai_task(request(&proof, &workspace, AiTask::Review))
         .unwrap();
-    assert!(job.diffs.iter().map(|d| d.patch.len()).sum::<usize>() > 1024 * 1024);
+    // Live mode: no frozen patches are captured, regardless of size.
+    assert!(job.diffs.is_empty());
     assert!(job.prompt().unwrap().len() < 8000);
     assert!(!job.prompt().unwrap().contains("fn changed_19999"));
     assert_eq!(job.input.project, fs::canonicalize(repo).unwrap());
@@ -995,22 +1020,22 @@ fn agent_reads_the_actual_project_including_ignored_context_without_copying_it()
     assert_eq!(git(&job.input.project, &["show", ":auth.rs"]), large.trim());
     let manifest: serde_json::Value =
         serde_json::from_slice(&fs::read(&job.input.manifest).unwrap()).unwrap();
-    let patch_path = manifest["files"]
+    let entry = manifest["files"]
         .as_array()
         .unwrap()
         .iter()
         .find(|file| file["path"] == "auth.rs" && file["side"] == "staged")
-        .unwrap()["patchFile"]
-        .as_str()
-        .unwrap();
-    let patch = fs::read_to_string(patch_path).unwrap();
-    assert!(patch.contains("fn changed_19999"));
+        .unwrap()
+        .clone();
+    assert!(
+        entry.get("patchFile").is_none(),
+        "live manifests list paths without frozen patch files"
+    );
     fs::write(repo.join("auth.rs"), "new external version").unwrap();
     assert_eq!(
         fs::read_to_string(job.input.project.join("auth.rs")).unwrap(),
         "new external version"
     );
-    assert_eq!(fs::read_to_string(patch_path).unwrap(), patch);
     assert_eq!(git(repo, &["rev-parse", "HEAD"]), head);
     assert_eq!(fs::read(repo.join(".git/index")).unwrap(), index);
     let evidence = job.input.manifest.clone();
@@ -1062,6 +1087,7 @@ fn task_prompts_persist_migrate_and_are_captured_independently() {
         codex: Default::default(),
         claude_code: Default::default(),
         codewiz: None,
+        ocr: None,
         prompts,
     };
     let prompts = AgentPrompts {
@@ -1127,11 +1153,16 @@ fn ai_commit_uses_only_index_supports_amend_and_never_changes_git() {
     let job = proof
         .prepare_ai_task(request(&proof, &workspace, AiTask::Commit))
         .unwrap();
-    assert_eq!(job.diffs.len(), 1);
-    assert_eq!(job.diffs[0].path, "auth.rs");
-    assert_eq!(job.diffs[0].side, Side::Staged);
-    assert!(job.diffs[0].patch.contains("allow(true)"));
-    assert!(!job.diffs[0].patch.contains("different_unstaged_behavior"));
+    assert!(job.diffs.is_empty(), "commit drafting captures no patches");
+    assert_eq!(
+        job.selected,
+        vec![("auth.rs".to_string(), Side::Staged)],
+        "commit drafting is scoped to the staged side only"
+    );
+    assert!(job
+        .prompt()
+        .unwrap()
+        .contains("git diff --cached"), "agent reads the live index itself");
     let value =
         json!({"analysisStatus":"completed","blockers":[],"message":"fix(auth): validate access"});
     let report = job.validate(value.clone()).unwrap();
@@ -1169,63 +1200,31 @@ fn ai_commit_uses_only_index_supports_amend_and_never_changes_git() {
 
 #[cfg(unix)]
 #[test]
-fn batch_capture_preserves_canonical_diff_tokens_for_mixed_file_kinds() {
+fn live_selection_covers_mixed_file_kinds_without_capturing_content() {
     use std::os::unix::fs::symlink;
     let (temp, mut proof, workspace) = fixture();
     let repo = Path::new(&workspace.path);
     git(repo, &["reset", "--hard", "HEAD"]);
     fs::create_dir(repo.join("nested")).unwrap();
-    for (folder, attributes) in [
-        ("attribute-a", "*.txt z-last=set a-first=set\n"),
-        ("attribute-b", "*.txt a-first=set z-last=set\n"),
-    ] {
-        fs::create_dir(repo.join(folder)).unwrap();
-        fs::write(repo.join(folder).join(".gitattributes"), attributes).unwrap();
-        fs::write(repo.join(folder).join("code.txt"), "before\n").unwrap();
-    }
     let unusual = "nested/文件\tline\n[literal].txt";
     for path in ["rename-source.txt", "type.txt", unusual] {
         fs::write(repo.join(path), "before\n").unwrap();
     }
     fs::write(repo.join("binary.dat"), b"before\0binary\n").unwrap();
-    fs::write(
-        repo.join(".gitattributes"),
-        "*.rs proof-kind=source\nnested/* proof-kind=nested\n*.dat -text\n",
-    )
-    .unwrap();
     let outside = temp.path().join("outside-secret");
     fs::write(&outside, "must not be read through a symlink\n").unwrap();
-    symlink("auth.rs", repo.join("link")).unwrap();
     git(repo, &["add", "."]);
     git(repo, &["commit", "-m", "capture fixtures"]);
-    fs::write(
-        repo.join(".git/capture-config"),
-        "[diff]\n algorithm = patience\n",
-    )
-    .unwrap();
-    git(repo, &["config", "include.path", "capture-config"]);
-    fs::write(
-        repo.join(".git/info/attributes"),
-        "auth.rs proof-extra=value\n",
-    )
-    .unwrap();
 
     fs::write(repo.join("auth.rs"), "fn auth() { staged(); }\n").unwrap();
     git(repo, &["add", "auth.rs"]);
     fs::write(repo.join("auth.rs"), "fn auth() { unstaged(); }\n").unwrap();
     fs::write(repo.join("pool.rs"), "fn pool() { changed(); }\n").unwrap();
     git(repo, &["mv", "rename-source.txt", "renamed.txt"]);
-    fs::write(repo.join("rename-source.txt"), "recreated original path\n").unwrap();
-    fs::write(repo.join("binary.dat"), b"after\0binary\n").unwrap();
     fs::write(repo.join(unusual), "after\n").unwrap();
-    for folder in ["attribute-a", "attribute-b"] {
-        fs::write(repo.join(folder).join("code.txt"), "after\n").unwrap();
-    }
     fs::write(repo.join("untracked 文件.txt"), "new file\n").unwrap();
     fs::remove_file(repo.join("type.txt")).unwrap();
     symlink(&outside, repo.join("type.txt")).unwrap();
-    fs::remove_file(repo.join("link")).unwrap();
-    symlink(&outside, repo.join("link")).unwrap();
     symlink(&outside, repo.join("untracked-link")).unwrap();
 
     let changes = proof.changes(&workspace.id).unwrap();
@@ -1238,15 +1237,6 @@ fn batch_capture_preserves_canonical_diff_tokens_for_mixed_file_kinds() {
             .count(),
         2
     );
-    let expected: Vec<_> = changes
-        .files
-        .iter()
-        .map(|file| {
-            proof
-                .file_diff(&workspace.id, &file.path, file.side)
-                .unwrap()
-        })
-        .collect();
     let index = fs::read(repo.join(".git/index")).unwrap();
     let job = proof
         .prepare_ai_task(AiRequest {
@@ -1255,33 +1245,24 @@ fn batch_capture_preserves_canonical_diff_tokens_for_mixed_file_kinds() {
             task: AiTask::Review,
             scope: AiScope::Local {
                 workspace_id: workspace.id.clone(),
-                expected_token: changes.token,
+                expected_token: changes.token.clone(),
                 files: None,
             },
         })
         .unwrap();
-    assert_eq!(job.diffs.len(), expected.len());
-    for (actual, expected) in job.diffs.iter().zip(&expected) {
-        assert_eq!(
-            actual.guard, expected.guard,
+    // Live mode: selection mirrors the change list, nothing is captured,
+    // and preparation never reads through symlinks or file contents.
+    assert!(job.diffs.is_empty());
+    assert_eq!(job.selected.len(), changes.files.len());
+    for file in &changes.files {
+        assert!(
+            job.selected
+                .iter()
+                .any(|(path, side)| path == &file.path && *side == file.side),
             "{} {:?}",
-            actual.path, actual.side
+            file.path,
+            file.side
         );
-        let stable = |diff: &FileDiff| {
-            let mut value = serde_json::to_value(diff).unwrap();
-            let fields = value.as_object_mut().unwrap();
-            fields.remove("id");
-            fields.remove("capturedAt");
-            value
-        };
-        assert_eq!(
-            stable(actual),
-            stable(expected),
-            "{} {:?}",
-            actual.path,
-            actual.side
-        );
-        assert!(!actual.patch.contains("must not be read through a symlink"));
     }
     assert_eq!(fs::read(repo.join(".git/index")).unwrap(), index);
     assert_eq!(
@@ -1291,7 +1272,7 @@ fn batch_capture_preserves_canonical_diff_tokens_for_mixed_file_kinds() {
 }
 
 #[test]
-fn batch_capture_rejects_changes_to_earlier_later_and_shared_inputs() {
+fn live_prepare_tolerates_mid_preparation_changes() {
     use std::cell::Cell;
     for mutation in ["earlier", "later", "config", "attributes", "index", "head"] {
         let (_temp, mut proof, workspace) = fixture();
@@ -1343,11 +1324,12 @@ fn batch_capture_rejects_changes_to_earlier_later_and_shared_inputs() {
                 _ => unreachable!(),
             }
         });
-        assert!(
-            changed.get(),
-            "{mutation}: fixture must interrupt an actual capture"
-        );
-        assert_eq!(result.err().unwrap().code, "STALE_CONTENT", "{mutation}");
+        // Live mode: preparation only lists paths, so concurrent changes to
+        // content, config, attributes, the index or HEAD no longer fail it.
+        assert!(result.is_ok(), "{mutation}: {:?}", result.err());
+        assert!(changed.get(), "{mutation}: fixture must interrupt preparation");
+        assert!(proof.has_active_ai_task());
+        drop(result);
         assert!(!proof.has_active_ai_task());
         assert!(proof
             .ai_review_reports(&workspace.id, "local")
@@ -1358,7 +1340,7 @@ fn batch_capture_rejects_changes_to_earlier_later_and_shared_inputs() {
 
 #[cfg(unix)]
 #[test]
-fn batch_capture_shares_git_metadata_queries_for_one_hundred_plain_files() {
+fn live_selection_spawns_no_per_file_git_reads() {
     use std::os::unix::fs::PermissionsExt;
     let (temp, mut proof, workspace) = fixture();
     let repo = Path::new(&workspace.path);
@@ -1394,34 +1376,22 @@ exec /usr/bin/git -c core.attributesFile=/dev/null "$@"
     let mut preferences = proof.preferences().unwrap();
     preferences.git_path = wrapper.to_str().unwrap().into();
     proof.set_preferences(preferences).unwrap();
-    let displayed = proof
-        .file_diff(&workspace.id, "capture-000.txt", Side::Unstaged)
-        .unwrap();
     let request = request(&proof, &workspace, AiTask::Review);
     fs::write(&calls, "").unwrap();
     let job = proof.prepare_ai_task(request).unwrap();
     let recorded = fs::read_to_string(calls).unwrap();
     let calls: Vec<_> = recorded.lines().collect();
-    assert_eq!(job.diffs.len(), 100);
+    assert!(job.diffs.is_empty());
+    assert_eq!(job.selected.len(), 100);
     assert_eq!(
         calls.iter().filter(|command| **command == "diff").count(),
-        100
+        0,
+        "live preparation captures no patches: {recorded}"
     );
-    for command in ["status", "config", "check-attr", "symbolic-ref"] {
-        let count = calls
-            .iter()
-            .filter(|captured| **captured == command)
-            .count();
-        assert!(count <= 5, "{command} repeated {count} times for 100 files");
-    }
     assert!(
-        calls.len() <= 150,
-        "100 patches spawned {} Git processes",
+        calls.len() <= 10,
+        "100 selections spawned {} Git processes: {recorded}",
         calls.len()
-    );
-    assert!(
-        proof.snapshot(&displayed.id).is_ok(),
-        "AI evidence must not evict the editor's current snapshot"
     );
 }
 
@@ -1447,11 +1417,12 @@ fn batch_capture_cancellation_releases_task_capacity_and_keeps_git_unchanged() {
     let job = proof
         .prepare_ai_task(request(&proof, &workspace, AiTask::Review))
         .unwrap();
-    assert_eq!(job.diffs.len(), 2);
+    assert!(job.diffs.is_empty());
+    assert_eq!(job.selected.len(), 2);
 }
 
 #[test]
-fn batch_capture_uses_linked_worktree_identity_index_and_content() {
+fn live_selection_uses_the_linked_worktree_change_list() {
     let (temp, mut proof, workspace) = fixture();
     let repo = Path::new(&workspace.path);
     let linked = temp.path().join("linked");
@@ -1469,21 +1440,18 @@ fn batch_capture_uses_linked_worktree_identity_index_and_content() {
     fs::write(linked.join("auth.rs"), "fn auth() { linked_only(); }\n").unwrap();
     let linked_workspace = proof.open_workspace(linked.to_str().unwrap()).unwrap();
     proof.set_trust(&linked_workspace.id, true).unwrap();
-    let displayed = proof
-        .file_diff(&linked_workspace.id, "auth.rs", Side::Unstaged)
-        .unwrap();
     let primary_index = fs::read(Path::new(&workspace.git_dir).join("index")).unwrap();
     let linked_index = fs::read(Path::new(&linked_workspace.git_dir).join("index")).unwrap();
     let primary_content = fs::read(repo.join("auth.rs")).unwrap();
     let job = proof
         .prepare_ai_task(request(&proof, &linked_workspace, AiTask::Review))
         .unwrap();
-    assert_eq!(job.diffs.len(), 1);
-    assert_eq!(job.diffs[0].token, displayed.token);
-    assert_eq!(job.diffs[0].workspace_id, linked_workspace.id);
-    assert!(job.diffs[0].base.ends_with(":capture-linked"));
-    assert!(job.diffs[0].patch.contains("linked_only"));
-    assert!(!job.diffs[0].patch.contains("allow(true)"));
+    assert!(job.diffs.is_empty());
+    assert_eq!(
+        job.selected,
+        vec![("auth.rs".to_string(), Side::Unstaged)]
+    );
+    assert!(job.input.project.ends_with("linked"));
     assert_eq!(
         fs::read(Path::new(&workspace.git_dir).join("index")).unwrap(),
         primary_index
@@ -1496,7 +1464,7 @@ fn batch_capture_uses_linked_worktree_identity_index_and_content() {
 }
 
 #[test]
-fn batch_capture_keeps_file_and_diff_line_limits() {
+fn live_selection_does_not_read_file_contents() {
     for limit in ["file_bytes", "diff_lines"] {
         let (_temp, mut proof, workspace) = fixture();
         let repo = Path::new(&workspace.path);
@@ -1510,9 +1478,162 @@ fn batch_capture_keeps_file_and_diff_line_limits() {
             fs::write(&path, "new line\n".repeat(100_001)).unwrap();
         }
         let index = fs::read(repo.join(".git/index")).unwrap();
-        let result = proof.prepare_ai_task(request(&proof, &workspace, AiTask::Review));
-        assert_eq!(result.err().unwrap().code, "DIFF_READ_LIMIT", "{limit}");
+        // Live mode captures nothing, so oversized files no longer block
+        // preparation; the agent decides how much of the live file to read.
+        let job = proof
+            .prepare_ai_task(request(&proof, &workspace, AiTask::Review))
+            .unwrap_or_else(|error| panic!("{limit}: {error:?}"));
+        assert!(job.diffs.is_empty(), "{limit}");
+        drop(job);
         assert!(!proof.has_active_ai_task());
         assert_eq!(fs::read(repo.join(".git/index")).unwrap(), index);
     }
+}
+
+#[test]
+fn ocr_review_output_maps_onto_the_shared_review_schema() {
+    let selected = vec![
+        ("main.rs".to_string(), Side::Unstaged),
+        ("staged.rs".to_string(), Side::Staged),
+    ];
+    let raw = json!({
+        "status": "complete",
+        "message": "Review complete: 2 finding(s) across 2 selected item(s).",
+        "summary": {"files_reviewed": 2, "comments": 2},
+        "comments": [
+            {"path":"main.rs","content":"Hardcoded credential.","suggestion_code":"let _p = env();","start_line":1,"end_line":1,"category":"security","severity":"high"},
+            {"path":"staged.rs","content":"Line one\nLine two detail","start_line":0,"end_line":0,"category":"bug","severity":"critical"},
+            {"path":"other.rs","content":"Out of scope","start_line":3,"end_line":4,"category":"style","severity":"low"},
+            {"path":"main.rs","content":"","start_line":1,"end_line":1,"category":"style","severity":"low"}
+        ]
+    });
+    let value = ocr::map_review(&serde_json::to_vec(&raw).unwrap(), &selected, crate::UiLanguage::English).unwrap();
+    assert_eq!(value["analysisStatus"], "completed");
+    assert_eq!(value["overallRisk"], "critical");
+    let findings = value["findings"].as_array().unwrap();
+    assert_eq!(findings.len(), 2, "out-of-scope and empty comments drop out");
+    assert_eq!(findings[0]["file"], "main.rs");
+    assert_eq!(findings[0]["side"], "unstaged");
+    assert_eq!(findings[0]["line"], 1);
+    assert_eq!(findings[0]["lineSide"], "new");
+    assert_eq!(findings[1]["side"], "staged");
+    assert_eq!(findings[1]["line"], 1, "zero OCR line numbers clamp to 1");
+    assert!(findings[1]["title"].as_str().unwrap().contains("Line one"));
+    assert!(value["summary"].as_str().unwrap().contains("2 finding(s)"));
+
+    // The mapped value passes the standard review validation end to end.
+    let (_temp, mut proof, workspace) = fixture();
+    let job = proof
+        .prepare_ai_task(AiRequest {
+            amend: false,
+            provider: AgentKind::Ocr,
+            task: AiTask::Review,
+            scope: AiScope::Local {
+                workspace_id: workspace.id.clone(),
+                expected_token: String::new(),
+                files: None,
+            },
+        })
+        .unwrap();
+    let raw = json!({
+        "status": "complete",
+        "message": "Review complete: 1 finding(s).",
+        "summary": {"files_reviewed": 2},
+        "comments": [
+            {"path":"auth.rs","content":"Unconditional access granted.","start_line":1,"end_line":1,"category":"security","severity":"high"}
+        ]
+    });
+    let value = ocr::map_review(&serde_json::to_vec(&raw).unwrap(), &job.selected, crate::UiLanguage::English).unwrap();
+    let report = job.validate(value).unwrap();
+    assert_eq!(report.review.unwrap().findings[0].file, "auth.rs");
+    drop(job);
+
+    // Grouping/commit tasks are rejected for OCR before any CLI launch.
+    let grouping = proof
+        .prepare_ai_task(request(&proof, &workspace, AiTask::Grouping))
+        .map(|mut task| {
+            task.request.provider = AgentKind::Ocr;
+            task.run().unwrap_err()
+        });
+    assert_eq!(grouping.unwrap().code, "AI_ISOLATION_UNAVAILABLE");
+
+    let incomplete = serde_json::to_vec(&json!({"status":"failed"})).unwrap();
+    assert!(ocr::map_review(&incomplete, &selected, crate::UiLanguage::English).is_err());
+    let empty = serde_json::to_vec(&json!({
+        "status": "complete", "message": "Review complete: 0 finding(s).",
+        "summary": {"files_reviewed": 1}, "comments": []
+    }))
+    .unwrap();
+    let value = ocr::map_review(&empty, &selected, crate::UiLanguage::English).unwrap();
+    assert_eq!(value["overallRisk"], "unknown");
+    assert_eq!(value["findings"].as_array().unwrap().len(), 0);
+    // A clean working tree makes OCR skip the review: still a valid,
+    // completed report with zero findings.
+    let skipped = serde_json::to_vec(&json!({
+        "status": "skipped", "message": "Review skipped: no items were selected.",
+        "summary": {"files_reviewed": 0}, "comments": []
+    }))
+    .unwrap();
+    let value = ocr::map_review(&skipped, &selected, crate::UiLanguage::English).unwrap();
+    assert_eq!(value["analysisStatus"], "completed");
+    assert!(value["summary"].as_str().unwrap().contains("no items"));
+    // Partial runs still surface the findings that did complete.
+    let partial = serde_json::to_vec(&json!({
+        "status": "partial",
+        "message": "Review partially complete: 3 finding(s); 11 of 18 selected item(s) failed.",
+        "summary": {"files_reviewed": 7},
+        "comments": [
+            {"path":"main.rs","content":"Real finding despite partial run.","start_line":1,"end_line":1,"category":"bug","severity":"high"}
+        ]
+    }))
+    .unwrap();
+    let value = ocr::map_review(&partial, &selected, crate::UiLanguage::Chinese).unwrap();
+    assert_eq!(value["analysisStatus"], "completed");
+    assert_eq!(value["findings"].as_array().unwrap().len(), 1);
+    assert!(value["summary"].as_str().unwrap().contains("11 of 18"));
+    // Chinese UI gets a localized, non-duplicated summary line.
+    let value = ocr::map_review(
+        &serde_json::to_vec(&json!({
+            "status": "complete",
+            "message": "Review complete: 6 finding(s) across 17 selected item(s).",
+            "summary": {"files_reviewed": 17},
+            "comments": []
+        }))
+        .unwrap(),
+        &selected,
+        crate::UiLanguage::Chinese,
+    )
+    .unwrap();
+    assert_eq!(value["summary"].as_str().unwrap(), "OCR 审查完成：17 个文件，0 条发现。");
+    let skipped_cn = ocr::map_review(&skipped, &selected, crate::UiLanguage::Chinese).unwrap();
+    assert!(
+        skipped_cn["summary"]
+            .as_str()
+            .unwrap()
+            .contains("没有可审查的变更")
+    );
+    // Long multi-byte (CJK) content must respect Proof's byte-based limits:
+    // title ≤ 200 bytes, description ≤ 6000 bytes.
+    let long = "这是一个硬编码凭证问题。".repeat(100);
+    let raw = json!({
+        "status": "complete",
+        "message": "ok",
+        "summary": {"files_reviewed": 1},
+        "comments": [
+            {"path":"main.rs","content":long,"suggestion_code":"修复\\u{000b}建议","start_line":1,"end_line":1,"category":"security","severity":"high"}
+        ]
+    });
+    let value = ocr::map_review(&serde_json::to_vec(&raw).unwrap(), &selected, crate::UiLanguage::English).unwrap();
+    let finding = &value["findings"][0];
+    assert!(finding["title"].as_str().unwrap().len() <= 200);
+    assert!(finding["description"].as_str().unwrap().len() <= 6000);
+    assert!(finding["suggestion"].as_str().unwrap().len() <= 4000);
+    assert!(
+        !finding["suggestion"]
+            .as_str()
+            .unwrap()
+            .chars()
+            .any(|c| c.is_control() && !matches!(c, '\n' | '\t' | '\r')),
+        "control characters are stripped"
+    );
 }

@@ -1,4 +1,4 @@
-use super::{codewiz, invalid, AgentKind, AgentOptions, AgentProbeResult, AgentSettings};
+use super::{codewiz, invalid, ocr, AgentKind, AgentOptions, AgentProbeResult, AgentSettings};
 use crate::{process, program, Error, Result};
 use serde::Serialize;
 use serde_json::Value;
@@ -16,6 +16,9 @@ mod native_claude_tests;
 #[path = "native_codewiz_tests.rs"]
 mod native_codewiz_tests;
 #[cfg(all(test, target_os = "macos"))]
+#[path = "native_ocr_tests.rs"]
+mod native_ocr_tests;
+#[cfg(all(test, target_os = "macos"))]
 #[path = "native_codex_tests.rs"]
 mod native_codex_tests;
 
@@ -25,7 +28,9 @@ pub struct AgentReadContext<'a> {
     pub project: &'a Path,
     pub evidence: &'a Path,
     pub paths: &'a [String],
+    pub selected: &'a [(String, crate::Side)],
     pub task: super::AiTask,
+    pub language: crate::UiLanguage,
 }
 pub struct AgentAnalysis {
     pub value: Value,
@@ -205,6 +210,153 @@ impl AgentProgram {
 pub struct CodexProvider;
 pub struct ClaudeCodeProvider;
 pub struct CodewizProvider;
+pub struct OcrProvider;
+impl AgentProvider for OcrProvider {
+    fn kind(&self) -> AgentKind {
+        AgentKind::Ocr
+    }
+    /// OCR is a fixed review pipeline, not a prompt-driven agent: Proof never
+    /// sends a prompt or schema. The CLI diffs the live repository itself,
+    /// and its findings are mapped onto the shared review schema.
+    fn analyze_workspace(
+        &self,
+        program: &AgentProgram,
+        _prompt: &str,
+        _schema: &Value,
+        context: AgentReadContext<'_>,
+        emit: &dyn Fn(super::AiProgress),
+    ) -> Result<AgentAnalysis> {
+        if program.kind != self.kind() {
+            return Err(unsupported("Agent 类型不匹配。"));
+        }
+        if context.task != super::AiTask::Review {
+            return Err(unsupported(
+                "OpenCodeReview 仅支持代码审查，分组和提交信息请使用其他 Agent。",
+            ));
+        }
+        program.validate()?;
+        let identity = program::program_identity(&program.executable)?;
+        let directory = tempfile::Builder::new().prefix("proof-ai-").tempdir()?;
+        let root = fs::canonicalize(directory.path())?;
+        let help = help_output(self.kind(), &program.executable, &root)?;
+        if help.code != 0 {
+            return Err(agent_failure(self.kind(), "capability check", &help));
+        }
+        let text = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&help.stdout),
+            String::from_utf8_lossy(&help.stderr)
+        );
+        let missing = missing_capabilities(self.kind(), &text);
+        if !missing.is_empty() {
+            return Err(Error::new(
+                "AI_ISOLATION_UNAVAILABLE",
+                "CLI 缺少只读分析所需的能力，请查看失败详情。",
+                format!("Missing CLI options: {}", missing.join(", ")),
+            ));
+        }
+        if program::program_identity(&program.executable)? != identity {
+            return Err(unsupported("CLI 已更新，请重新开始分析。"));
+        }
+        program.validate()?;
+        let result = root.join("result.json");
+        // `--audience human` streams `[ocr] ...` progress lines on stderr; the
+        // observer only sees stdout, so a thin sh wrapper merges the streams.
+        // The sandbox profile already permits /bin/sh and the pinned OCR binary.
+        let command =
+            reading_command(self.kind(), &program.executable, &root, context.project)?;
+        let mut argv: Vec<std::ffi::OsString> =
+            command.get_args().map(|arg| arg.to_os_string()).collect();
+        let binary = argv
+            .pop()
+            .ok_or_else(|| unsupported("缺少执行隔离参数。"))?;
+        argv.push("/bin/sh".into());
+        argv.push("-c".into());
+        argv.push("exec \"$0\" \"$@\" 2>&1".into());
+        argv.push(binary);
+        argv.extend(
+            ["review", "--audience", "human", "--format", "json", "--output"]
+                .into_iter()
+                .map(Into::into),
+        );
+        argv.push(result.clone().into_os_string());
+        // A frozen comparison still maps onto OCR's own range flags; the
+        // well-known empty tree OID stands in for Proof's `empty` base.
+        let manifest: Value = serde_json::from_slice(
+            &fs::read(context.evidence.join("manifest.json")).map_err(invalid)?,
+        )
+        .map_err(invalid)?;
+        if manifest["scope"]["kind"].as_str() == Some("comparison") {
+            let base = manifest["scope"]["base"]
+                .as_str()
+                .ok_or_else(|| invalid("Missing comparison base"))?;
+            let target = manifest["scope"]["target"]
+                .as_str()
+                .ok_or_else(|| invalid("Missing comparison target"))?;
+            let base = if base == "empty" {
+                "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+            } else {
+                base
+            };
+            argv.extend(
+                ["--from", base, "--to", target].into_iter().map(Into::into),
+            );
+        }
+        let mut wrapped = Command::new(command.get_program());
+        wrapped
+            .args(argv)
+            .env_clear()
+            .envs(command.get_envs().filter_map(|(k, v)| v.map(|v| (k, v))));
+        if let Some(cwd) = command.get_current_dir() {
+            wrapped.current_dir(cwd);
+        }
+        emit(super::AiProgress::phase("analyzing"));
+        let mut activity = OcrActivity {
+            pending: Vec::new(),
+            paths: context.paths,
+            emit,
+            last: None,
+        };
+        let mut observe = |bytes: &[u8]| activity.feed(bytes);
+        let output =
+            process::run_until_cancelled(wrapped, None, 32 * 1024 * 1024, Some(&mut observe));
+        program.validate()?;
+        let output = output.map_err(|error| match error.code.as_str() {
+            "READ_CANCELLED" => Error::new(
+                "AI_CANCELLED",
+                "AI 分析已取消。",
+                "Only the owned process group was cancelled",
+            ),
+            "DIFF_OUTPUT_LIMIT" | "OUTPUT_LIMIT" => {
+                invalid("Agent output exceeded the configured read limit")
+            }
+            _ => Error::new("AI_PROCESS", "无法启动只读 Agent 分析。", error.code),
+        })?;
+        if output.code != 0 {
+            // stderr was merged into stdout for live progress; reattach it so
+            // failure classification and redaction still see the CLI's text.
+            let failure = process::Output {
+                code: output.code,
+                stdout: Vec::new(),
+                stderr: output.stdout,
+            };
+            return Err(agent_failure(self.kind(), "analysis", &failure));
+        }
+        let bytes = fs::read(&result)
+            .map_err(|_| invalid("OCR finished without writing its result file"))?;
+        program.validate()?;
+        Ok(AgentAnalysis {
+            value: ocr::map_review(&bytes, context.selected, context.language)?,
+            session: None,
+        })
+    }
+    fn analyze(&self, program: &AgentProgram, _: &str, _: &Value) -> Result<Value> {
+        if program.kind != self.kind() {
+            return Err(unsupported("Agent 类型不匹配。"));
+        }
+        Err(unsupported("OpenCodeReview 仅支持项目内的代码审查。"))
+    }
+}
 impl AgentProvider for CodewizProvider {
     fn kind(&self) -> AgentKind {
         AgentKind::Codewiz
@@ -284,12 +436,15 @@ pub(crate) fn locate(kind: AgentKind) -> Option<PathBuf> {
         PathBuf::from("/opt/homebrew/bin"),
         PathBuf::from("/usr/local/bin"),
     ];
-    if let Some(user_directory) = std::env::var_os("HOME") {
+        if let Some(user_directory) = std::env::var_os("HOME") {
         for suffix in [".local/bin", ".cargo/bin", ".npm-global/bin"] {
             roots.push(PathBuf::from(&user_directory).join(suffix));
         }
         if kind == AgentKind::Codewiz {
             roots.extend(codewiz::installation_roots(Path::new(&user_directory)));
+        }
+        if kind == AgentKind::Ocr {
+            roots.extend(ocr::installation_roots(Path::new(&user_directory)));
         }
     }
     if kind == AgentKind::Codewiz {
@@ -342,6 +497,7 @@ fn managed_configuration(kind: AgentKind) -> bool {
             "/etc/opencode/codewiz.json",
             "/etc/opencode/codewiz.jsonc",
         ],
+        AgentKind::Ocr => &[],
     };
     paths.iter().any(|path| fs::symlink_metadata(path).is_ok())
 }
@@ -361,6 +517,19 @@ pub(crate) fn resolve_executable(
     let mut identity = program::program_identity(&path)?;
     if kind == AgentKind::Codewiz {
         if let Some(native) = codewiz::native_program(&path)? {
+            origins.push(
+                path.parent()
+                    .ok_or_else(|| unsupported("CLI 路径无效。"))?
+                    .into(),
+            );
+            let (resolved, links) = program::resolve_program_path(&native)?;
+            identity.push_str(&program::program_identity(&resolved)?);
+            origins.extend(links);
+            path = resolved;
+        }
+    }
+    if kind == AgentKind::Ocr {
+        if let Some(native) = ocr::native_program(&path)? {
             origins.push(
                 path.parent()
                     .ok_or_else(|| unsupported("CLI 路径无效。"))?
@@ -477,6 +646,16 @@ fn isolated_command_options(
     // Claude's login reader uses the system Keychain CLI.
     if kind == AgentKind::ClaudeCode {
         profile.push_str("(allow process-exec (literal \"/usr/bin/security\"))");
+    }
+    // OCR keeps its LLM configuration and review sessions under its own home;
+    // the analysis writes only there, never in the project or user config.
+    if kind == AgentKind::Ocr {
+        if let Some(home) = std::env::var_os("HOME") {
+            profile.push_str(&format!(
+                "(allow file-write* (subpath {}))",
+                quote(&PathBuf::from(home).join(".opencodereview"))?
+            ));
+        }
     }
     // Codewiz cleanup sees only the empty, Proof-owned MCP inventory.
     if kind == AgentKind::Codewiz {
@@ -625,6 +804,48 @@ fn run(
         .map(|output| output.value)
 }
 
+/// Live `[ocr] ...` progress lines, mapped to public activity events.
+/// The file under review surfaces whenever a line mentions a selected path;
+/// spinner frames still refresh liveness, but identical lines never repeat.
+struct OcrActivity<'a> {
+    pending: Vec<u8>,
+    paths: &'a [String],
+    emit: &'a dyn Fn(super::AiProgress),
+    last: Option<String>,
+}
+impl OcrActivity<'_> {
+    fn feed(&mut self, bytes: &[u8]) {
+        self.pending.extend_from_slice(bytes);
+        if self.pending.len() > 2 * 1024 * 1024 {
+            self.pending.clear();
+            return;
+        }
+        while let Some(end) = self.pending.iter().position(|byte| *byte == b'\n') {
+            let line: Vec<u8> = self.pending.drain(..=end).collect();
+            let text = String::from_utf8_lossy(&line);
+            let text = text.trim_matches(|c: char| c.is_control() || c == ' ');
+            if !text.starts_with("[ocr]") {
+                continue;
+            }
+            let path = self
+                .paths
+                .iter()
+                .filter(|path| text.contains(path.as_str()))
+                .max_by_key(|path| path.len());
+            let key = format!("{text}|{:?}", path);
+            if self.last.as_deref() == Some(&key) {
+                continue;
+            }
+            self.last = Some(key);
+            (self.emit)(super::AiProgress {
+                phase: "analyzing",
+                path: path.cloned(),
+                completed: None,
+                total: None,
+            });
+        }
+    }
+}
 fn help_output(kind: AgentKind, executable: &Path, root: &Path) -> Result<process::Output> {
     let mut command = isolated_command(kind, executable, root)?;
     if kind == AgentKind::Codewiz {
@@ -663,6 +884,9 @@ fn help_output(kind: AgentKind, executable: &Path, root: &Path) -> Result<proces
     } else {
         if kind == AgentKind::Codex {
             command.arg("exec");
+        }
+        if kind == AgentKind::Ocr {
+            command.arg("review");
         }
         command.arg("--help");
         process::run_diff(command, None, Duration::from_secs(10), 256 * 1024)
@@ -723,7 +947,7 @@ fn run_workspace(
             AgentKind::ClaudeCode => {
                 command.arg("--add-dir").arg(context.evidence);
             }
-            AgentKind::Codex => (),
+            AgentKind::Codex | AgentKind::Ocr => (),
         }
         let title = match context.task {
             super::AiTask::Grouping => "Proof · AI Grouping",
@@ -833,6 +1057,7 @@ fn run_workspace(
 }
 fn arguments(kind: AgentKind, root: &Path, schema: &Value) -> Result<Vec<String>> {
     let args: Vec<String> = match kind {
+        AgentKind::Ocr => return Err(unsupported("OpenCodeReview 不使用通用 Prompt 参数。")),
         AgentKind::Codewiz => codewiz::arguments(),
         AgentKind::Codex => {
             let mut args: Vec<String> = [
@@ -1027,6 +1252,7 @@ fn missing_capabilities(kind: AgentKind, help: &str) -> Vec<&'static str> {
             "--strict-mcp-config",
             "--json-schema",
         ],
+        AgentKind::Ocr => &["--audience", "--format", "--output", "--from", "--to"],
     };
     flags
         .iter()
@@ -1202,6 +1428,7 @@ pub(super) fn probe_program(program: &AgentProgram) -> Result<AgentProbeResult> 
         AgentKind::Codewiz => {
             version.chars().next().is_some_and(|c| c.is_ascii_digit()) && version.contains('.')
         }
+        AgentKind::Ocr => version.contains("open-code-review"),
     };
     if !expected {
         return Err(unsupported(
@@ -1245,10 +1472,19 @@ pub(super) fn probe_program(program: &AgentProgram) -> Result<AgentProbeResult> 
             detail: "已检查 CLI 参数和本地登录文件。使用 ~/.config/codewiz 的模型配置；未调用模型或验证登录有效期。".into(),
         });
     }
+    if kind == AgentKind::Ocr {
+        program.validate()?;
+        return Ok(AgentProbeResult {
+            provider: kind, executable_path: program.executable.clone(), version, compatible,
+            authenticated: ocr::authenticated(),
+            message: "OpenCodeReview CLI 已找到。".into(),
+            detail: "已检查 CLI 参数和 ~/.opencodereview 的模型配置；未调用模型或验证登录有效期。".into(),
+        });
+    }
     let login = execute(match kind {
         AgentKind::Codex => &["login", "status"],
         AgentKind::ClaudeCode => &["auth", "status", "--json"],
-        AgentKind::Codewiz => unreachable!(),
+        AgentKind::Codewiz | AgentKind::Ocr => unreachable!(),
     })?;
     let authenticated = match kind {
         AgentKind::Codex => {
@@ -1269,7 +1505,7 @@ pub(super) fn probe_program(program: &AgentProgram) -> Result<AgentProbeResult> 
         AgentKind::ClaudeCode => serde_json::from_slice::<Value>(&login.stdout)
             .ok()
             .and_then(|v| v["loggedIn"].as_bool()),
-        AgentKind::Codewiz => unreachable!(),
+        AgentKind::Codewiz | AgentKind::Ocr => unreachable!(),
     };
     let (message, detail) = match authenticated {
         Some(true) => (

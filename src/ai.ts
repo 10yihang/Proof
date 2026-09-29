@@ -10,9 +10,14 @@ import { useEffect, useRef, useState } from "react";
 import { asError, useReadRequest, useRequest } from "./api";
 import type { Changes, ChangedFile, FileDiff, Side, ProofError } from "./types";
 
-export type AgentKind = "codex" | "claude_code" | "codewiz";
+export type AgentKind = "codex" | "claude_code" | "codewiz" | "ocr";
 export const agentName = (kind: AgentKind) =>
-  ({ codex: "Codex", claude_code: "Claude Code", codewiz: "Codewiz" })[kind];
+  ({
+    codex: "Codex",
+    claude_code: "Claude Code",
+    codewiz: "Codewiz",
+    ocr: "OpenCodeReview",
+  })[kind];
 export type AiRisk = "low" | "medium" | "high" | "critical" | "unknown";
 export interface AiGroup {
   title: string;
@@ -378,6 +383,14 @@ export function useAi(
       !providers.some((p) => p.id === provider && p.available)
     )
       return;
+    if (task === "grouping" && provider === "ocr") {
+      setError({
+        code: "AI_ISOLATION_UNAVAILABLE",
+        message: t("OpenCodeReview 仅支持代码审查，分组请使用其他 Agent。"),
+        detail: "",
+      });
+      return;
+    }
     if (task === "grouping" && !groupReady) return;
     const currentGroup = groups.groups.find((g) =>
       g.files.includes(diff?.path ?? ""),

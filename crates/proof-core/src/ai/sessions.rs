@@ -188,6 +188,7 @@ pub(super) fn publish(
         return Ok(None);
     };
     match kind {
+        AgentKind::Ocr => return Ok(None),
         AgentKind::Codex | AgentKind::ClaudeCode => {
             let (source, destination) = if kind == AgentKind::Codex {
                 (
@@ -222,6 +223,7 @@ pub(super) fn publish(
         AgentKind::Codewiz => format!("env APP_NAME=codewiz XDG_DATA_HOME={} XDG_CONFIG_HOME={} {executable} --session {}",
             quote(&home("XDG_DATA_HOME", ".local/share").ok_or_else(|| super::invalid("Missing Codewiz data directory"))?.to_string_lossy()),
             quote(&home("XDG_CONFIG_HOME", ".config").ok_or_else(|| super::invalid("Missing Codewiz config directory"))?.to_string_lossy()), quote(&id)),
+        AgentKind::Ocr => unreachable!("OCR sessions are not published"),
     };
     Ok(Some(AgentSession {
         id,

@@ -111,6 +111,7 @@ fn observer_locations(
     crate::AGENT_ADAPTERS
         .iter()
         .filter_map(|adapter| {
+            let observer = adapter.observer?;
             let path = settings
                 .options(adapter.kind)
                 .executable_path
@@ -122,12 +123,12 @@ fn observer_locations(
                 && path.is_none()
                 && !installed
                     .iter()
-                    .any(|item| item.agent == adapter.observer && item.state != "revoked")
+                    .any(|item| item.agent == observer && item.state != "revoked")
             {
                 return None;
             }
             Some(ObserverProgramLocation {
-                agent: adapter.observer,
+                agent: observer,
                 executable_path: path.map(|p| p.to_string_lossy().into_owned()),
                 name: adapter.name,
                 installation_available: adapter.hook_installation_available(),
