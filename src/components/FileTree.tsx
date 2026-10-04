@@ -231,47 +231,6 @@ export function FileTree({
           <List size={16} />
         </Button>
       </div>
-      {!readOnly && reviewProgress && (
-        <section className="review-coverage" aria-label={t("审查范围")}>
-          <div
-            className="review-coverage-summary"
-            role="status"
-            aria-live="polite"
-            aria-atomic="true"
-          >
-            <strong>
-              {t("已加载 {loaded}/{files} 个文件版本", {
-                loaded: reviewProgress.loadedFiles,
-                files: reviewProgress.totalFiles,
-              })}
-            </strong>
-            <span>
-              {t("已加载内容 {reviewed}/{total} 个 Hunk 已审查", {
-                reviewed: reviewProgress.reviewed,
-                total: reviewProgress.total,
-              })}
-            </span>
-            {reviewProgress.unreadFiles > 0 && (
-              <span>
-                {t("还有 {count} 个文件版本未加载", {
-                  count: reviewProgress.unreadFiles,
-                })}
-              </span>
-            )}
-          </div>
-          {onNextReview && (
-            <Button
-              className="button compact next-review-file"
-              title={t("在全部变更中打开下一未审查文件")}
-              disabled={reviewLoading}
-              onClick={onNextReview}
-            >
-              {t("下一未审查文件")}
-              <ArrowRight size={14} />
-            </Button>
-          )}
-        </section>
-      )}
       {!readOnly && (
         <div className="file-filters" role="group" aria-label={t("比较范围")}>
           {(
@@ -531,7 +490,22 @@ export function FileTree({
       </div>
       {!readOnly && (
         <div className="file-selection-actions">
-          <span>
+          <span
+            title={
+              reviewProgress
+                ? t(
+                    "已加载 {loaded}/{files} 个文件；已加载变更块 {reviewed}/{total} 已审查；{unread} 个文件未加载",
+                    {
+                      loaded: reviewProgress.loadedFiles,
+                      files: reviewProgress.totalFiles,
+                      reviewed: reviewProgress.reviewed,
+                      total: reviewProgress.total,
+                      unread: reviewProgress.unreadFiles,
+                    },
+                  )
+                : undefined
+            }
+          >
             {selectedFiles.length ? (
               <>
                 {selectedFiles.length} {t(" selected")}
@@ -583,6 +557,16 @@ export function FileTree({
             )}
           {selectedFiles.length > 0 ? (
             <Button onClick={() => setChecked(new Set())}>{t("清除")}</Button>
+          ) : onNextReview ? (
+            <Button
+              className="icon-button next-review-file"
+              aria-label={t("下一未审查文件")}
+              title={t("下一未审查文件")}
+              disabled={reviewLoading}
+              onClick={onNextReview}
+            >
+              <ArrowRight size={14} />
+            </Button>
           ) : (
             <small>{t("⌘/Ctrl 点击多选")}</small>
           )}

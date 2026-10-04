@@ -1,4 +1,6 @@
 import { openReadingTools } from "./controls";
+import { assertCommitGeometry } from "./commit-geometry";
+import { assertContextGeometry } from "./context-geometry";
 import { test, expect } from "@playwright/test";
 test.beforeEach(({ page }) => {
   page.on("pageerror", (error) =>
@@ -92,6 +94,17 @@ test("actual Git workflow: live save, branch, selected hunk Commit, Amend and Co
   try {
     const workspace = await invoke("open_workspace", { path: repo });
     await invoke("set_trust", { workspaceId: workspace.id, trusted: true });
+    await invoke("set_preferences", {
+      preferences: { ...(await invoke("preferences")), theme: "dark" },
+    });
+    await invoke("set_repository_layout", {
+      workspaceId: workspace.id,
+      layout: {
+        ...(await invoke("repository_layout", { workspaceId: workspace.id })),
+        contextWidth: 300,
+        contextOpen: false,
+      },
+    });
     await page.exposeFunction("fixtureCoreInvoke", invoke);
     await page.addInitScript(() =>
       Object.assign(window, {
@@ -163,6 +176,12 @@ test("actual Git workflow: live save, branch, selected hunk Commit, Amend and Co
       exact: true,
     });
     if (await showContext.isVisible()) await showContext.click();
+    await expect(page.locator(".context-linked-session")).toHaveCount(1);
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    await assertContextGeometry(page, 300);
+    await page.screenshot({
+      path: ".artifacts/context-compact-fix/actual-core-context-300-dark.png",
+    });
     await page
       .getByRole("button", { name: "关联已有会话", exact: true })
       .click();
@@ -182,6 +201,21 @@ test("actual Git workflow: live save, branch, selected hunk Commit, Amend and Co
       .getByRole("button", { name: "完成", exact: true })
       .click();
     await expect(page.locator(".context-linked-session")).toHaveCount(2);
+    const contextSeparator = page.getByRole("separator", {
+      name: "上下文与证据",
+      exact: true,
+    });
+    const separatorBox = (await contextSeparator.boundingBox())!;
+    const x = separatorBox.x + separatorBox.width / 2,
+      y = separatorBox.y + separatorBox.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + 80, y, { steps: 8 });
+    await page.mouse.up();
+    await assertContextGeometry(page, 240);
+    await page.screenshot({
+      path: ".artifacts/context-compact-fix/actual-core-context-240-dark.png",
+    });
     const linked = (
       await invoke("context_overview", {
         workspaceId: workspace.id,
@@ -250,6 +284,7 @@ test("actual Git workflow: live save, branch, selected hunk Commit, Amend and Co
       .getByRole("tab", { name: /^Commit/ })
       .click();
     await expect(page.locator(".composer-hint")).toContainText("1 staged");
+    await assertCommitGeometry(page);
     expect(git("show", ":src/api/client.ts")).toContain("live-save");
     expect(git("show", ":src/api/client.ts")).not.toContain("keep-unstaged");
     await page.getByLabel("Commit message").fill("Selected hunk from UI");

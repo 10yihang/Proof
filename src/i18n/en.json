@@ -1663,5 +1663,9 @@
   "正在载入历史工作区…": "Loading history workspace…",
   "正在载入文件工作区…": "Loading files workspace…",
   "正在载入比较视图…": "Loading comparison view…",
-  "观察设置已变化，请重试。": "Observer settings changed. Try again."
+  "观察设置已变化，请重试。": "Observer settings changed. Try again.",
+  "已加载 {loaded}/{files} 个文件；已加载变更块 {reviewed}/{total} 已审查；{unread} 个文件未加载": "Files loaded {loaded}/{files}; loaded hunks reviewed {reviewed}/{total}; {unread} files not loaded",
+  "暂无相关会话": "No related sessions",
+  "会话暂不可用": "Sessions unavailable",
+  "验证结果未确认": "Verification not confirmed"
 }

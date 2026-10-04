@@ -1,5 +1,7 @@
 import { editorState, setEditorScroll, visibleSourcePosition } from "./editor";
 import { chooseOption, openReadingTools, closeReadingTools } from "./controls";
+import { assertCommitGeometry } from "./commit-geometry";
+import { assertContextGeometry } from "./context-geometry";
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { demoChanges, demoDiff } from "../../src/demo";
 import { demoGraphPage } from "../../src/graph-demo";
@@ -1629,9 +1631,32 @@ test("a Diff from a newer Branch waits for matching repository state before revi
   ).toBeGreaterThanOrEqual(2);
 });
 
-async function openContextFixture(page: Page) {
-  await openFixture(page);
-  await page.evaluate(() => {
+async function openContextFixture(
+  page: Page,
+  options: {
+    width?: number;
+    language?: "zh-CN" | "en";
+    loading?: boolean;
+  } = {},
+) {
+  if (options.language === "en") {
+    await page.addInitScript(() =>
+      sessionStorage.setItem("proof-test-language", "en"),
+    );
+  }
+  await openFixture(
+    page,
+    false,
+    false,
+    { ...defaultPreferences, theme: options.width ? "dark" : "light" },
+    {
+      sidebarWidth: 280,
+      contextWidth: options.width ?? 300,
+      sidebarOpen: true,
+      contextOpen: false,
+    },
+  );
+  await page.evaluate((options) => {
     const w = window as any,
       original = w.__TAURI_INTERNALS__.invoke;
     const makeLink = (id: string, observed: boolean) => ({
@@ -1659,11 +1684,17 @@ async function openContextFixture(page: Page) {
       active: observed,
     });
     const state = {
-      links: [makeLink("session-a", true), makeLink("session-b", false)],
+      links: [
+        makeLink("session-a", !options.loading),
+        makeLink("session-b", false),
+      ],
       history: [] as any[],
       calls: [] as any[],
       pending: false,
       reject: undefined as any,
+      overviewMode: (options.loading ? "loading" : "ready") as
+        "loading" | "ready" | "error",
+      resumeOverview: undefined as (() => void) | undefined,
     };
     w.contextFixture = state;
     w.__TAURI_INTERNALS__.invoke = async (name: string, payload: any) => {
@@ -1682,7 +1713,17 @@ async function openContextFixture(page: Page) {
       )
         return original(name, payload);
       state.calls.push({ command, args: structuredClone(args) });
-      if (command === "context_overview")
+      if (command === "context_overview") {
+        if (state.overviewMode === "loading")
+          await new Promise<void>((resolve) => {
+            state.resumeOverview = resolve;
+          });
+        if (state.overviewMode === "error")
+          throw {
+            code: "CONTEXT_FIXTURE_FAILURE",
+            message: "Fixture session query unavailable",
+            detail: "Held overview read failed",
+          };
         return {
           workspaceId: args.workspaceId,
           path: args.path,
@@ -1693,6 +1734,7 @@ async function openContextFixture(page: Page) {
           historyCount: state.history.length,
           hasMore: false,
         };
+      }
       if (command === "context_candidates")
         return {
           links: structuredClone(
@@ -1793,17 +1835,36 @@ async function openContextFixture(page: Page) {
       });
       return structuredClone({ change: entry, revision: entry.revision });
     };
-  });
-  await page.getByRole("button", { name: "显示上下文", exact: true }).click();
-  await expect(page.locator(".context-linked-session")).toContainText(
-    "Check request validation",
-  );
+  }, options);
+  await page
+    .getByRole("button", { name: /^(显示上下文|Show context)$/ })
+    .click();
+  if (options.loading) {
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => typeof (window as any).contextFixture.resumeOverview,
+        ),
+      )
+      .toBe("function");
+  } else {
+    await expect(page.locator(".context-linked-session")).toContainText(
+      "Check request validation",
+    );
+  }
 }
 
 async function openFixture(
   page: Page,
   watchAvailable = false,
   aiEnabled = false,
+  preferences = defaultPreferences,
+  layout = {
+    sidebarWidth: 280,
+    contextWidth: 300,
+    sidebarOpen: true,
+    contextOpen: false,
+  },
 ) {
   const workspace = {
     ...demoChanges.workspace,
@@ -1824,7 +1885,15 @@ async function openFixture(
     ]),
   );
   await page.addInitScript(
-    ({ changes, diffs, preferences, graph, watchAvailable, aiEnabled }) => {
+    ({
+      changes,
+      diffs,
+      preferences,
+      graph,
+      watchAvailable,
+      aiEnabled,
+      layout,
+    }) => {
       const state = {
         changes,
         diffs,
@@ -2207,13 +2276,7 @@ async function openFixture(
             if (command === "preferences") return preferences;
             if (command === "recent_workspaces") return [changes.workspace];
             if (command === "open_workspace") return changes.workspace;
-            if (command === "repository_layout")
-              return {
-                sidebarWidth: 280,
-                contextWidth: 300,
-                sidebarOpen: true,
-                contextOpen: false,
-              };
+            if (command === "repository_layout") return layout;
             if (command === "changes") return structuredClone(state.changes);
             if (command === "read_file_diff") {
               await new Promise((r) => setTimeout(r, state.delay));
@@ -2435,15 +2498,96 @@ async function openFixture(
     {
       changes,
       diffs,
-      preferences: defaultPreferences,
+      preferences,
       graph: demoGraphPage(),
       watchAvailable,
       aiEnabled,
+      layout,
     },
   );
   await page.goto("/");
   await page.locator(".recent-projects button").first().click();
   await expect(page.locator(".diff-file-header")).toContainText("requests.ts");
+}
+
+for (const width of [1440, 1024]) {
+  for (const language of ["zh-CN", "en"] as const) {
+    test(`zero-staged Commit keeps the full reading column at ${width} in ${language}`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height: width === 1024 ? 720 : 960 });
+      if (language === "en") {
+        await page.addInitScript(() =>
+          sessionStorage.setItem("proof-test-language", "en"),
+        );
+      }
+      await openFixture(page, false, false, {
+        ...defaultPreferences,
+        theme: width === 1440 ? "dark" : "light",
+      });
+      await page.evaluate(() => {
+        const state = (window as any).fixture;
+        state.changes.files = state.changes.files.filter(
+          (file: any) => file.side !== "staged",
+        );
+        state.changes.token += ":zero-staged";
+        window.dispatchEvent(new Event("focus"));
+      });
+      await expect(page.getByRole("tab", { name: /^Commit/ })).toHaveText(
+        /Commit\s*0/,
+      );
+      await expect(page.locator("html")).toHaveAttribute("lang", language);
+      await expect(page.locator("html")).toHaveAttribute(
+        "data-theme",
+        width === 1440 ? "dark" : "light",
+      );
+      await openCommit(page);
+      const commit = page.locator(".commit-workspace");
+      const diff = page.getByRole("region", { name: /^(代码差异|Code Diff)$/ });
+      await expect(diff.locator(".diff-file-header")).toContainText(
+        "src/api/requests.ts",
+      );
+      await expect(diff.locator(".comparison")).toHaveText(
+        /Index\s*→\s*Worktree/,
+      );
+      await expect(
+        commit.getByRole("button", { name: "Unstaged", exact: true }),
+      ).toHaveAttribute("aria-pressed", "true");
+      await expect(commit.locator(".composer-hint")).toHaveText(
+        "0 staged · 4 unstaged",
+      );
+      const message = commit.getByRole("textbox", {
+        name: "Commit message",
+        exact: true,
+      });
+      const submit = commit.locator(".composer-submit > button").first();
+      await expect(submit).toBeDisabled();
+      await message.fill(
+        "Keep unstaged request work visible\nOnly an explicit commit click may stage these files.",
+      );
+      await expect(submit).toHaveText(
+        /^(Stage 全部并 Commit|Stage all & Commit)\s*4$/,
+      );
+      await expect(submit).toBeEnabled();
+      await assertCommitGeometry(page);
+      await commit.getByRole("button", { name: /^(全部|All)$/ }).click();
+      await expect(diff.locator(".diff-file-header")).toContainText(
+        "src/api/requests.ts",
+      );
+      expect(
+        await page.evaluate(() =>
+          (window as any).fixture.actions.filter((action: any) =>
+            ["stage", "stage_files", "commit", "mark_reviewed"].includes(
+              action.command,
+            ),
+          ),
+        ),
+      ).toEqual([]);
+      await page.screenshot({
+        path: `.artifacts/ui-compact-fix/commit-zero-staged-${width}-${language}-${width === 1440 ? "dark" : "light"}.png`,
+      });
+    });
+  }
 }
 
 test("Changes restores its source line after a different staged Commit file and History", async ({
@@ -4680,6 +4824,259 @@ test("Context: compact file activity shows edits, commands and failures without 
     animations: "disabled",
   });
 });
+
+for (const contextWidth of [300, 240]) {
+  for (const language of ["zh-CN", "en"] as const) {
+    test(`Context compact header preserves all record states at ${contextWidth}px in ${language}`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width: 1440, height: 960 });
+      await openContextFixture(page, {
+        width: contextWidth,
+        language,
+        loading: true,
+      });
+      const panel = page.locator("#context-panel");
+      const heading = panel.locator(".context-session-heading");
+      const actions = heading.locator(".context-link-actions");
+      const associationName =
+        language === "en" ? "Link an existing session" : "关联已有会话";
+      const historyName = language === "en" ? "Edit History" : "修改记录";
+      const association = panel.getByRole("button", {
+        name: associationName,
+        exact: true,
+      });
+      const history = actions.getByRole("button", {
+        name: historyName,
+        exact: true,
+      });
+      const dialog = page.getByRole("dialog", {
+        name:
+          language === "en" ? "Manage Session associations" : "管理会话关联",
+        exact: true,
+      });
+      const done = () => dialog.getByRole("button", { name: /^(完成|Done)$/ });
+      const labels = {
+        loading: language === "en" ? "Loading Sessions…" : "读取会话中…",
+        error: language === "en" ? "Sessions unavailable" : "会话暂不可用",
+        empty: language === "en" ? "No related sessions" : "暂无相关会话",
+        unlinked: language === "en" ? "No related sessions" : "暂无相关会话",
+      };
+      await expect(page.locator("html")).toHaveAttribute("lang", language);
+      await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+      await expect
+        .poll(
+          async () =>
+            (
+              await editorState(
+                page.locator(".workspace-page:not([hidden]) .diff-scroll"),
+              )
+            )?.modelLines ?? 0,
+        )
+        .toBeGreaterThan(0);
+      const verification = panel.locator(".context-evidence-summary > p");
+      await expect(verification).toHaveText(
+        language === "en" ? "Verification not confirmed" : "验证结果未确认",
+      );
+      await expect(verification).toHaveAttribute(
+        "title",
+        language === "en"
+          ? "Inspect command records in file activity; they do not verify the current Diff."
+          : "命令记录需在文件活动中核对，不代表当前 Diff 已验证。",
+      );
+
+      async function checkState(
+        state: "loading" | "error" | "empty" | "linked" | "unlinked",
+      ) {
+        await expect(panel.locator(".observer-empty")).toHaveCount(0);
+        await expect(association).toHaveCount(1);
+        await expect(association).toBeEnabled();
+        await expect(history).toBeEnabled();
+        await expect(actions.getByRole("button")).toHaveCount(
+          state === "linked" ? 2 : 1,
+        );
+        await expect(history).toHaveText("");
+        if (state === "linked") {
+          await expect(association).toHaveText("");
+          await expect(heading.locator(".context-sessions-empty")).toHaveCount(
+            0,
+          );
+          await expect(panel.locator(".context-linked-session")).toHaveCount(1);
+        } else {
+          await expect(
+            heading.locator(".context-sessions-empty > [role=status]"),
+          ).toHaveText(labels[state]);
+          await expect(
+            heading.locator(".context-sessions-empty button"),
+          ).toHaveCount(1);
+          await expect(association).toHaveText(
+            language === "en" ? "Link Session" : "关联会话",
+          );
+          await expect(panel.locator(".context-linked-session")).toHaveCount(0);
+        }
+        await assertContextGeometry(page, contextWidth);
+        await page.screenshot({
+          path: `.artifacts/context-compact-fix/context-${contextWidth}-${language}-${state}-dark.png`,
+        });
+      }
+      async function closeManager() {
+        await done().click();
+        await expect(page.locator(".context-associations")).toHaveCount(0);
+        // RealContext restores focus in the next animation frame. Let that
+        // scheduled callback finish before sending another keyboard action.
+        await page.evaluate(
+          () =>
+            new Promise<void>((resolve) =>
+              requestAnimationFrame(() => resolve()),
+            ),
+        );
+      }
+      async function openHistory(expectedEntries = 0) {
+        await history.press("Enter");
+        await expect(dialog.locator(".association-history")).toBeVisible();
+        if (expectedEntries) {
+          await expect(
+            dialog.locator(".association-history article"),
+          ).toHaveCount(expectedEntries);
+        } else {
+          await expect(
+            dialog.locator(".association-history .association-empty"),
+          ).toHaveText(
+            language === "en" ? "No association edits yet." : "尚无关联修改。",
+          );
+        }
+        await closeManager();
+        await expect(history).toBeFocused();
+      }
+
+      try {
+        await checkState("loading");
+        await openHistory();
+        await association.press("Enter");
+        await expect(dialog.locator(".association-candidate")).toHaveCount(2);
+        await closeManager();
+        await expect(association).toBeFocused();
+        await page.evaluate(() => {
+          const fixture = (window as any).contextFixture;
+          fixture.overviewMode = "error";
+          fixture.resumeOverview();
+        });
+        await expect(panel.getByRole("alert")).toContainText(
+          "Fixture session query unavailable",
+        );
+        await checkState("error");
+        await openHistory();
+        await page.evaluate(() => {
+          (window as any).contextFixture.overviewMode = "ready";
+          window.dispatchEvent(new Event("focus"));
+        });
+        await expect(panel.getByRole("alert")).toHaveCount(0);
+        await checkState("empty");
+        await openHistory();
+
+        const emptyTrigger = await association.elementHandle();
+        await association.press("Enter");
+        await dialog
+          .locator(".association-candidate")
+          .filter({ hasText: "native-session-a" })
+          .click();
+        const note = "Narrow panel association note";
+        await dialog.getByLabel(/^(本地备注|Local note)$/).fill(note);
+        await dialog
+          .getByRole("button", { name: /^(关联此会话|Link this Session)$/ })
+          .click();
+        await expect(
+          dialog.getByRole("status", {
+            name: /^(关联保存状态|Association save status)$/,
+          }),
+        ).toContainText(language === "en" ? "Association saved" : "关联已保存");
+        // The modal makes the background inert. Check the replacement DOM
+        // here, then its accessible actions and focus after closing the dialog.
+        await expect(actions.locator("button")).toHaveCount(2);
+        expect(
+          await emptyTrigger!.evaluate((element) => element.isConnected),
+        ).toBe(false);
+        await closeManager();
+        await expect(dialog).toBeHidden();
+        await expect(association).toBeFocused();
+        await expect(panel.locator(".context-local-note")).toContainText(note);
+        await checkState("linked");
+        await openHistory(1);
+
+        await panel
+          .getByRole("button", { name: /^(编辑关联|Edit association)$/ })
+          .press("Enter");
+        await dialog
+          .getByRole("button", { name: /^(解除关联|Unlink)$/ })
+          .click();
+        await expect(
+          dialog.getByRole("status", {
+            name: /^(关联保存状态|Association save status)$/,
+          }),
+        ).toContainText(language === "en" ? "Association saved" : "关联已保存");
+        await expect(actions.locator("button")).toHaveCount(1);
+        await closeManager();
+        await expect(dialog).toBeHidden();
+        await expect(association).toBeFocused();
+        await expect(heading).toContainText(
+          language === "en" ? "Manually unlinked 1" : "已手动解除 1",
+        );
+        await checkState("unlinked");
+        await history.press("Enter");
+        await expect(
+          dialog.locator(".association-history article"),
+        ).toHaveCount(2);
+        await closeManager();
+        await expect(history).toBeFocused();
+        const records = await page.evaluate(() => ({
+          calls: (window as any).contextFixture.calls,
+          history: (window as any).contextFixture.history,
+          actions: (window as any).fixture.actions,
+        }));
+        expect(records.history.map((entry: any) => entry.action)).toEqual([
+          "link",
+          "exclude",
+        ]);
+        expect(
+          records.history.every(
+            (entry: any) => entry.originalEvidence.pathEventCount === 0,
+          ),
+        ).toBe(true);
+        expect(
+          records.calls.filter(
+            (call: any) => call.command === "context_history",
+          ).length,
+        ).toBeGreaterThanOrEqual(5);
+        expect(
+          records.actions.filter((action: any) =>
+            ["stage", "stage_files", "commit", "mark_reviewed"].includes(
+              action.command,
+            ),
+          ),
+        ).toEqual([]);
+        const hook = panel.getByRole("button", {
+          name: /^(管理 Agent Hook|Manage Agent Hook)$/,
+        });
+        await expect(hook).toHaveCount(1);
+        await hook.press("Enter");
+        const settings = page.getByRole("dialog", {
+          name: /^(设置|Settings)$/,
+        });
+        await expect(settings).toBeVisible();
+        await expect(settings.locator(".settings-nav .active")).toContainText(
+          "Agent",
+        );
+        await page.keyboard.press("Escape");
+        await expect(settings).toBeHidden();
+        await expect(hook).toBeFocused();
+      } finally {
+        await page.evaluate(() =>
+          (window as any).contextFixture.resumeOverview?.(),
+        );
+      }
+    });
+  }
+}
 
 test("Context: manual links, notes, unlink and undo preserve original session evidence", async ({
   page,
@@ -7190,10 +7587,12 @@ test("Diff toolbar stages and discards the whole file; file pane shows Review pr
   await expect(discard).toBeDisabled();
 
   // 文件面板头部的 Review 进度：初始已加载 requests.ts（2 个 hunk）。
-  const progress = page.locator("#files-panel .review-coverage-summary");
-  await expect(progress).toContainText("0/2");
-  await expect(progress).toContainText("已加载 1/5 个文件版本");
-  await expect(progress).toContainText("还有 4 个文件版本未加载");
+  const progress = page.locator("#files-panel .file-selection-actions > span");
+  await expect(page.locator("#files-panel .review-coverage")).toHaveCount(0);
+  await expect(progress).toHaveAttribute(
+    "title",
+    "已加载 1/5 个文件；已加载变更块 0/2 已审查；4 个文件未加载",
+  );
 
   // 在选中 response.ts 之前放开其丢弃限制，并 stub 恢复点命令。
   await page.evaluate(() => {
@@ -7226,8 +7625,10 @@ test("Diff toolbar stages and discards the whole file; file pane shows Review pr
   await page
     .getByRole("button", { name: "response.ts M", exact: true })
     .click();
-  await expect(progress).toContainText("0/3");
-  await expect(progress).toContainText("已加载 2/5 个文件版本");
+  await expect(progress).toHaveAttribute(
+    "title",
+    "已加载 2/5 个文件；已加载变更块 0/3 已审查；3 个文件未加载",
+  );
   await expect(discard).toBeEnabled();
   await discard.click();
   const discardDialog = page.getByRole("dialog", {

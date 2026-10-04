@@ -1,6 +1,6 @@
 import { Button } from "./ui/controls";
 import { t } from "../i18n";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ClockCounterClockwise,
   Link,
@@ -37,6 +37,8 @@ export function RealContext({
   active?: boolean;
 }) {
   const request = useRequest();
+  const managerOrigin = useRef<HTMLButtonElement | null>(null);
+  const associationTrigger = useRef<HTMLButtonElement | null>(null);
   const [receivedOverview, setOverview] = useState<ContextOverview | null>(
       null,
     ),
@@ -84,6 +86,22 @@ export function RealContext({
       ? receivedOverview
       : null;
   const links = overview?.links ?? [];
+  const canManage = !!diff && !demo;
+  const associateButton = (
+    <Button
+      ref={associationTrigger}
+      className={links.length ? "icon-button" : "button compact"}
+      title={t("关联已有会话")}
+      aria-label={t("关联已有会话")}
+      onClick={(event) => {
+        managerOrigin.current = event.currentTarget;
+        setManager({});
+      }}
+    >
+      <Link size={14} />
+      {!links.length && t("关联会话")}
+    </Button>
+  );
   return (
     <>
       {error && (
@@ -96,49 +114,43 @@ export function RealContext({
           <ShieldCheck size={16} />
           <h3>{t("验证状态")}</h3>
         </div>
-        <p>{t("尚未确认此 Diff 的验证结果。")}</p>
-        <p className="inline-help">
-          {t("命令记录需在文件活动中核对，不代表当前 Diff 已验证。")}
+        <p title={t("命令记录需在文件活动中核对，不代表当前 Diff 已验证。")}>
+          {t("验证结果未确认")}
         </p>
       </section>
       <section className="context-section context-session-heading">
-        <div className="section-title">
-          <Terminal size={16} />
-          <h3>{t("相关会话")}</h3>
-        </div>
+        <header className="context-session-toolbar">
+          <div className="section-title">
+            <Terminal size={16} />
+            <h3>{t("相关会话")}</h3>
+          </div>
+          {canManage && (
+            <div className="context-link-actions">
+              {!!links.length && associateButton}
+              <Button
+                className="icon-button"
+                title={t("修改记录")}
+                aria-label={t("修改记录")}
+                onClick={(event) => {
+                  managerOrigin.current = event.currentTarget;
+                  setManager({ history: true });
+                }}
+              >
+                <ClockCounterClockwise size={14} />
+              </Button>
+            </div>
+          )}
+        </header>
         {!links.length && (
-          <div className="observer-empty">
-            <Terminal size={26} />
-            <strong>
+          <div className="context-sessions-empty">
+            <span role="status">
               {!overview && !demo && diff && !error
                 ? t("读取会话中…")
-                : t("暂无相关记录")}
-            </strong>
-            <p>
-              {t("来源未知。可以关联已有会话，或在 Agent Hook 中开启记录。")}
-            </p>
-          </div>
-        )}
-        {diff && !demo && (
-          <div className="context-link-actions">
-            <Button
-              className="button compact"
-              title={t("关联已有会话")}
-              aria-label={t("关联已有会话")}
-              onClick={() => setManager({})}
-            >
-              <Link size={14} />
-              {t("关联已有会话")}
-            </Button>
-            <Button
-              className="button compact subtle"
-              title={t("修改记录")}
-              aria-label={t("修改记录")}
-              onClick={() => setManager({ history: true })}
-            >
-              <ClockCounterClockwise size={14} />
-              {t("修改记录")}
-            </Button>
+                : error
+                  ? t("会话暂不可用")
+                  : t("暂无相关会话")}
+            </span>
+            {canManage && associateButton}
           </div>
         )}
         {!!overview?.excludedCount && (
@@ -165,7 +177,10 @@ export function RealContext({
               className="icon-button context-edit-link"
               title={t("编辑关联")}
               aria-label={t("编辑关联")}
-              onClick={() => setManager({ link })}
+              onClick={(event) => {
+                managerOrigin.current = event.currentTarget;
+                setManager({ link });
+              }}
             >
               <PencilLine size={14} />
             </Button>
@@ -277,7 +292,16 @@ export function RealContext({
           path={diff.path}
           initialLink={manager.link}
           initialHistory={manager.history}
-          onClose={() => setManager(null)}
+          onClose={() => {
+            const origin = managerOrigin.current;
+            setManager(null);
+            requestAnimationFrame(() =>
+              (origin?.isConnected
+                ? origin
+                : associationTrigger.current
+              )?.focus(),
+            );
+          }}
           onChanged={() => setRevision((old) => old + 1)}
           onError={onError}
         />

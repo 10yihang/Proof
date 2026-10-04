@@ -1,9 +1,9 @@
 import { t } from "../i18n";
-import { Button } from "./ui/controls";
 import type { ReactNode } from "react";
 import { FileTree } from "./FileTree";
 import { CardSplit } from "./CardSplit";
 import {
+  fileKey,
   type ChangedFile,
   type Changes,
   type FileDiff,
@@ -39,27 +39,8 @@ export function CommitWorkspace({
   onSearch: (value: string) => void;
   children: ReactNode;
 }) {
-  const stagedFiles = changes.files.filter((file) => file.side === "staged");
   return (
     <section className="commit-workspace" aria-label={t("Commit 工作区")}>
-      <div className="commit-scope-summary">
-        <strong>
-          {t("已暂存提交范围：{count} 个文件", { count: stagedFiles.length })}
-        </strong>
-        <span>{t("未暂存变更可在下方切换查看并暂存。")}</span>
-        {stagedFiles.length > 0 && (
-          <Button
-            className="text-button"
-            onClick={() => {
-              onScope("staged");
-              onSearch("");
-              onSelect(stagedFiles[0]);
-            }}
-          >
-            {t("查看已暂存变更")}
-          </Button>
-        )}
-      </div>
       <CardSplit
         field="commitDetailsHeight"
         orientation="vertical"
@@ -82,7 +63,20 @@ export function CommitWorkspace({
             searchId="commit-file-search"
             loaded={loaded}
             scope={scope}
-            onScope={onScope}
+            onScope={(value) => {
+              onScope(value);
+              if (value === "staged") {
+                onSearch("");
+                const staged = changes.files.filter(
+                  (file) => file.side === "staged",
+                );
+                if (
+                  !staged.some((file) => fileKey(file) === selected) &&
+                  staged[0]
+                )
+                  onSelect(staged[0]);
+              }
+            }}
             disabled={disabled}
             onStage={onStage}
             onDiscard={onDiscard}

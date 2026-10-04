@@ -244,13 +244,6 @@ export function CommitComposer({
           </div>
         )}
       </div>
-      <p className="composer-scope" role="status">
-        {amend && !staged
-          ? t("仅更新上一条 Commit 的说明")
-          : all
-            ? t("将暂存并提交全部 {count} 个未暂存文件。", { count: unstaged })
-            : t("本次仅提交 {count} 个已暂存文件。", { count: staged })}
-      </p>
       <p className="composer-hint">
         {demo
           ? t("Demo · 在桌面应用中执行 Git 操作")

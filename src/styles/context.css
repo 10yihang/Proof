@@ -274,16 +274,40 @@
   position: relative;
   padding: 16px 20px;
 }
-.context-session-heading .section-title {
-  margin-bottom: 0;
+.context-session-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+.app .context-session-heading .context-session-toolbar .section-title {
+  margin: 0;
+  min-width: 0;
   min-height: 28px;
 }
-.context-session-heading .context-link-actions {
-  position: absolute;
-  right: 16px;
-  top: 16px;
+.context-session-toolbar .context-link-actions {
+  flex: none;
+  flex-wrap: nowrap;
   margin: 0;
   gap: 4px;
+}
+.context-session-toolbar .icon-button {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+}
+.context-sessions-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
 }
 .context-section.context-linked-session {
   padding: 16px 20px;

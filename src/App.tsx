@@ -2458,37 +2458,6 @@ export default function App({
               }
             >
               <div className="center-panel">
-                {tab === "commit" &&
-                  (diff?.side === "unstaged" ||
-                    summary?.side === "unstaged") && (
-                    <div className="commit-version-notice" role="status">
-                      <Info size={16} />
-                      <span>
-                        {stagedCount
-                          ? t(
-                              "当前查看未暂存版本，不在本次 Staged 提交范围内。",
-                            )
-                          : t("当前查看未暂存版本，请先确认暂存范围。")}
-                      </span>
-                      {stagedCount > 0 && (
-                        <Button
-                          className="text-button"
-                          onClick={() => {
-                            const file = changes.files.find(
-                              (file) => file.side === "staged",
-                            );
-                            if (file) {
-                              setCommitScope("staged");
-                              setCommitSearch("");
-                              void loadFile(file);
-                            }
-                          }}
-                        >
-                          {t("查看已暂存变更")}
-                        </Button>
-                      )}
-                    </div>
-                  )}
                 {summary ? (
                   <DeferredDiff
                     summary={summary}
