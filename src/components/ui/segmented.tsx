@@ -2,6 +2,7 @@ import { ToggleGroup } from "@base-ui/react/toggle-group";
 import { Toggle } from "@base-ui/react/toggle";
 import { LayoutGroup, motion, useReducedMotion } from "motion/react";
 import { useId, type ReactNode } from "react";
+import { useInputModality } from "./input-modality";
 
 export function Segmented<T extends string>({
   value,
@@ -18,6 +19,7 @@ export function Segmented<T extends string>({
 }) {
   const group = useId();
   const reduced = useReducedMotion();
+  const keyboard = useInputModality() === "keyboard";
   return (
     <LayoutGroup id={group}>
       <ToggleGroup
@@ -38,9 +40,9 @@ export function Segmented<T extends string>({
                 layoutId="segment-selection"
                 initial={false}
                 transition={
-                  reduced
+                  reduced || keyboard
                     ? { duration: 0 }
-                    : { type: "spring", stiffness: 460, damping: 38 }
+                    : { type: "spring", duration: 0.3, bounce: 0 }
                 }
               />
             )}

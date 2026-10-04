@@ -3,6 +3,7 @@ import { MotionConfig } from "motion/react";
 import { HotkeysProvider } from "react-hotkeys-hook";
 import { TooltipProvider } from "./tooltip";
 import { Toaster } from "./toast";
+import { InputModalityProvider } from "./input-modality";
 
 export function UIProvider({ children }: { children: ReactNode }) {
   const [epoch, setEpoch] = useState(0);
@@ -15,14 +16,16 @@ export function UIProvider({ children }: { children: ReactNode }) {
   return (
     <MotionConfig
       reducedMotion="user"
-      transition={{ duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}
+      transition={{ duration: 0.18, ease: [0.23, 1, 0.32, 1] }}
     >
-      <HotkeysProvider>
-        <TooltipProvider delay={500}>
-          {children}
-          <Toaster key={epoch} timeout={4000} limit={3} />
-        </TooltipProvider>
-      </HotkeysProvider>
+      <InputModalityProvider>
+        <HotkeysProvider>
+          <TooltipProvider delay={500}>
+            {children}
+            <Toaster key={epoch} timeout={4000} limit={3} />
+          </TooltipProvider>
+        </HotkeysProvider>
+      </InputModalityProvider>
     </MotionConfig>
   );
 }

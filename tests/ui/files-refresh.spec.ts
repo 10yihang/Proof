@@ -35,6 +35,27 @@ async function value(page: Page) {
   );
 }
 
+test("Files receives current structured native batches and rejects old watcher generations", async ({
+  page,
+}) => {
+  await openEditor(page);
+  const before = await stats(page);
+  await page.evaluate(() => {
+    const f = (window as any).editorFixture;
+    f.write("alpha", "code.txt", "structured update\n");
+    f.write("alpha", "new-batch.txt", "created");
+    f.invalidateBatch("alpha", f.generation - 1);
+    f.invalidateBatch("beta", f.generation);
+  });
+  await page.waitForTimeout(100);
+  expect(await stats(page)).toEqual(before);
+  await page.evaluate(() => (window as any).editorFixture.invalidateBatch());
+  await expect.poll(() => value(page)).toBe("structured update\n");
+  await expect(
+    page.getByRole("button", { name: "new-batch.txt", exact: true }),
+  ).toBeVisible();
+});
+
 test("Files coalesces hidden tab and hidden window invalidations", async ({
   page,
 }) => {

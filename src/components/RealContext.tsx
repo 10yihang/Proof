@@ -1,17 +1,19 @@
 import { Button } from "./ui/controls";
 import { t } from "../i18n";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ClockCounterClockwise,
   Link,
   Plug,
   Terminal,
   PencilLine,
+  ShieldCheck,
 } from "@phosphor-icons/react";
 import { asError, useRequest } from "../api";
 import type { FileDiff } from "../types";
 import { ContextAssociations } from "./ContextAssociations";
 import { ContextSessionEvents } from "./ContextSessionEvents";
+import { startContextRefresh } from "../context-refresh";
 import {
   agentName,
   associationReason,
@@ -26,11 +28,13 @@ export function RealContext({
   demo,
   onSettings,
   onError,
+  active = true,
 }: {
   diff: FileDiff | null;
   demo: boolean;
   onSettings: () => void;
   onError: (error: unknown) => void;
+  active?: boolean;
 }) {
   const request = useRequest();
   const [receivedOverview, setOverview] = useState<ContextOverview | null>(
@@ -44,7 +48,6 @@ export function RealContext({
   } | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [showMore, setShowMore] = useState(false);
-  const generation = useRef(0);
   useEffect(() => {
     setExpanded({});
     setManager(null);
@@ -52,31 +55,29 @@ export function RealContext({
     setError("");
   }, [demo, diff?.workspaceId, diff?.path]);
   useEffect(() => {
-    if (demo || !diff) return;
-    const n = ++generation.current;
-    let timer: ReturnType<typeof setTimeout>;
-    async function poll() {
-      try {
-        const data = await request<ContextOverview>("context_overview", {
-          workspaceId: diff!.workspaceId,
-          path: diff!.path,
-        });
-        if (n === generation.current) {
-          setOverview(data);
-          setError("");
-        }
-      } catch (cause) {
-        if (n === generation.current) setError(asError(cause).message);
-      } finally {
-        if (n === generation.current) timer = setTimeout(poll, 2500);
-      }
-    }
-    void poll();
-    return () => {
-      ++generation.current;
-      clearTimeout(timer);
-    };
-  }, [demo, diff?.workspaceId, diff?.path, revision]);
+    if (!active || demo || !diff) return;
+    return startContextRefresh({
+      workspaceId: diff.workspaceId,
+      read: () =>
+        request<ContextOverview>("context_overview", {
+          workspaceId: diff.workspaceId,
+          path: diff.path,
+        }),
+      receive: (data) => {
+        setOverview(data);
+        setError("");
+      },
+      onError: (cause) => setError(asError(cause).message),
+    });
+  }, [
+    active,
+    demo,
+    diff?.workspaceId,
+    diff?.path,
+    diff?.id,
+    revision,
+    request,
+  ]);
   const overview =
     receivedOverview?.workspaceId === diff?.workspaceId &&
     receivedOverview?.path === diff?.path
@@ -90,6 +91,16 @@ export function RealContext({
           {error}
         </p>
       )}
+      <section className="context-section context-evidence-summary">
+        <div className="section-title">
+          <ShieldCheck size={16} />
+          <h3>{t("验证状态")}</h3>
+        </div>
+        <p>{t("尚未确认此 Diff 的验证结果。")}</p>
+        <p className="inline-help">
+          {t("命令记录需在文件活动中核对，不代表当前 Diff 已验证。")}
+        </p>
+      </section>
       <section className="context-section context-session-heading">
         <div className="section-title">
           <Terminal size={16} />
@@ -111,20 +122,22 @@ export function RealContext({
         {diff && !demo && (
           <div className="context-link-actions">
             <Button
-              className="icon-button"
-              title={t("关联会话")}
-              aria-label={t("关联会话")}
+              className="button compact"
+              title={t("关联已有会话")}
+              aria-label={t("关联已有会话")}
               onClick={() => setManager({})}
             >
               <Link size={14} />
+              {t("关联已有会话")}
             </Button>
             <Button
-              className="icon-button"
+              className="button compact subtle"
               title={t("修改记录")}
               aria-label={t("修改记录")}
               onClick={() => setManager({ history: true })}
             >
               <ClockCounterClockwise size={14} />
+              {t("修改记录")}
             </Button>
           </div>
         )}
@@ -157,6 +170,12 @@ export function RealContext({
               <PencilLine size={14} />
             </Button>
           </div>
+          <p className="context-association-summary">
+            {link.originalEvidence.matchedAtCapture && (
+              <>{t("捕获时有内容匹配")} · </>
+            )}
+            {t("未确认与当前 Diff 相同")}
+          </p>
           {!expanded[link.session.id] && (
             <>
               <strong className="context-field-label">

@@ -68,6 +68,164 @@ fn review() -> serde_json::Value {
 }
 
 #[test]
+#[ignore = "same-fixture comparison preparation benchmark; never starts an Agent"]
+fn comparison_preparation_benchmark() {
+    let (temp, mut proof, workspace) = fixture();
+    let repo = Path::new(&workspace.path);
+    git(repo, &["reset", "--hard", "HEAD"]);
+    for i in 0..100 {
+        fs::write(
+            repo.join(format!("bench-{i:03}.txt")),
+            "before\n".repeat(100),
+        )
+        .unwrap();
+    }
+    git(repo, &["add", "."]);
+    git(repo, &["commit", "-m", "benchmark base"]);
+    let base = git(repo, &["rev-parse", "HEAD"]);
+    for i in 0..100 {
+        fs::write(
+            repo.join(format!("bench-{i:03}.txt")),
+            "after\n".repeat(100),
+        )
+        .unwrap();
+    }
+    git(repo, &["add", "."]);
+    git(repo, &["commit", "-m", "benchmark target"]);
+    let target = git(repo, &["rev-parse", "HEAD"]);
+    let trace = temp.path().join("comparison-trace.jsonl");
+    let mut samples = Vec::new();
+    let mut processes = Vec::new();
+    let mut lists = Vec::new();
+    for _ in 0..3 {
+        fs::write(&trace, "").unwrap();
+        std::env::set_var("GIT_TRACE2_EVENT", &trace);
+        let start = std::time::Instant::now();
+        let job = proof
+            .prepare_ai_task(AiRequest {
+                amend: false,
+                provider: AgentKind::Codex,
+                task: AiTask::Review,
+                scope: AiScope::Comparison {
+                    workspace_id: workspace.id.clone(),
+                    base: base.clone(),
+                    target: target.clone(),
+                    path: None,
+                    paths: None,
+                },
+            })
+            .unwrap();
+        samples.push(start.elapsed().as_secs_f64() * 1000.0);
+        std::env::remove_var("GIT_TRACE2_EVENT");
+        assert_eq!(job.diffs.len(), 100);
+        let entries: Vec<serde_json::Value> = fs::read_to_string(&trace)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        processes.push(
+            entries
+                .iter()
+                .filter(|event| event["event"] == "start")
+                .count(),
+        );
+        lists.push(
+            entries
+                .iter()
+                .filter(|event| {
+                    event["event"] == "start"
+                        && event["argv"]
+                            .as_array()
+                            .is_some_and(|args| args.iter().any(|arg| arg == "--name-status"))
+                })
+                .count(),
+        );
+        println!(
+            "BENCH comparison raw_patch_bytes={} retained_diff_bytes={}",
+            job.diffs.iter().map(|d| d.patch.len()).sum::<usize>(),
+            job.diffs.iter().map(|d| d.retained_bytes()).sum::<usize>()
+        );
+    }
+    println!("BENCH comparison files=100 milliseconds={samples:?} git_processes={processes:?} file_list_queries={lists:?}");
+}
+
+#[test]
+fn comparison_evidence_budget_counts_hunks_lines_and_allocated_capacity() {
+    let (_temp, proof, workspace) = fixture();
+    let base = git(Path::new(&workspace.path), &["rev-parse", "HEAD"]);
+    let diff = proof
+        .compare_file(&workspace.id, "empty", &base, "auth.rs")
+        .unwrap();
+    assert!(diff.retained_bytes() > diff.patch.len());
+    let mut bytes = MAX_INPUT - diff.patch.len();
+    let mut evidence = Vec::new();
+    assert_eq!(
+        add_diff(&mut evidence, &mut bytes, diff).unwrap_err().code,
+        "AI_INPUT_LIMIT"
+    );
+    assert!(evidence.is_empty());
+}
+
+#[test]
+fn batch_comparison_matches_standalone_canonical_evidence_with_rename_and_binary() {
+    let (_temp, mut proof, workspace) = fixture();
+    let repo = Path::new(&workspace.path);
+    git(repo, &["reset", "--hard", "HEAD"]);
+    fs::write(repo.join("before.txt"), "preserved context\n".repeat(30)).unwrap();
+    fs::write(repo.join("binary.dat"), b"before\0binary").unwrap();
+    git(repo, &["add", "."]);
+    git(repo, &["commit", "-m", "comparison base"]);
+    let base = git(repo, &["rev-parse", "HEAD"]);
+    git(repo, &["mv", "before.txt", "after [literal].txt"]);
+    fs::write(
+        repo.join("after [literal].txt"),
+        format!("edited\n{}", "preserved context\n".repeat(29)),
+    )
+    .unwrap();
+    fs::write(repo.join("binary.dat"), b"after\0binary").unwrap();
+    git(repo, &["add", "."]);
+    git(repo, &["commit", "-m", "comparison target"]);
+    let target = git(repo, &["rev-parse", "HEAD"]);
+    let index = fs::read(repo.join(".git/index")).unwrap();
+    let job = proof
+        .prepare_ai_task(AiRequest {
+            amend: false,
+            provider: AgentKind::Codex,
+            task: AiTask::Review,
+            scope: AiScope::Comparison {
+                workspace_id: workspace.id.clone(),
+                base: base.clone(),
+                target: target.clone(),
+                path: None,
+                paths: None,
+            },
+        })
+        .unwrap();
+    assert_eq!(job.diffs.len(), 2);
+    assert!(job
+        .diffs
+        .iter()
+        .any(|diff| diff.kind == crate::FileKind::Rename));
+    assert!(
+        job.retained_input_bytes() > job.diffs.iter().map(|diff| diff.patch.len()).sum::<usize>()
+    );
+    for captured in &job.diffs {
+        let mut actual = captured.clone();
+        actual.captured_at = 0;
+        let mut standalone = proof
+            .compare_file(&workspace.id, &base, &target, &actual.path)
+            .unwrap();
+        standalone.captured_at = 0;
+        assert_eq!(
+            serde_json::to_value(actual).unwrap(),
+            serde_json::to_value(standalone).unwrap()
+        );
+    }
+    assert_eq!(fs::read(repo.join(".git/index")).unwrap(), index);
+    assert_eq!(git(repo, &["rev-parse", "HEAD"]), target);
+}
+
+#[test]
 fn codewiz_noisy_streams_preserve_grouping_and_review_validation() {
     let (_temp, mut proof, workspace) = fixture();
     let decode = |value: serde_json::Value| {
@@ -333,11 +491,11 @@ fn current_review_selects_live_files_without_snapshot_tokens() {
             },
         })
         .unwrap();
-    assert!(job.diffs.is_empty(), "live reviews capture no frozen patches");
-    assert_eq!(
-        job.selected,
-        vec![("auth.rs".to_string(), Side::Unstaged)]
+    assert!(
+        job.diffs.is_empty(),
+        "live reviews capture no frozen patches"
     );
+    assert_eq!(job.selected, vec![("auth.rs".to_string(), Side::Unstaged)]);
     let report = job.validate(review()).unwrap();
     assert_eq!(report.files.len(), 1);
     assert_eq!(report.files[0].path, "auth.rs");
@@ -744,7 +902,10 @@ fn review_ranges_validate_sanity_for_live_and_every_line_for_frozen_comparisons(
     }
     value["findings"][0]["line"] = json!(1);
     value["findings"][0]["endLine"] = json!(200);
-    assert!(job.validate(value.clone()).is_ok(), "live ranges may exceed any single hunk");
+    assert!(
+        job.validate(value.clone()).is_ok(),
+        "live ranges may exceed any single hunk"
+    );
     value["findings"][0]["lineSide"] = json!("old");
     assert!(job.validate(value).is_ok());
     assert_eq!(
@@ -1159,10 +1320,10 @@ fn ai_commit_uses_only_index_supports_amend_and_never_changes_git() {
         vec![("auth.rs".to_string(), Side::Staged)],
         "commit drafting is scoped to the staged side only"
     );
-    assert!(job
-        .prompt()
-        .unwrap()
-        .contains("git diff --cached"), "agent reads the live index itself");
+    assert!(
+        job.prompt().unwrap().contains("git diff --cached"),
+        "agent reads the live index itself"
+    );
     let value =
         json!({"analysisStatus":"completed","blockers":[],"message":"fix(auth): validate access"});
     let report = job.validate(value.clone()).unwrap();
@@ -1327,7 +1488,10 @@ fn live_prepare_tolerates_mid_preparation_changes() {
         // Live mode: preparation only lists paths, so concurrent changes to
         // content, config, attributes, the index or HEAD no longer fail it.
         assert!(result.is_ok(), "{mutation}: {:?}", result.err());
-        assert!(changed.get(), "{mutation}: fixture must interrupt preparation");
+        assert!(
+            changed.get(),
+            "{mutation}: fixture must interrupt preparation"
+        );
         assert!(proof.has_active_ai_task());
         drop(result);
         assert!(!proof.has_active_ai_task());
@@ -1447,10 +1611,7 @@ fn live_selection_uses_the_linked_worktree_change_list() {
         .prepare_ai_task(request(&proof, &linked_workspace, AiTask::Review))
         .unwrap();
     assert!(job.diffs.is_empty());
-    assert_eq!(
-        job.selected,
-        vec![("auth.rs".to_string(), Side::Unstaged)]
-    );
+    assert_eq!(job.selected, vec![("auth.rs".to_string(), Side::Unstaged)]);
     assert!(job.input.project.ends_with("linked"));
     assert_eq!(
         fs::read(Path::new(&workspace.git_dir).join("index")).unwrap(),
@@ -1507,11 +1668,20 @@ fn ocr_review_output_maps_onto_the_shared_review_schema() {
             {"path":"main.rs","content":"","start_line":1,"end_line":1,"category":"style","severity":"low"}
         ]
     });
-    let value = ocr::map_review(&serde_json::to_vec(&raw).unwrap(), &selected, crate::UiLanguage::English).unwrap();
+    let value = ocr::map_review(
+        &serde_json::to_vec(&raw).unwrap(),
+        &selected,
+        crate::UiLanguage::English,
+    )
+    .unwrap();
     assert_eq!(value["analysisStatus"], "completed");
     assert_eq!(value["overallRisk"], "critical");
     let findings = value["findings"].as_array().unwrap();
-    assert_eq!(findings.len(), 2, "out-of-scope and empty comments drop out");
+    assert_eq!(
+        findings.len(),
+        2,
+        "out-of-scope and empty comments drop out"
+    );
     assert_eq!(findings[0]["file"], "main.rs");
     assert_eq!(findings[0]["side"], "unstaged");
     assert_eq!(findings[0]["line"], 1);
@@ -1543,7 +1713,12 @@ fn ocr_review_output_maps_onto_the_shared_review_schema() {
             {"path":"auth.rs","content":"Unconditional access granted.","start_line":1,"end_line":1,"category":"security","severity":"high"}
         ]
     });
-    let value = ocr::map_review(&serde_json::to_vec(&raw).unwrap(), &job.selected, crate::UiLanguage::English).unwrap();
+    let value = ocr::map_review(
+        &serde_json::to_vec(&raw).unwrap(),
+        &job.selected,
+        crate::UiLanguage::English,
+    )
+    .unwrap();
     let report = job.validate(value).unwrap();
     assert_eq!(report.review.unwrap().findings[0].file, "auth.rs");
     drop(job);
@@ -1604,14 +1779,15 @@ fn ocr_review_output_maps_onto_the_shared_review_schema() {
         crate::UiLanguage::Chinese,
     )
     .unwrap();
-    assert_eq!(value["summary"].as_str().unwrap(), "OCR 审查完成：17 个文件，0 条发现。");
-    let skipped_cn = ocr::map_review(&skipped, &selected, crate::UiLanguage::Chinese).unwrap();
-    assert!(
-        skipped_cn["summary"]
-            .as_str()
-            .unwrap()
-            .contains("没有可审查的变更")
+    assert_eq!(
+        value["summary"].as_str().unwrap(),
+        "OCR 审查完成：17 个文件，0 条发现。"
     );
+    let skipped_cn = ocr::map_review(&skipped, &selected, crate::UiLanguage::Chinese).unwrap();
+    assert!(skipped_cn["summary"]
+        .as_str()
+        .unwrap()
+        .contains("没有可审查的变更"));
     // Long multi-byte (CJK) content must respect Proof's byte-based limits:
     // title ≤ 200 bytes, description ≤ 6000 bytes.
     let long = "这是一个硬编码凭证问题。".repeat(100);
@@ -1623,7 +1799,12 @@ fn ocr_review_output_maps_onto_the_shared_review_schema() {
             {"path":"main.rs","content":long,"suggestion_code":"修复\\u{000b}建议","start_line":1,"end_line":1,"category":"security","severity":"high"}
         ]
     });
-    let value = ocr::map_review(&serde_json::to_vec(&raw).unwrap(), &selected, crate::UiLanguage::English).unwrap();
+    let value = ocr::map_review(
+        &serde_json::to_vec(&raw).unwrap(),
+        &selected,
+        crate::UiLanguage::English,
+    )
+    .unwrap();
     let finding = &value["findings"][0];
     assert!(finding["title"].as_str().unwrap().len() <= 200);
     assert!(finding["description"].as_str().unwrap().len() <= 6000);

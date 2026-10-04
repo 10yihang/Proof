@@ -1,5 +1,10 @@
+import { openReadingTools } from "./controls";
 import { test, expect } from "@playwright/test";
-test.beforeEach(({page})=>{page.on("pageerror",error=>console.error("Browser error:",error.message));});
+test.beforeEach(({ page }) => {
+  page.on("pageerror", (error) =>
+    console.error("Browser error:", error.message),
+  );
+});
 import { spawn, execFileSync } from "node:child_process";
 import {
   mkdtempSync,
@@ -120,12 +125,22 @@ test("actual Git workflow: live save, branch, selected hunk Commit, Amend and Co
     await page.keyboard.press("Meta+f");
     await page.getByLabel("搜索当前 Diff", { exact: true }).fill("old-50");
     await expect(page.getByLabel("匹配行数")).toContainText("0/0");
-    await page.getByRole("button", { name: "全文", exact: true }).click();
+    await (
+      await openReadingTools(page)
+    )
+      .getByRole("button", { name: "全文", exact: true })
+      .click();
     await expect(page.getByLabel("匹配行数")).toContainText("1/1");
-    await expect(page.locator(".view-line:has(.proof-search-match)").first()).toContainText("old-50");
+    await expect(
+      page.locator(".view-line:has(.proof-search-match)").first(),
+    ).toContainText("old-50");
     expect(readFileSync(join(repo, "src/api/client.ts"))).toEqual(searchSource);
     expect(readFileSync(join(repo, ".git/index"))).toEqual(searchIndex);
-    await page.getByRole("button", { name: "全文", exact: true }).click();
+    await (
+      await openReadingTools(page)
+    )
+      .getByRole("button", { name: "全文", exact: true })
+      .click();
     await page
       .getByRole("button", { name: "关闭文件内容搜索", exact: true })
       .click();
@@ -148,7 +163,9 @@ test("actual Git workflow: live save, branch, selected hunk Commit, Amend and Co
       exact: true,
     });
     if (await showContext.isVisible()) await showContext.click();
-    await page.getByRole("button", { name: "关联会话", exact: true }).click();
+    await page
+      .getByRole("button", { name: "关联已有会话", exact: true })
+      .click();
     const contextManager = page.getByRole("dialog", { name: "管理会话关联" });
     await contextManager.getByLabel("搜索当前 Worktree 的会话").fill("manual");
     await contextManager.locator(".association-candidate").click();
@@ -303,10 +320,16 @@ test("actual Git workflow: live save, branch, selected hunk Commit, Amend and Co
     await panel
       .getByRole("button", { name: "搜索文件内容", exact: true })
       .click();
-    await panel.getByRole("button", { name: "全文", exact: true }).click();
+    await (
+      await openReadingTools(panel)
+    )
+      .getByRole("button", { name: "全文", exact: true })
+      .click();
     await panel.getByLabel("搜索当前 Diff", { exact: true }).fill("old-50");
     await expect(panel.getByLabel("匹配行数")).toContainText("1/1");
-    await expect(panel.locator(".view-line:has(.proof-search-match)").first()).toContainText("old-50");
+    await expect(
+      panel.locator(".view-line:has(.proof-search-match)").first(),
+    ).toContainText("old-50");
     await panel
       .getByRole("button", { name: "关闭文件内容搜索", exact: true })
       .click();

@@ -327,9 +327,26 @@ impl Proof {
                     "Unknown comparison path",
                 )
             })?;
+        self.read_frozen_comparison_file(&workspace, &git, base, target, file, allow_large)
+    }
+
+    /// The batch caller obtains these files from one validated immutable
+    /// comparison. Standalone reads still resolve membership above.
+    pub(crate) fn read_frozen_comparison_file(
+        &self,
+        workspace: &Workspace,
+        git: &git::Git,
+        base: &str,
+        target: &str,
+        file: ChangedFile,
+        allow_large: bool,
+    ) -> Result<crate::DiffRead> {
+        crate::check_read_cancellation()?;
+        let workspace_id = workspace.id.as_str();
+        let path = file.path.as_str();
         let raw = match file_patch(
-            &git,
-            &workspace,
+            git,
+            workspace,
             base,
             target,
             &file,

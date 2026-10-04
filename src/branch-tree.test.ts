@@ -9,7 +9,11 @@ function branch(name: string, remote = false): BranchEntry {
 describe("buildBranchTree", () => {
   it("nests branches into folders by delimiter", () => {
     const tree = buildBranchTree(
-      [branch("codex/backup/migrate-fix"), branch("codex/backup/squash"), branch("codex/runtime")],
+      [
+        branch("codex/backup/migrate-fix"),
+        branch("codex/backup/squash"),
+        branch("codex/runtime"),
+      ],
       "/",
     );
     expect(tree).toHaveLength(1);
@@ -17,7 +21,10 @@ describe("buildBranchTree", () => {
     expect(codex.name).toBe("codex");
     expect(codex.branch).toBeUndefined();
     const backup = codex.children.find((c) => c.name === "backup")!;
-    expect(backup.children.map((c) => c.name)).toEqual(["migrate-fix", "squash"]);
+    expect(backup.children.map((c) => c.name)).toEqual([
+      "migrate-fix",
+      "squash",
+    ]);
     expect(backup.children[0].branch?.name).toBe("codex/backup/migrate-fix");
     const runtime = codex.children.find((c) => c.name === "runtime")!;
     expect(runtime.branch?.name).toBe("codex/runtime");
@@ -34,7 +41,10 @@ describe("buildBranchTree", () => {
 
   it("supports a branch that is both a leaf and a folder prefix", () => {
     // "release" and "release/hotfix": release holds a branch AND a child.
-    const tree = buildBranchTree([branch("release"), branch("release/hotfix")], "/");
+    const tree = buildBranchTree(
+      [branch("release"), branch("release/hotfix")],
+      "/",
+    );
     expect(tree).toHaveLength(1);
     expect(tree[0].branch?.name).toBe("release");
     expect(tree[0].children[0].name).toBe("hotfix");
@@ -53,7 +63,10 @@ describe("buildBranchTree", () => {
   });
 
   it("honors a custom delimiter", () => {
-    const tree = buildBranchTree([branch("feat-login"), branch("feat-signup")], "-");
+    const tree = buildBranchTree(
+      [branch("feat-login"), branch("feat-signup")],
+      "-",
+    );
     expect(tree).toHaveLength(1);
     expect(tree[0].name).toBe("feat");
     expect(tree[0].children.map((c) => c.branch?.name)).toEqual([

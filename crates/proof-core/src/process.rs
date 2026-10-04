@@ -679,20 +679,41 @@ mod tests {
 }
 
 pub fn git_command(git: &str, path: &Path) -> Command {
+    scoped_git_command(git, path, true)
+}
+
+// check-ignore consumes literal NUL-delimited filenames itself and rejects
+// Git's global literal pathspec magic. Share every other launch safeguard.
+pub(crate) fn watch_git_command(git: &str, path: &Path) -> Command {
+    let mut command = scoped_git_command(git, path, false);
+    for variable in [
+        "GIT_LITERAL_PATHSPECS",
+        "GIT_GLOB_PATHSPECS",
+        "GIT_NOGLOB_PATHSPECS",
+        "GIT_ICASE_PATHSPECS",
+    ] {
+        command.env_remove(variable);
+    }
+    command
+}
+
+fn scoped_git_command(git: &str, path: &Path, literal_pathspecs: bool) -> Command {
     let mut cmd = Command::new(git);
-    cmd.arg("--no-pager")
-        .arg("--literal-pathspecs")
-        .args([
-            "-c",
-            "core.fsmonitor=false",
-            "-c",
-            "core.untrackedCache=false",
-        ])
-        .arg("-C")
-        .arg(path)
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("LC_ALL", "C");
+    cmd.arg("--no-pager");
+    if literal_pathspecs {
+        cmd.arg("--literal-pathspecs");
+    }
+    cmd.args([
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "core.untrackedCache=false",
+    ])
+    .arg("-C")
+    .arg(path)
+    .env("GIT_OPTIONAL_LOCKS", "0")
+    .env("GIT_TERMINAL_PROMPT", "0")
+    .env("LC_ALL", "C");
     // Do not inherit the Agent's temporary index or alternate repository context.
     for var in [
         "GIT_DIR",

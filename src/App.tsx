@@ -12,7 +12,15 @@ import { toast } from "./components/ui/toast";
 import { Button, Select, Input, Textarea } from "./components/ui/controls";
 import { uiMessage, t, getLanguage } from "./i18n";
 import { DiffLoading } from "./components/DiffLoading";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
@@ -62,18 +70,15 @@ import type {
   RecoveryAction,
   EditorOpenResult,
 } from "./types";
-import { HistoryDiff, type HistoryComparison } from "./components/HistoryDiff";
-import { DiffView } from "./components/DiffView";
-import { EditorView } from "./components/EditorView";
+import type { HistoryComparison } from "./components/HistoryDiff";
+import { DiffView, type DiffPosition } from "./components/DiffView";
 import { useAi, type DiffJump } from "./ai";
 import { AiReviewPanel } from "./components/AiReviewPanel";
 import { DiffFilePane } from "./components/DiffFilePane";
 import { DeferredDiff } from "./components/DeferredDiff";
 import { ContextInspector } from "./components/ContextInspector";
 import { Modal } from "./components/Modal";
-import { RepositoryView } from "./components/RepositoryView";
 import type { RepositorySection } from "./components/RepositoryView";
-import { Settings } from "./components/Settings";
 import { RecoveryDialog } from "./components/RecoveryDialog";
 import { FileHistory } from "./components/FileHistory";
 import { ResizableWorkbench } from "./components/ResizableWorkbench";
@@ -89,6 +94,64 @@ import { CommitWorkspace } from "./components/CommitWorkspace";
 import { shouldDismissDrawer } from "./components/panel-focus";
 import { isMacDesktop, useWindowMenu } from "./use-window-menu";
 import { WorkspaceTabs, type WorkspaceView } from "./components/WorkspaceTabs";
+import { nextReviewFile, reviewCoverage } from "./review-coverage";
+import "./styles/review-flow.css";
+
+const HistoryDiff = lazy(() =>
+  import("./components/HistoryDiff").then((module) => ({
+    default: module.HistoryDiff,
+  })),
+);
+const EditorView = lazy(() =>
+  import("./components/EditorView").then((module) => ({
+    default: module.EditorView,
+  })),
+);
+const RepositoryView = lazy(() =>
+  import("./components/RepositoryView").then((module) => ({
+    default: module.RepositoryView,
+  })),
+);
+const Settings = lazy(() =>
+  import("./components/Settings").then((module) => ({
+    default: module.Settings,
+  })),
+);
+
+function WorkspacePending({
+  label,
+  onCancel,
+}: {
+  label: string;
+  onCancel?: () => void;
+}) {
+  useEffect(() => {
+    if (!onCancel) return;
+    const cancel = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onCancel();
+      }
+    };
+    window.addEventListener("keydown", cancel);
+    return () => window.removeEventListener("keydown", cancel);
+  }, [onCancel]);
+  return (
+    <div
+      className={`workspace-pending ${onCancel ? "workspace-pending-dialog" : ""}`}
+      role="status"
+      aria-live="polite"
+    >
+      <ArrowClockwise size={18} className="spinning" />
+      <span>{label}</span>
+      {onCancel && (
+        <Button className="button compact" onClick={onCancel}>
+          {t("Cancel")}
+        </Button>
+      )}
+    </div>
+  );
+}
 
 type EditorTarget = Pick<FileDiff, "id" | "workspaceId" | "path" | "side">;
 
@@ -149,11 +212,56 @@ export default function App({
   const [commandTarget, setCommandTarget] = useState<EditorTarget | null>(null);
   const [loaded, setLoaded] = useState<Record<string, FileDiff>>({});
   const [selected, setSelected] = useState<string | null>(null);
+  const commitEntry = useRef("");
+  const changesSelection = useRef<{
+    workspaceId: string;
+    key: string | null;
+  } | null>(null);
+  const readingPositions = useRef({
+    changes: { key: "", ref: { current: null as DiffPosition | null } },
+    commit: { key: "", ref: { current: null as DiffPosition | null } },
+  });
+  const lastLocalView = useRef<"changes" | "commit">("changes");
+  function localReadingPosition(target: FileDiff) {
+    const view = lastLocalView.current;
+    const key = `${target.workspaceId}:${target.base}:${fileKey(target)}`;
+    if (readingPositions.current[view].key !== key)
+      readingPositions.current[view] = { key, ref: { current: null } };
+    return readingPositions.current[view].ref;
+  }
+  const settingsTrigger = useRef<HTMLElement | null>(null);
   const [error, setError] = useState<ProofError | null>(null);
   const [busy, setBusyState] = useState(false),
     [loadingDiff, setLoadingDiff] = useState(false);
   const [dialog, setDialog] = useWindowField(windowUI, "dialog");
-  const [tab, setTab] = useWindowField(windowUI, "tab");
+  const [tab, setTabState] = useWindowField(windowUI, "tab");
+  if (tab === "changes" || tab === "commit") lastLocalView.current = tab;
+  function setTab(next: typeof tab) {
+    const active = current.current;
+    if (active && tab === "changes" && next !== tab)
+      changesSelection.current = {
+        workspaceId: active.workspace.id,
+        key: selectedRef.current,
+      };
+    setTabState(next);
+    if (
+      active &&
+      next === "changes" &&
+      next !== tab &&
+      changesSelection.current?.workspaceId === active.workspace.id
+    ) {
+      const file = active.files.find(
+        (file) => fileKey(file) === changesSelection.current?.key,
+      );
+      if (file) void loadFile(file);
+    }
+    if (active && next === "commit" && next !== tab) {
+      const staged = active.files.filter((file) => file.side === "staged");
+      setCommitScope(staged.length ? "staged" : "unstaged");
+      setCommitSearch("");
+      if (staged.length) void loadFile(staged[0]);
+    }
+  }
   const [diffTabs, setDiffTabs] = useWindowField(windowUI, "diffTabs");
   const historyTab = useRef<HTMLButtonElement>(null);
   function openHistoryDiff(selection: HistoryComparison) {
@@ -272,6 +380,10 @@ export default function App({
   }, [tab]);
   const [search, setSearch] = useState(""),
     [scope, setScope] = useState<"all" | "unstaged" | "staged">("all");
+  const [commitScope, setCommitScope] = useState<"all" | "unstaged" | "staged">(
+    "staged",
+  );
+  const [commitSearch, setCommitSearch] = useState("");
   const [focused, setFocused] = useWindowField(windowUI, "focused"),
     [demo, setDemo] = useState(false);
   const ai = useAi(changes, diff, demo);
@@ -550,7 +662,7 @@ export default function App({
       window.removeEventListener("focus", focus);
       document.removeEventListener("visibilitychange", focus);
     };
-  }, [changes?.workspace.id, demo]);
+  }, [changes?.workspace.id, demo, preferences.gitPath]);
   useEffect(() => {
     if (tab === "changes" || tab === "commit") pollRef.current();
   }, [tab, changes?.workspace.id]);
@@ -1527,15 +1639,35 @@ export default function App({
     ],
   );
 
-  const knownDiffs = Object.values(loaded).filter(
-    (d) =>
-      d.workspaceId === changes?.workspace.id &&
-      changes?.files.some((f) => fileKey(f) === fileKey(d)),
+  const coverage = useMemo(
+    () => (changes ? reviewCoverage(changes, loaded) : undefined),
+    [changes, loaded],
   );
-  const knownUnits = knownDiffs.flatMap((d) => d.hunks),
-    reviewedUnits = knownUnits.filter(
-      (h) => h.reviewState === "reviewed",
-    ).length;
+  const nextReview = useMemo(
+    () => (changes ? nextReviewFile(changes, loaded, selected) : undefined),
+    [changes, loaded, selected],
+  );
+  function openNextReview() {
+    if (!nextReview || busy || loadingDiff) return;
+    setSearch("");
+    setScope("all");
+    void loadFile(nextReview);
+  }
+  useEffect(() => {
+    const identity = tab === "commit" ? (changes?.workspace.id ?? "") : "";
+    if (identity && commitEntry.current !== identity) {
+      const staged =
+        changes?.files.filter((file) => file.side === "staged") ?? [];
+      setCommitScope(staged.length ? "staged" : "unstaged");
+      setCommitSearch("");
+      if (
+        staged.length &&
+        !staged.some((file) => fileKey(file) === selectedRef.current)
+      )
+        void loadFile(staged[0]);
+    }
+    commitEntry.current = identity;
+  }, [tab, changes?.workspace.id, changes?.files]);
   const stagedCount =
     changes?.files.filter((f) => f.side === "staged").length ?? 0;
   const contextOpen =
@@ -1598,6 +1730,8 @@ export default function App({
       | "diagnostics"
       | "agents" = "appearance",
   ) {
+    if (dialog !== "settings")
+      settingsTrigger.current = document.activeElement as HTMLElement | null;
     setSettingsSection(section);
     setDialog("settings");
   }
@@ -1741,7 +1875,7 @@ export default function App({
             <TerminalIcon size={17} />
           </Button>
         )}
-        {changes && !diffWindow && (
+        {changes && !diffWindow && (tab === "changes" || tab === "commit") && (
           <Button
             id="files-toggle"
             className="icon-button"
@@ -1762,10 +1896,10 @@ export default function App({
             <List size={17} />
           </Button>
         )}
-        {changes && !diffWindow && (
+        {changes && !diffWindow && tab === "changes" && (
           <Button
             id="context-toggle"
-            className="icon-button"
+            className="button compact context-entry"
             aria-label={contextOpen ? t("收起上下文") : t("显示上下文")}
             title={t("Context 面板")}
             aria-expanded={contextOpen}
@@ -1795,6 +1929,7 @@ export default function App({
             }}
           >
             <SidebarSimple size={17} />
+            <span>{t("证据")}</span>
           </Button>
         )}
         {demo && <span className="demo-badge">{t("演示数据")}</span>}
@@ -1831,6 +1966,7 @@ export default function App({
         <Button
           className="icon-button"
           aria-label={t("设置")}
+          id="settings-toggle"
           title={t("设置")}
           onClick={() => openSettings()}
         >
@@ -2009,71 +2145,75 @@ export default function App({
                 key={item.id}
                 className="workspace-page diff-tab-page"
               >
-                <HistoryDiff
-                  panelLayout={repositoryLayout}
-                  onOpenWindow={
-                    demo || diffWindow
-                      ? undefined
-                      : (selection) => {
-                          void request("open_diff_window", {
-                            selection: {
-                              kind: "comparison",
-                              workspaceId: changes.workspace.id,
-                              ...selection,
-                            },
-                          }).catch((e) => setError(asError(e)));
-                        }
-                  }
-                  onAgentSettings={() => openSettings("agents")}
-                  active={tab === item.id}
-                  changes={changes}
-                  demo={demo}
-                  preferences={preferences}
-                  onPreferences={(value) => void updatePreferences(value)}
-                  selection={item.selection}
-                  toolbar={
-                    <>
-                      {!item.selection.base &&
-                        (item.selection.parents?.length ?? 0) > 1 && (
-                          <Select
-                            aria-label={t("Diff 比较父提交")}
-                            value={item.selection.parent ?? 0}
-                            onChange={(e) =>
-                              setDiffTabs((tabs) =>
-                                tabs.map((t) =>
-                                  t.id === item.id
-                                    ? {
-                                        ...t,
-                                        selection: {
-                                          ...t.selection,
-                                          parent: Number(e.target.value),
-                                        },
-                                      }
-                                    : t,
-                                ),
-                              )
-                            }
-                          >
-                            {item.selection.parents!.map((oid, index) => (
-                              <option key={oid} value={index}>
-                                {t("Parent ")}
-                                {index + 1} · {oid.slice(0, 8)}
-                              </option>
-                            ))}
-                          </Select>
-                        )}
-                      <Button
-                        className="button compact"
-                        onClick={() => {
-                          setTab("repository");
-                          setRepositorySection("history");
-                        }}
-                      >
-                        {t("返回 History")}
-                      </Button>
-                    </>
-                  }
-                />
+                <Suspense
+                  fallback={<WorkspacePending label={t("正在载入比较视图…")} />}
+                >
+                  <HistoryDiff
+                    panelLayout={repositoryLayout}
+                    onOpenWindow={
+                      demo || diffWindow
+                        ? undefined
+                        : (selection) => {
+                            void request("open_diff_window", {
+                              selection: {
+                                kind: "comparison",
+                                workspaceId: changes.workspace.id,
+                                ...selection,
+                              },
+                            }).catch((e) => setError(asError(e)));
+                          }
+                    }
+                    onAgentSettings={() => openSettings("agents")}
+                    active={tab === item.id}
+                    changes={changes}
+                    demo={demo}
+                    preferences={preferences}
+                    onPreferences={(value) => void updatePreferences(value)}
+                    selection={item.selection}
+                    toolbar={
+                      <>
+                        {!item.selection.base &&
+                          (item.selection.parents?.length ?? 0) > 1 && (
+                            <Select
+                              aria-label={t("Diff 比较父提交")}
+                              value={item.selection.parent ?? 0}
+                              onChange={(e) =>
+                                setDiffTabs((tabs) =>
+                                  tabs.map((t) =>
+                                    t.id === item.id
+                                      ? {
+                                          ...t,
+                                          selection: {
+                                            ...t.selection,
+                                            parent: Number(e.target.value),
+                                          },
+                                        }
+                                      : t,
+                                  ),
+                                )
+                              }
+                            >
+                              {item.selection.parents!.map((oid, index) => (
+                                <option key={oid} value={index}>
+                                  {t("Parent ")}
+                                  {index + 1} · {oid.slice(0, 8)}
+                                </option>
+                              ))}
+                            </Select>
+                          )}
+                        <Button
+                          className="button compact"
+                          onClick={() => {
+                            setTab("repository");
+                            setRepositorySection("history");
+                          }}
+                        >
+                          {t("返回 History")}
+                        </Button>
+                      </>
+                    }
+                  />
+                </Suspense>
               </Tabs.Panel>
             ))}
           <Tabs.Panel
@@ -2083,22 +2223,26 @@ export default function App({
             className="workspace-page history-page"
           >
             {(repositoryVisited || tab === "repository") && (
-              <RepositoryView
-                active={tab === "repository"}
-                actions={gitActions}
-                key={changes.workspace.id}
-                onOpenDiff={openHistoryDiff}
-                section={repositorySection}
-                onSection={setRepositorySection}
-                changes={changes}
-                demo={demo}
-                onOpen={openWorkspace}
-                onError={(e) => {
-                  if (current.current?.workspace.id === changes.workspace.id)
-                    setError(asError(e));
-                }}
-                branchDelimiter={preferences.branchDelimiter}
-              />
+              <Suspense
+                fallback={<WorkspacePending label={t("正在载入历史工作区…")} />}
+              >
+                <RepositoryView
+                  active={tab === "repository"}
+                  actions={gitActions}
+                  key={changes.workspace.id}
+                  onOpenDiff={openHistoryDiff}
+                  section={repositorySection}
+                  onSection={setRepositorySection}
+                  changes={changes}
+                  demo={demo}
+                  onOpen={openWorkspace}
+                  onError={(e) => {
+                    if (current.current?.workspace.id === changes.workspace.id)
+                      setError(asError(e));
+                  }}
+                  branchDelimiter={preferences.branchDelimiter}
+                />
+              </Suspense>
             )}
           </Tabs.Panel>
           <Tabs.Panel
@@ -2108,15 +2252,19 @@ export default function App({
             className="workspace-page files-page"
           >
             {(filesVisited || tab === "files") && (
-              <EditorView
-                key={changes.workspace.id}
-                workspaceId={changes.workspace.id}
-                fontSize={preferences.fontSize}
-                trusted={changes.workspace.trusted}
-                active={tab === "files"}
-                changedFiles={changes.files}
-                onChanged={() => void refresh()}
-              />
+              <Suspense
+                fallback={<WorkspacePending label={t("正在载入文件工作区…")} />}
+              >
+                <EditorView
+                  key={changes.workspace.id}
+                  workspaceId={changes.workspace.id}
+                  fontSize={preferences.fontSize}
+                  trusted={changes.workspace.trusted}
+                  active={tab === "files"}
+                  changedFiles={changes.files}
+                  onChanged={() => void refresh()}
+                />
+              </Suspense>
             )}
           </Tabs.Panel>
           <Tabs.Panel
@@ -2175,10 +2323,9 @@ export default function App({
                       onStage={(files, side) => void stageFiles(files, side)}
                       onDiscard={(files) => void prepareDiscardFiles(files)}
                       onRecovery={() => setDialog("recovery")}
-                      reviewProgress={{
-                        reviewed: reviewedUnits,
-                        total: knownUnits.length,
-                      }}
+                      reviewProgress={coverage}
+                      onNextReview={nextReview ? openNextReview : undefined}
+                      reviewLoading={busy || loadingDiff}
                       workspacePath={changes.workspace.path}
                       files={changes.files}
                       selected={selected}
@@ -2223,6 +2370,10 @@ export default function App({
                         onRecovery={() => setDialog("recovery")}
                         selected={selected}
                         onSelect={(file) => void loadFile(file)}
+                        scope={commitScope}
+                        onScope={setCommitScope}
+                        search={commitSearch}
+                        onSearch={setCommitSearch}
                       >
                         <CommitComposer
                           changes={changes}
@@ -2260,6 +2411,7 @@ export default function App({
                 tab !== "commit" &&
                 contextOpen && (
                   <ContextInspector
+                    active={tab === "changes" && contextOpen}
                     activeTab={inspectorTab}
                     onTab={setInspectorTab}
                     aiPanel={
@@ -2306,6 +2458,37 @@ export default function App({
               }
             >
               <div className="center-panel">
+                {tab === "commit" &&
+                  (diff?.side === "unstaged" ||
+                    summary?.side === "unstaged") && (
+                    <div className="commit-version-notice" role="status">
+                      <Info size={16} />
+                      <span>
+                        {stagedCount
+                          ? t(
+                              "当前查看未暂存版本，不在本次 Staged 提交范围内。",
+                            )
+                          : t("当前查看未暂存版本，请先确认暂存范围。")}
+                      </span>
+                      {stagedCount > 0 && (
+                        <Button
+                          className="text-button"
+                          onClick={() => {
+                            const file = changes.files.find(
+                              (file) => file.side === "staged",
+                            );
+                            if (file) {
+                              setCommitScope("staged");
+                              setCommitSearch("");
+                              void loadFile(file);
+                            }
+                          }}
+                        >
+                          {t("查看已暂存变更")}
+                        </Button>
+                      )}
+                    </div>
+                  )}
                 {summary ? (
                   <DeferredDiff
                     summary={summary}
@@ -2339,7 +2522,8 @@ export default function App({
                   />
                 ) : diff ? (
                   <DiffView
-                    key={`${diff.workspaceId}:${diff.path}:${diff.side}`}
+                    key={`${lastLocalView.current}:${diff.workspaceId}:${diff.path}:${diff.side}`}
+                    positionRef={localReadingPosition(diff)}
                     onOpenWindow={
                       demo || diffWindow
                         ? undefined
@@ -2364,6 +2548,11 @@ export default function App({
                     onMark={(h, r) => {
                       void mark(h, r);
                     }}
+                    onNextReview={
+                      tab === "changes" && nextReview
+                        ? openNextReview
+                        : undefined
+                    }
                     onStage={(h) => {
                       void stage(h);
                     }}
@@ -2811,41 +3000,62 @@ export default function App({
         </div>
       )}
       {dialog === "settings" && (
-        <Settings
-          onError={(error) => setError(asError(error))}
-          onRecentChanged={async () =>
-            setRecent(await request<Workspace[]>("recent_workspaces"))
+        <Suspense
+          fallback={
+            <WorkspacePending
+              label={t("正在载入设置…")}
+              onCancel={() => {
+                setDialog(null);
+                requestAnimationFrame(() => {
+                  (settingsTrigger.current?.isConnected
+                    ? settingsTrigger.current
+                    : document.getElementById("settings-toggle")
+                  )?.focus();
+                });
+              }}
+            />
           }
-          initialSection={settingsSection}
-          workspaces={recent}
-          workspaceId={changes?.workspace.id}
-          demo={demo}
-          error={error}
-          preferences={preferences}
-          layout={
-            changes
-              ? {
-                  snapshot: repositoryLayout,
-                  name: changes.workspace.name,
-                  key: repositoryLayout.scopeKey,
-                  onChange: (partial) => {
-                    void repositoryLayout.update(partial);
-                  },
-                  onReset: () => {
-                    void repositoryLayout.reset();
-                  },
-                  onRetry: () => {
-                    void repositoryLayout.retry();
-                  },
-                }
-              : undefined
-          }
-          onChange={updatePreferences}
-          onClose={() => setDialog(null)}
-        />
+        >
+          <Settings
+            onError={(error) => setError(asError(error))}
+            onRecentChanged={async () =>
+              setRecent(await request<Workspace[]>("recent_workspaces"))
+            }
+            initialSection={settingsSection}
+            workspaces={recent}
+            workspaceId={changes?.workspace.id}
+            demo={demo}
+            error={error}
+            preferences={preferences}
+            layout={
+              changes
+                ? {
+                    snapshot: repositoryLayout,
+                    name: changes.workspace.name,
+                    key: repositoryLayout.scopeKey,
+                    onChange: (partial) => {
+                      void repositoryLayout.update(partial);
+                    },
+                    onReset: () => {
+                      void repositoryLayout.reset();
+                    },
+                    onRetry: () => {
+                      void repositoryLayout.retry();
+                    },
+                  }
+                : undefined
+            }
+            onChange={updatePreferences}
+            onClose={() => setDialog(null)}
+          />
+        </Suspense>
       )}
       {dialog === "commands" && (
-        <Modal title={t("命令面板")} onClose={() => setDialog(null)}>
+        <Modal
+          title={t("命令面板")}
+          onClose={() => setDialog(null)}
+          animate={false}
+        >
           <CommandList
             actions={[
               ...(["fetch", "pull", "push"] as const).map((kind) => ({

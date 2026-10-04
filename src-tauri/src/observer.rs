@@ -73,13 +73,40 @@ impl ObserverState {
         let running = self.running.clone();
         std::thread::spawn(move || {
             while running.load(Ordering::Acquire) {
-                if let (Ok(proof), Ok(mut native)) = (core.lock(), observer.lock()) {
-                    native.last_error = native.manager.tick(&proof).err();
+                if let Ok(mut native) = observer.lock() {
+                    let prepared = {
+                        core.lock()
+                            .map_err(|_| missing())
+                            .and_then(|proof| native.manager.prepare_tick(&proof))
+                    };
+                    native.last_error = match prepared {
+                        Ok(Some(prepared)) => {
+                            let result = native
+                                .manager
+                                .run_prepared_tick(&prepared, || !running.load(Ordering::Acquire));
+                            let current = core.lock().map_err(|_| missing()).and_then(|proof| {
+                                let current =
+                                    native.manager.validate_prepared_tick(&proof, &prepared);
+                                if current.is_err() || !running.load(Ordering::Acquire) {
+                                    native.manager.release_foreground(&proof)?;
+                                }
+                                current
+                            });
+                            if current.is_err() || !running.load(Ordering::Acquire) {
+                                let _ = native.manager.stop_prepared_runtime();
+                            }
+                            result.and(current).err()
+                        }
+                        Ok(None) => None,
+                        Err(error) => Some(error),
+                    };
                 }
                 std::thread::sleep(Duration::from_secs(1));
             }
-            if let (Ok(proof), Ok(mut native)) = (core.lock(), observer.lock()) {
-                let _ = native.manager.release_foreground(&proof);
+            if let Ok(mut native) = observer.lock() {
+                if let Ok(proof) = core.lock() {
+                    let _ = native.manager.release_foreground(&proof);
+                }
             }
         });
     }
@@ -119,10 +146,12 @@ pub fn dispatch(
     } else {
         None
     };
+    // Never hold core while waiting for the manager's process startup/wait.
+    // Background tick, dispatch and shutdown all use observer -> core order.
+    let mut native = native.lock().map_err(|_| missing())?;
     let mut proof = core.lock().map_err(|_| missing())?;
     proof.synchronize_data_epoch()?;
     proof.check_data_epoch(epoch)?;
-    let mut native = native.lock().map_err(|_| missing())?;
     native.manager.clear_stale_previews(epoch);
     match command {
         "observer_status" => {

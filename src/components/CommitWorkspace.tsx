@@ -1,5 +1,6 @@
 import { t } from "../i18n";
-import { useState, type ReactNode } from "react";
+import { Button } from "./ui/controls";
+import type { ReactNode } from "react";
 import { FileTree } from "./FileTree";
 import { CardSplit } from "./CardSplit";
 import {
@@ -18,6 +19,10 @@ export function CommitWorkspace({
   onRecovery,
   selected,
   onSelect,
+  scope,
+  onScope,
+  search,
+  onSearch,
   children,
 }: {
   changes: Changes;
@@ -28,12 +33,33 @@ export function CommitWorkspace({
   onRecovery: () => void;
   selected: string | null;
   onSelect: (file: ChangedFile) => void;
+  scope: "all" | Side;
+  onScope: (scope: "all" | Side) => void;
+  search: string;
+  onSearch: (value: string) => void;
   children: ReactNode;
 }) {
-  const [search, setSearch] = useState("");
-  const [scope, setScope] = useState<"all" | Side>("all");
+  const stagedFiles = changes.files.filter((file) => file.side === "staged");
   return (
     <section className="commit-workspace" aria-label={t("Commit 工作区")}>
+      <div className="commit-scope-summary">
+        <strong>
+          {t("已暂存提交范围：{count} 个文件", { count: stagedFiles.length })}
+        </strong>
+        <span>{t("未暂存变更可在下方切换查看并暂存。")}</span>
+        {stagedFiles.length > 0 && (
+          <Button
+            className="text-button"
+            onClick={() => {
+              onScope("staged");
+              onSearch("");
+              onSelect(stagedFiles[0]);
+            }}
+          >
+            {t("查看已暂存变更")}
+          </Button>
+        )}
+      </div>
       <CardSplit
         field="commitDetailsHeight"
         orientation="vertical"
@@ -52,11 +78,11 @@ export function CommitWorkspace({
             selected={selected}
             onSelect={onSelect}
             search={search}
-            onSearch={setSearch}
+            onSearch={onSearch}
             searchId="commit-file-search"
             loaded={loaded}
             scope={scope}
-            onScope={setScope}
+            onScope={onScope}
             disabled={disabled}
             onStage={onStage}
             onDiscard={onDiscard}

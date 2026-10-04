@@ -21,6 +21,7 @@ export function Modal({
   error,
   className = "",
   dismissible = true,
+  animate = true,
 }: {
   title: string;
   children: ReactNode;
@@ -29,6 +30,7 @@ export function Modal({
   error?: ProofError | null;
   className?: string;
   dismissible?: boolean;
+  animate?: boolean;
 }) {
   const [open, setOpen] = useState(true);
   const popup = useRef<HTMLDivElement>(null);
@@ -49,9 +51,13 @@ export function Modal({
       }}
     >
       <DialogPortal>
-        <DialogOverlay className="proof-dialog-backdrop z-[200] bg-slate-950/35 backdrop-blur-[2px]" />
+        <DialogOverlay
+          data-instant={!animate || undefined}
+          className="proof-dialog-backdrop z-[200] bg-slate-950/35 backdrop-blur-[2px]"
+        />
         <DialogPrimitive.Popup
           ref={popup}
+          data-instant={!animate || undefined}
           aria-label={title}
           initialFocus={() =>
             popup.current?.querySelector<HTMLElement>(

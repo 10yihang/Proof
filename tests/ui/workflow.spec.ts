@@ -1,5 +1,5 @@
 import { editorState, setEditorScroll, visibleSourcePosition } from "./editor";
-import { chooseOption } from "./controls";
+import { chooseOption, openReadingTools, closeReadingTools } from "./controls";
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { demoChanges, demoDiff } from "../../src/demo";
 import { demoGraphPage } from "../../src/graph-demo";
@@ -93,7 +93,9 @@ test("File history retries the same version and path after a transient Blame fai
   page,
 }) => {
   await prepareFileHistoryFixture(page, "historical");
-  await page
+  await (
+    await openReadingTools(page)
+  )
     .getByRole("button", { name: "文件历史与 Blame", exact: true })
     .click();
   const modal = page.getByRole("dialog", {
@@ -119,7 +121,9 @@ test("File history and current Worktree Blame recover independently after failed
   page,
 }) => {
   await prepareFileHistoryFixture(page, "both");
-  await page
+  await (
+    await openReadingTools(page)
+  )
     .getByRole("button", { name: "文件历史与 Blame", exact: true })
     .click();
   const modal = page.getByRole("dialog", {
@@ -167,26 +171,36 @@ test("File history and current Worktree Blame recover independently after failed
   ).toEqual({ history: before.history + 1, blame: before.blame + 1 });
 });
 
-test("Local changes uses one-line context controls and a standalone Full file button", async ({
+test("Local changes reading tools preserve one-line context steps and Full file behavior", async ({
   page,
 }) => {
   await openFixture(page);
   await expect(
     page.locator(".workspace-tabs .view-tab").filter({ hasText: /^本地变更/ }),
   ).toBeVisible();
-  const context = page.getByLabel("上下文行数");
+  const context = (await openReadingTools(page)).getByLabel("上下文行数");
+  await openReadingTools(page);
   await expect(context).toHaveText("3");
-  await page
+  await (
+    await openReadingTools(page)
+  )
     .getByRole("button", { name: "减少一行上下文", exact: true })
     .click();
+  await openReadingTools(page);
   await expect(context).toHaveText("2");
-  await page
+  await (
+    await openReadingTools(page)
+  )
     .getByRole("button", { name: "增加一行上下文", exact: true })
     .click();
+  await openReadingTools(page);
   await expect(context).toHaveText("3");
-  await page
+  await (
+    await openReadingTools(page)
+  )
     .getByRole("button", { name: "增加一行上下文", exact: true })
     .click();
+  await openReadingTools(page);
   await expect(context).toHaveText("4");
   const actions = await page.evaluate(() =>
     (window as any).fixture.actions.filter(
@@ -194,18 +208,34 @@ test("Local changes uses one-line context controls and a standalone Full file bu
     ),
   );
   expect(actions.map((a: any) => a.args.contextLines)).toEqual([4]);
-  await page.getByRole("button", { name: "全文", exact: true }).click();
+  await (
+    await openReadingTools(page)
+  )
+    .getByRole("button", { name: "全文", exact: true })
+    .click();
+  await openReadingTools(page);
   await expect(context).toHaveText("全部");
-  await page.getByRole("button", { name: "全文", exact: true }).click();
+  await (
+    await openReadingTools(page)
+  )
+    .getByRole("button", { name: "全文", exact: true })
+    .click();
+  await openReadingTools(page);
   await expect(context).toHaveText("4");
   for (const n of [3, 2, 1, 0]) {
-    await page
+    await (
+      await openReadingTools(page)
+    )
       .getByRole("button", { name: "减少一行上下文", exact: true })
       .click();
+    await openReadingTools(page);
     await expect(context).toHaveText(String(n));
   }
   await expect(
-    page.getByRole("button", { name: "减少一行上下文", exact: true }),
+    (await openReadingTools(page)).getByRole("button", {
+      name: "减少一行上下文",
+      exact: true,
+    }),
   ).toBeDisabled();
   expect(
     await page.evaluate(() =>
@@ -549,7 +579,11 @@ test("full-file search cancels without accepting late text and keeps its scope h
     };
   });
   await page.getByRole("button", { name: "搜索文件内容", exact: true }).click();
-  await page.getByRole("button", { name: "全文", exact: true }).click();
+  await (
+    await openReadingTools(page)
+  )
+    .getByRole("button", { name: "全文", exact: true })
+    .click();
   await expect(
     page.getByText("正在读取完整文件…", { exact: true }),
   ).toBeVisible();
@@ -559,7 +593,10 @@ test("full-file search cancels without accepting late text and keeps its scope h
     .toBe(true);
   await page.evaluate(() => (window as any).releaseContext());
   await expect(
-    page.getByRole("button", { name: "全文", exact: true }),
+    (await openReadingTools(page)).getByRole("button", {
+      name: "全文",
+      exact: true,
+    }),
   ).toHaveAttribute("aria-pressed", "false");
   await page
     .getByLabel("搜索当前 Diff", { exact: true })
@@ -568,12 +605,19 @@ test("full-file search cancels without accepting late text and keeps its scope h
   await page.evaluate(() => {
     (window as any).failContext = true;
   });
-  await page.getByRole("button", { name: "全文", exact: true }).click();
+  await (
+    await openReadingTools(page)
+  )
+    .getByRole("button", { name: "全文", exact: true })
+    .click();
   await expect(page.getByRole("alert").filter({ hasText: /\S/ })).toContainText(
     "完整内容超过读取上限",
   );
   await expect(
-    page.getByRole("button", { name: "全文", exact: true }),
+    (await openReadingTools(page)).getByRole("button", {
+      name: "全文",
+      exact: true,
+    }),
   ).toHaveAttribute("aria-pressed", "false");
   await expect(page.locator(".diff-scroll")).toContainText("validateRequest");
 });
@@ -618,7 +662,11 @@ test("full-file search restores its range after leaving a historical tab", async
     .dblclick();
   const tab = page.locator(".diff-tab-page").last();
   await tab.getByRole("button", { name: "搜索文件内容", exact: true }).click();
-  await tab.getByRole("button", { name: "全文", exact: true }).click();
+  await (
+    await openReadingTools(tab)
+  )
+    .getByRole("button", { name: "全文", exact: true })
+    .click();
   await tab
     .getByLabel("搜索当前 Diff", { exact: true })
     .fill("unchanged searchable tail");
@@ -633,7 +681,10 @@ test("full-file search restores its range after leaving a historical tab", async
   );
   await navigation.locator(".diff-tab-button").last().click();
   await expect(
-    tab.getByRole("button", { name: "全文", exact: true }),
+    (await openReadingTools(tab)).getByRole("button", {
+      name: "全文",
+      exact: true,
+    }),
   ).toHaveAttribute("aria-pressed", "true");
   await expect(tab.getByLabel("匹配行数")).toContainText("2/3");
   await expect(
@@ -697,14 +748,23 @@ for (const route of [
         : page.locator(".diff-tab-page").last();
     if (route === "unmounted")
       await tab.getByRole("button", { name: "加载 Diff", exact: true }).click();
-    await tab
-      .getByRole("button", { name: "Diff 阅读选项", exact: true })
+    await tab.getByRole("button", { name: "阅读工具", exact: true }).click();
+    await (
+      await openReadingTools(tab)
+    )
+      .getByRole("button", { name: "全文", exact: true })
       .click();
-    await tab.getByRole("button", { name: "全文", exact: true }).click();
     await expect(
-      tab.getByRole("button", { name: "全文", exact: true }),
+      (await openReadingTools(tab)).getByRole("button", {
+        name: "全文",
+        exact: true,
+      }),
     ).toHaveAttribute("aria-pressed", "true");
+    await closeReadingTools(tab);
     const scroll = tab.locator(".diff-scroll");
+    await expect
+      .poll(async () => (await editorState(scroll))?.modelLines ?? 0)
+      .toBeGreaterThanOrEqual(600);
     await setEditorScroll(scroll, { scrollTop: 9000 });
     const visiblePosition = () => visibleSourcePosition(scroll);
     const before = await visiblePosition();
@@ -722,11 +782,15 @@ for (const route of [
         .poll(() => page.evaluate(() => (window as any).fixture.reads))
         .toBeGreaterThan(1);
     } else if (route === "raw") {
-      await tab
+      await (
+        await openReadingTools(tab)
+      )
         .getByRole("button", { name: "查看原始 patch", exact: true })
         .click();
       await expect(tab.locator(".raw-patch")).toBeVisible();
-      await tab
+      await (
+        await openReadingTools(tab)
+      )
         .getByRole("button", { name: "查看原始 patch", exact: true })
         .click();
     } else {
@@ -737,12 +801,14 @@ for (const route of [
       await navigation.locator(".diff-tab-button").last().click();
     }
     if (route === "unmounted")
-      await tab
-        .getByRole("button", { name: "Diff 阅读选项", exact: true })
-        .click();
+      await tab.getByRole("button", { name: "阅读工具", exact: true }).click();
     await expect(
-      tab.getByRole("button", { name: "全文", exact: true }),
+      (await openReadingTools(tab)).getByRole("button", {
+        name: "全文",
+        exact: true,
+      }),
     ).toHaveAttribute("aria-pressed", "true");
+    await closeReadingTools(tab);
     await expect.poll(visiblePosition).toEqual(before);
   });
 }
@@ -788,10 +854,12 @@ for (const outcome of ["cancel", "failure"] as const) {
       .first()
       .dblclick();
     const tab = page.locator(".diff-tab-page").last();
-    await tab
-      .getByRole("button", { name: "Diff 阅读选项", exact: true })
+    await tab.getByRole("button", { name: "阅读工具", exact: true }).click();
+    await (
+      await openReadingTools(tab)
+    )
+      .getByRole("button", { name: "全文", exact: true })
       .click();
-    await tab.getByRole("button", { name: "全文", exact: true }).click();
     if (outcome === "cancel") {
       await tab.getByRole("button", { name: "取消读取", exact: true }).click();
       await page.evaluate(() => (window as any).releaseContext());
@@ -806,13 +874,16 @@ for (const outcome of ["cancel", "failure"] as const) {
       .getByRole("button", { name: "requests.ts M", exact: true })
       .click();
     await expect(tab.locator(".diff-file-header")).toContainText("requests.ts");
-    await tab
-      .getByRole("button", { name: "Diff 阅读选项", exact: true })
-      .click();
+    await tab.getByRole("button", { name: "阅读工具", exact: true }).click();
     await expect(
-      tab.getByRole("button", { name: "全文", exact: true }),
+      (await openReadingTools(tab)).getByRole("button", {
+        name: "全文",
+        exact: true,
+      }),
     ).toBeEnabled();
-    await expect(tab.getByLabel("上下文行数")).toHaveText("3");
+    await expect(
+      (await openReadingTools(tab)).getByLabel("上下文行数"),
+    ).toHaveText("3");
     expect(await page.evaluate(() => (window as any).contextAttempts)).toBe(1);
   });
 }
@@ -850,9 +921,7 @@ test("file search includes whitespace-only changes and restores the reading filt
     window.dispatchEvent(new Event("focus"));
   });
   await expect(page.locator(".diff-scroll")).toContainText("whitespaceToken");
-  await page
-    .getByRole("button", { name: "Diff 阅读选项", exact: true })
-    .click();
+  await page.getByRole("button", { name: "阅读工具", exact: true }).click();
   await page
     .getByRole("checkbox", { name: "隐藏空白变化", exact: true })
     .check();
@@ -866,9 +935,7 @@ test("file search includes whitespace-only changes and restores the reading filt
   await page
     .getByRole("button", { name: "关闭文件内容搜索", exact: true })
     .click();
-  await page
-    .getByRole("button", { name: "Diff 阅读选项", exact: true })
-    .click();
+  await page.getByRole("button", { name: "阅读工具", exact: true }).click();
   await expect(
     page.getByRole("checkbox", { name: "隐藏空白变化", exact: true }),
   ).toBeChecked();
@@ -914,7 +981,11 @@ test("Full file shrinking resets split widths and horizontal offsets", async ({
   });
   await page.getByRole("button", { name: "并排视图", exact: true }).click();
   await page.getByRole("button", { name: "搜索文件内容", exact: true }).click();
-  await page.getByRole("button", { name: "全文", exact: true }).click();
+  await (
+    await openReadingTools(page)
+  )
+    .getByRole("button", { name: "全文", exact: true })
+    .click();
   await page
     .getByLabel("搜索当前 Diff", { exact: true })
     .fill("long unchanged");
@@ -929,7 +1000,11 @@ test("Full file shrinking resets split widths and horizontal offsets", async ({
   await expect
     .poll(async () => (await editorState(bar, "old"))?.left ?? 0)
     .toBeGreaterThan(10000);
-  await page.getByRole("button", { name: "全文", exact: true }).click();
+  await (
+    await openReadingTools(page)
+  )
+    .getByRole("button", { name: "全文", exact: true })
+    .click();
   await expect
     .poll(async () => (await editorState(bar, "old"))?.width ?? Infinity)
     .toBeLessThan(3000);
@@ -1330,7 +1405,11 @@ test("a released large historical Diff restores its wrapped source line", async 
     .dblclick();
   const tab = page.locator(".diff-tab-page").last();
   await tab.getByRole("button", { name: "加载 Diff", exact: true }).click();
-  await tab.getByRole("button", { name: "切换自动换行", exact: true }).click();
+  await (
+    await openReadingTools(tab)
+  )
+    .getByRole("button", { name: "切换自动换行", exact: true })
+    .click();
   const scroll = tab.locator(".diff-scroll");
   await setEditorScroll(scroll, { scrollTop: 12000 });
   const visiblePosition = () => visibleSourcePosition(scroll);
@@ -2367,6 +2446,94 @@ async function openFixture(
   await expect(page.locator(".diff-file-header")).toContainText("requests.ts");
 }
 
+test("Changes restores its source line after a different staged Commit file and History", async ({
+  page,
+}) => {
+  await openFixture(page);
+  await page.evaluate(() => {
+    const w = window as any,
+      original = w.__TAURI_INTERNALS__.invoke;
+    w.__TAURI_INTERNALS__.invoke = async (name: string, payload: any) => {
+      if (payload?.command === "diff_context") {
+        return {
+          snapshotId: payload.args.snapshotId,
+          fullFile: true,
+          contextLines: 3,
+          gaps: [
+            {
+              beforeHunkId: null,
+              lines: Array.from({ length: 600 }, (_, n) => ({
+                kind: "context",
+                content: `unchanged context line ${n}`,
+                oldLine: 100 + n,
+                newLine: 100 + n,
+              })),
+            },
+          ],
+        };
+      }
+      return original(name, payload);
+    };
+  });
+  const diff = page.getByRole("region", { name: "代码差异", exact: true });
+  const initialFile = await diff.locator(".diff-file-header").innerText();
+  await expect(diff.locator(".diff-file-header")).toContainText(
+    "src/api/requests.ts",
+  );
+  await (
+    await openReadingTools(diff)
+  )
+    .getByRole("button", { name: "全文", exact: true })
+    .click();
+  await closeReadingTools(diff);
+  const scroll = diff.locator(".diff-scroll");
+  await expect
+    .poll(async () => (await editorState(scroll))?.modelLines ?? 0)
+    .toBeGreaterThanOrEqual(600);
+  await setEditorScroll(scroll, { scrollTop: 9011 });
+  const before = await visibleSourcePosition(scroll);
+  const beforeText = (await editorState(scroll))?.text;
+  expect(Number(before?.key.split(" ").at(-1))).toBeGreaterThanOrEqual(100);
+  expect((await editorState(scroll))?.top).toBeGreaterThan(100);
+  expect(beforeText).toMatch(/^unchanged context line \d+$/);
+
+  await openCommit(page);
+  await expect(diff.locator(".diff-file-header")).toContainText("README.md");
+  await expect(diff.locator(".comparison")).toHaveText(/HEAD\s*→\s*Index/);
+  await page.getByLabel("Commit message").fill("Keep the staged README draft");
+  const navigation = page.getByRole("navigation", { name: "Worktree" });
+  await navigation.getByRole("tab", { name: "History", exact: true }).click();
+  await expect(
+    page.getByRole("listbox", { name: "提交列表与分支关系", exact: true }),
+  ).toBeVisible();
+  await navigation
+    .getByRole("tab", { name: /本地变更/, exact: false })
+    .filter({ has: page.locator(".tab-count") })
+    .click();
+  await expect(diff.locator(".diff-file-header")).toHaveText(initialFile, {
+    useInnerText: true,
+  });
+  await expect(diff.locator(".comparison")).toHaveText(/Index\s*→\s*Worktree/);
+  await expect.poll(() => visibleSourcePosition(scroll)).toEqual(before);
+  await expect
+    .poll(async () => (await editorState(scroll))?.text)
+    .toBe(beforeText);
+  await openCommit(page);
+  await expect(diff.locator(".diff-file-header")).toContainText("README.md");
+  await expect(page.getByLabel("Commit message")).toHaveValue(
+    "Keep the staged README draft",
+  );
+  expect(
+    await page.evaluate(() =>
+      (window as any).fixture.actions.filter((action: any) =>
+        ["stage", "stage_files", "commit", "mark_reviewed"].includes(
+          action.command,
+        ),
+      ),
+    ),
+  ).toEqual([]);
+});
+
 test("Changes focuses on Diff while Commit keeps staging and the draft in its own tab", async ({
   page,
 }) => {
@@ -2392,6 +2559,10 @@ test("Changes focuses on Diff while Commit keeps staging and the draft in its ow
     path: ".artifacts/commit-tab-desktop.png",
     animations: "disabled",
   });
+  await page
+    .locator(".commit-workspace")
+    .getByRole("button", { name: "Unstaged", exact: true })
+    .click();
   const file = page
     .locator(".commit-workspace .tree-file")
     .filter({ hasText: "response.ts" })
@@ -2758,10 +2929,10 @@ test("late context reply cannot evict the next workspace cache or show its error
       return original(name, payload);
     };
   });
-  await page
-    .getByRole("button", { name: "Diff 阅读选项", exact: true })
-    .click();
-  await page
+  await page.getByRole("button", { name: "阅读工具", exact: true }).click();
+  await (
+    await openReadingTools(page)
+  )
     .getByRole("button", { name: "增加一行上下文", exact: true })
     .click();
   await expect
@@ -2915,7 +3086,9 @@ async function editorFixture(page: Page) {
   });
 }
 async function chooseEditor(page: Page) {
-  await page
+  await (
+    await openReadingTools(page)
+  )
     .getByRole("button", { name: "在外部编辑器打开", exact: true })
     .click();
   await expect(
@@ -2952,7 +3125,9 @@ test("editor configuration is explicit, scoped, and only the open button launche
   await expect(
     page.getByRole("dialog", { name: "设置", exact: true }),
   ).toHaveCount(0);
-  await page
+  await (
+    await openReadingTools(page)
+  )
     .getByRole("button", { name: "在外部编辑器打开", exact: true })
     .click();
   await expect(
@@ -3028,7 +3203,9 @@ test("an editor launch failure stays visible when the same file refreshes in the
   await page.evaluate(() => {
     (window as any).fixture.deferEditorOpen = true;
   });
-  await page
+  await (
+    await openReadingTools(page)
+  )
     .getByRole("button", { name: "在外部编辑器打开", exact: true })
     .click();
   await expect
@@ -3060,7 +3237,10 @@ test("an editor launch failure stays visible when the same file refreshes in the
     "无法打开 src/api/requests.ts",
   );
   await expect(
-    page.getByRole("button", { name: "在外部编辑器打开", exact: true }),
+    (await openReadingTools(page)).getByRole("button", {
+      name: "在外部编辑器打开",
+      exact: true,
+    }),
   ).toBeEnabled();
 });
 
@@ -4512,7 +4692,7 @@ test("Context: manual links, notes, unlink and undo preserve original session ev
       ),
     ),
   ).toBe(false);
-  await page.getByRole("button", { name: "关联会话", exact: true }).click();
+  await page.getByRole("button", { name: "关联已有会话", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "管理会话关联" });
   await dialog
     .locator(".association-candidate")
@@ -4676,7 +4856,7 @@ test("Context: manager is scoped to the selected file and stays usable in a narr
   const show = page.getByRole("button", { name: "显示上下文", exact: true });
   await expect(show).toBeVisible();
   await show.click();
-  await page.getByRole("button", { name: "关联会话", exact: true }).click();
+  await page.getByRole("button", { name: "关联已有会话", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "管理会话关联" });
   await dialog.getByLabel("搜索当前 Worktree 的会话").fill("native-session-b");
   await expect(dialog.locator(".association-candidate")).toHaveCount(1);
@@ -4703,7 +4883,7 @@ test("Context: manager is scoped to the selected file and stays usable in a narr
   await dialog.getByRole("button", { name: "关闭", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "关联会话", exact: true }),
+    page.getByRole("button", { name: "关联已有会话", exact: true }),
   ).toBeFocused();
 });
 
@@ -5547,7 +5727,10 @@ test("historical Diff exposes grouping, collapsible panes and a separate window"
     tab.getByRole("button", { name: "收起文件栏", exact: true }),
   ).toBeVisible();
   await expect(
-    tab.getByRole("button", { name: "在独立窗口打开 Diff", exact: true }),
+    tab.getByRole("button", {
+      name: "在独立窗口打开 Diff",
+      exact: true,
+    }),
   ).toBeEnabled();
 });
 
@@ -5662,7 +5845,9 @@ test("Local changes opens the selected file and side in a Diff window", async ({
   page,
 }) => {
   await openFixture(page, false, true);
-  await page
+  await (
+    await openReadingTools(page)
+  )
     .getByRole("button", { name: "在独立窗口打开 Diff", exact: true })
     .click();
   const selection = await page.evaluate(
@@ -6385,7 +6570,10 @@ test("i18n switches immediately, retains drafts and persists after reopening", a
     page.getByRole("button", { name: "AI Group Changes", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Full file", exact: true }),
+    (await openReadingTools(page)).getByRole("button", {
+      name: "Full file",
+      exact: true,
+    }),
   ).toBeVisible();
   await expect(page.locator(".diff-file-header")).toContainText("requests.ts");
   await expect(page.locator(".monaco-editor .view-lines")).toContainText(
@@ -7002,8 +7190,10 @@ test("Diff toolbar stages and discards the whole file; file pane shows Review pr
   await expect(discard).toBeDisabled();
 
   // 文件面板头部的 Review 进度：初始已加载 requests.ts（2 个 hunk）。
-  const progress = page.locator(".file-heading .review-progress");
+  const progress = page.locator("#files-panel .review-coverage-summary");
   await expect(progress).toContainText("0/2");
+  await expect(progress).toContainText("已加载 1/5 个文件版本");
+  await expect(progress).toContainText("还有 4 个文件版本未加载");
 
   // 在选中 response.ts 之前放开其丢弃限制，并 stub 恢复点命令。
   await page.evaluate(() => {
@@ -7037,6 +7227,7 @@ test("Diff toolbar stages and discards the whole file; file pane shows Review pr
     .getByRole("button", { name: "response.ts M", exact: true })
     .click();
   await expect(progress).toContainText("0/3");
+  await expect(progress).toContainText("已加载 2/5 个文件版本");
   await expect(discard).toBeEnabled();
   await discard.click();
   const discardDialog = page.getByRole("dialog", {

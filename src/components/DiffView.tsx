@@ -101,10 +101,12 @@ export function DiffView({
   jumpTo,
   ai,
   onOpenWindow,
+  onNextReview,
 }: {
   jumpTo?: DiffJump | null;
   ai?: AiController;
   onOpenWindow?: () => void;
+  onNextReview?: () => void;
   diff: FileDiff;
   preferences: Preferences;
   pending: boolean;
@@ -764,6 +766,11 @@ export function DiffView({
             ) : (
               <Circle size={16} />
             )}
+            <span className="hunk-review-label">
+              {row.hunk.reviewState === "reviewed"
+                ? t("撤销审查")
+                : t("标记已审查")}
+            </span>
           </Button>
 
           <code>{row.hunk.header}</code>
@@ -950,106 +957,6 @@ export function DiffView({
               <Trash size={17} />
             </Button>
           )}
-          <div
-            className="context-stepper"
-            role="group"
-            aria-label={t("Diff 上下文")}
-          >
-            <Button
-              className="icon-button"
-              aria-label={t("减少一行上下文")}
-              title={t("减少一行上下文")}
-              disabled={
-                raw ||
-                contextBusy ||
-                pending ||
-                !diff.hunks.some((h) => h.lines.length) ||
-                (!displayedContext?.fullFile &&
-                  (displayedContext?.contextLines ?? 3) === 0)
-              }
-              onClick={() =>
-                void expandContext(Math.max(0, lastContextLines.current - 1))
-              }
-            >
-              <Minus size={14} />
-            </Button>
-            <output aria-label={t("上下文行数")}>
-              {displayedContext?.fullFile
-                ? t("All")
-                : (displayedContext?.contextLines ?? 3)}
-            </output>
-            <Button
-              className="icon-button"
-              aria-label={t("增加一行上下文")}
-              title={t("增加一行上下文")}
-              disabled={
-                raw ||
-                contextBusy ||
-                pending ||
-                !diff.hunks.some((h) => h.lines.length) ||
-                lastContextLines.current === 65535
-              }
-              onClick={() =>
-                void expandContext(
-                  Math.min(65535, lastContextLines.current + 1),
-                )
-              }
-            >
-              <Plus size={14} />
-            </Button>
-            <Button
-              className="button compact"
-              aria-pressed={!!displayedContext?.fullFile}
-              disabled={
-                raw ||
-                contextBusy ||
-                pending ||
-                !diff.hunks.some((h) => h.lines.length)
-              }
-              onClick={() =>
-                void expandContext(
-                  displayedContext?.fullFile
-                    ? lastContextLines.current
-                    : "file",
-                )
-              }
-            >
-              {t("Full file")}
-            </Button>
-          </div>
-          {!comparison && (
-            <Button
-              className="icon-button"
-              title={t("文件历史与 Blame")}
-              aria-label={t("文件历史与 Blame")}
-              disabled={!onHistory || pending}
-              onClick={onHistory}
-            >
-              <ClockCounterClockwise size={17} />
-            </Button>
-          )}
-          {!comparison && (
-            <Button
-              className="icon-button"
-              title={t("Open in editor · 当前 Worktree 文件")}
-              aria-label={t("在外部编辑器打开")}
-              disabled={openingEditor}
-              onClick={onEditor}
-            >
-              <ArrowSquareOut size={17} />
-            </Button>
-          )}
-          <Button
-            className={`icon-button ${preferences.wrapLines ? "selected" : ""}`}
-            aria-label={t("切换自动换行")}
-            title={t("自动换行")}
-            aria-pressed={preferences.wrapLines}
-            onClick={() =>
-              displayPreference({ wrapLines: !preferences.wrapLines })
-            }
-          >
-            <TextAlignLeft size={17} />
-          </Button>
           <Popover
             open={optionsOpen}
             onOpenChange={(open) => {
@@ -1061,12 +968,13 @@ export function DiffView({
               render={
                 <Button
                   ref={readingMenu}
-                  className={`icon-button ${optionsOpen ? "selected" : ""}`}
-                  aria-label={t("Diff 阅读选项")}
+                  className={`button compact ${optionsOpen ? "selected" : ""}`}
+                  aria-label={t("阅读工具")}
                   title={t("阅读选项")}
                   aria-haspopup="dialog"
                 >
-                  <SlidersHorizontal size={17} />
+                  <SlidersHorizontal size={15} />
+                  {t("阅读工具")}
                 </Button>
               }
             />
@@ -1075,6 +983,152 @@ export function DiffView({
               className="proof-reading-options w-80 gap-3 rounded-md p-3"
               aria-label={t("Diff 阅读选项")}
             >
+              <strong className="reading-tools-title">{t("阅读工具")}</strong>
+              <div className="reading-tool-actions">
+                <div
+                  className="context-stepper"
+                  role="group"
+                  aria-label={t("Diff 上下文")}
+                >
+                  <Button
+                    className="icon-button"
+                    aria-label={t("减少一行上下文")}
+                    title={t("减少一行上下文")}
+                    disabled={
+                      raw ||
+                      contextBusy ||
+                      pending ||
+                      !diff.hunks.some((h) => h.lines.length) ||
+                      (!displayedContext?.fullFile &&
+                        (displayedContext?.contextLines ?? 3) === 0)
+                    }
+                    onClick={() =>
+                      void expandContext(
+                        Math.max(0, lastContextLines.current - 1),
+                      )
+                    }
+                  >
+                    <Minus size={14} />
+                  </Button>
+                  <output aria-label={t("上下文行数")}>
+                    {displayedContext?.fullFile
+                      ? t("All")
+                      : (displayedContext?.contextLines ?? 3)}
+                  </output>
+                  <Button
+                    className="icon-button"
+                    aria-label={t("增加一行上下文")}
+                    title={t("增加一行上下文")}
+                    disabled={
+                      raw ||
+                      contextBusy ||
+                      pending ||
+                      !diff.hunks.some((h) => h.lines.length) ||
+                      lastContextLines.current === 65535
+                    }
+                    onClick={() =>
+                      void expandContext(
+                        Math.min(65535, lastContextLines.current + 1),
+                      )
+                    }
+                  >
+                    <Plus size={14} />
+                  </Button>
+                  <Button
+                    className="button compact"
+                    aria-pressed={!!displayedContext?.fullFile}
+                    disabled={
+                      raw ||
+                      contextBusy ||
+                      pending ||
+                      !diff.hunks.some((h) => h.lines.length)
+                    }
+                    onClick={() => {
+                      rememberPosition();
+                      setOptionsOpen(false);
+                      void expandContext(
+                        displayedContext?.fullFile
+                          ? lastContextLines.current
+                          : "file",
+                      );
+                    }}
+                  >
+                    {t("Full file")}
+                  </Button>
+                </div>
+                {!comparison && (
+                  <Button
+                    className="button compact reading-tool-action"
+                    title={t("文件历史与 Blame")}
+                    aria-label={t("文件历史与 Blame")}
+                    disabled={!onHistory || pending}
+                    onClick={() => {
+                      setOptionsOpen(false);
+                      onHistory?.();
+                    }}
+                  >
+                    <ClockCounterClockwise size={17} />
+                    {t("文件历史与 Blame")}
+                  </Button>
+                )}
+                {!comparison && (
+                  <Button
+                    className="button compact reading-tool-action"
+                    title={t("Open in editor · 当前 Worktree 文件")}
+                    aria-label={t("在外部编辑器打开")}
+                    disabled={openingEditor}
+                    onClick={() => {
+                      setOptionsOpen(false);
+                      onEditor();
+                    }}
+                  >
+                    <ArrowSquareOut size={17} />
+                    {t("在外部编辑器打开")}
+                  </Button>
+                )}
+                <Button
+                  className={`button compact reading-tool-action ${preferences.wrapLines ? "selected" : ""}`}
+                  aria-label={t("切换自动换行")}
+                  title={t("自动换行")}
+                  aria-pressed={preferences.wrapLines}
+                  onClick={() =>
+                    displayPreference({ wrapLines: !preferences.wrapLines })
+                  }
+                >
+                  <TextAlignLeft size={17} />
+                  {t("自动换行")}
+                </Button>
+                <Button
+                  className={`button compact reading-tool-action ${raw ? "selected" : ""}`}
+                  aria-label={t("查看原始 patch")}
+                  title={t("原始 patch")}
+                  aria-pressed={raw}
+                  onClick={() => {
+                    rememberPosition();
+                    setOptionsOpen(false);
+                    setSearchOpen(false);
+                    setSearch("");
+                    setRaw(!raw);
+                  }}
+                >
+                  <Code size={17} />
+                  {t("原始 patch")}
+                </Button>
+                {onOpenWindow && (
+                  <Button
+                    className="button compact reading-tool-action"
+                    aria-label={t("在独立窗口打开 Diff")}
+                    title={t("Open in Separate Window")}
+                    onClick={() => {
+                      setOptionsOpen(false);
+                      onOpenWindow();
+                    }}
+                  >
+                    <ArrowSquareOut size={17} />
+                    {t("Open in Separate Window")}
+                  </Button>
+                )}
+              </div>
               <label>
                 <Input
                   type="checkbox"
@@ -1119,30 +1173,6 @@ export function DiffView({
           >
             <MagnifyingGlass size={17} />
           </Button>
-          <Button
-            className={`icon-button ${raw ? "selected" : ""}`}
-            aria-label={t("查看原始 patch")}
-            title={t("原始 patch")}
-            aria-pressed={raw}
-            onClick={() => {
-              rememberPosition();
-              setSearchOpen(false);
-              setSearch("");
-              setRaw(!raw);
-            }}
-          >
-            <Code size={17} />
-          </Button>
-          {onOpenWindow && (
-            <Button
-              className="icon-button"
-              aria-label={t("在独立窗口打开 Diff")}
-              title={t("Open in Separate Window")}
-              onClick={onOpenWindow}
-            >
-              <ArrowSquareOut size={17} />
-            </Button>
-          )}
           {
             <Button
               className={`icon-button ${focused ? "selected" : ""}`}
@@ -1571,7 +1601,7 @@ export function DiffView({
           {reviewed}/{diff.hunks.length} {t(" 已审查")}
         </span>
         <Button
-          className="button compact"
+          className={`button compact ${reviewed === diff.hunks.length && onNextReview ? "subtle" : ""}`}
           disabled={
             pending || (hiddenLines > 0 && reviewed !== diff.hunks.length)
           }
@@ -1587,6 +1617,15 @@ export function DiffView({
             ? t("撤销文件标记")
             : t("标记整个文件")}
         </Button>
+        {reviewed === diff.hunks.length && onNextReview && (
+          <Button
+            className="button compact primary"
+            disabled={pending}
+            onClick={onNextReview}
+          >
+            {t("下一未审查文件")}
+          </Button>
+        )}
       </footer>
     </section>
   );

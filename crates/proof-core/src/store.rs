@@ -20,7 +20,7 @@ impl Store {
         let connection = Connection::open(path.join("proof.sqlite3"))?;
         connection.busy_timeout(std::time::Duration::from_secs(3))?;
         let version: u32 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        if version > 7 {
+        if version > 8 {
             return Err(Error::new(
                 "DATABASE_VERSION",
                 "本地数据由更新版本的 Proof 创建，请使用对应版本打开。",
@@ -83,8 +83,37 @@ impl Store {
             CREATE INDEX IF NOT EXISTS observer_association_order ON observer_association_history(workspace_id,path,CAST(COALESCE(json_extract(CASE WHEN json_valid(payload) THEN payload ELSE '{}' END,'$.sequence'),0) AS INTEGER) DESC);
             CREATE TRIGGER IF NOT EXISTS observer_association_history_deleted AFTER DELETE ON observer_association_history BEGIN
                 UPDATE settings SET value=CAST(value AS INTEGER)+1 WHERE key='context_history_epoch';
-            END;
-            PRAGMA user_version=7;")?;
+            END;")?;
+        if version < 8 {
+            // Materialize literal event paths once. Triggers keep the index in
+            // the same transaction as ingestion, redaction and deletion.
+            connection.execute_batch("BEGIN IMMEDIATE;
+                CREATE TABLE IF NOT EXISTS observer_event_paths (
+                    event_id TEXT NOT NULL REFERENCES observer_events(id) ON DELETE CASCADE,
+                    workspace_id TEXT NOT NULL, session_id TEXT NOT NULL, path TEXT NOT NULL,
+                    PRIMARY KEY(event_id,path));
+                CREATE INDEX IF NOT EXISTS observer_path_lookup ON observer_event_paths(workspace_id,path,session_id,event_id);
+                CREATE INDEX IF NOT EXISTS observer_event_session_order ON observer_events(workspace_id,session_id,received_at DESC,id DESC);
+                INSERT OR IGNORE INTO observer_event_paths
+                    SELECT e.id,e.workspace_id,e.session_id,p.value FROM observer_events e,
+                    json_each(CASE WHEN json_valid(e.payload) THEN e.payload ELSE '{}' END,'$.paths') p WHERE p.type='text';
+                CREATE TRIGGER IF NOT EXISTS observer_paths_inserted AFTER INSERT ON observer_events BEGIN
+                    INSERT OR IGNORE INTO observer_event_paths SELECT NEW.id,NEW.workspace_id,NEW.session_id,value
+                        FROM json_each(NEW.payload,'$.paths') WHERE type='text';
+                END;
+                CREATE TRIGGER IF NOT EXISTS observer_paths_updated AFTER UPDATE OF payload,workspace_id,session_id ON observer_events
+                    WHEN OLD.workspace_id IS NOT NEW.workspace_id OR OLD.session_id IS NOT NEW.session_id
+                      OR json_extract(OLD.payload,'$.paths') IS NOT json_extract(NEW.payload,'$.paths') BEGIN
+                    DELETE FROM observer_event_paths WHERE event_id=OLD.id;
+                    INSERT OR IGNORE INTO observer_event_paths SELECT NEW.id,NEW.workspace_id,NEW.session_id,value
+                        FROM json_each(NEW.payload,'$.paths') WHERE type='text';
+                END;
+                CREATE TRIGGER IF NOT EXISTS observer_paths_deleted AFTER DELETE ON observer_events BEGIN
+                    DELETE FROM observer_event_paths WHERE event_id=OLD.id;
+                END;
+                PRAGMA user_version=8;
+                COMMIT;")?;
+        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

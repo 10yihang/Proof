@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 
 const PAGE: usize = 30;
 const HISTORY_ORDER: &str = "CAST(COALESCE(json_extract(CASE WHEN json_valid(payload) THEN payload ELSE '{}' END,'$.sequence'),0) AS INTEGER)";
+#[cfg(test)]
+#[path = "context_performance_tests.rs"]
+mod performance_tests;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AssociationOverride {
@@ -244,6 +247,7 @@ fn evidence(
     }
     Ok(answer)
 }
+#[cfg(test)]
 fn summary(
     db: &Connection,
     workspace: &str,
@@ -287,6 +291,7 @@ fn summary(
         cleared: count == 0,
     })
 }
+#[cfg(test)]
 fn link(db: &Connection, workspace: &str, path: &str, session: &str) -> Result<ContextLink> {
     let original = evidence(db, workspace, path, session)?;
     let user_override = state(db, workspace, path, session)?;
@@ -305,6 +310,166 @@ fn link(db: &Connection, workspace: &str, path: &str, session: &str) -> Result<C
         revision: revision(db, workspace, path, session)?,
         active,
     })
+}
+
+/// One batch shares settings, session aggregates and ranked evidence instead
+/// of rereading them for every visible link. All reads stay in the caller's
+/// transaction, including expired history that still contributes to revisions.
+fn links(db: &Connection, workspace: &str, path: &str, ids: &[String]) -> Result<Vec<ContextLink>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let current = now();
+    let (epoch,policy,history_epoch):(String,String,String) = db.query_row(
+        "SELECT (SELECT value FROM settings WHERE key='data_epoch'),(SELECT value FROM settings WHERE key='observer_revision'),(SELECT value FROM settings WHERE key='context_history_epoch')",[],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?)))?;
+    let selected = serde_json::to_string(ids)?;
+    let sql = format!("WITH selected AS (SELECT value AS session_id FROM json_each(?1)),
+        stats AS (SELECT e.session_id,count(*) AS count,min(received_at) AS first,max(received_at) AS last
+          FROM observer_events e JOIN selected s ON s.session_id=e.session_id WHERE e.workspace_id=?2 AND e.expires_at>?4 GROUP BY e.session_id),
+        path_stats AS (SELECT p.session_id,count(*) AS count FROM observer_event_paths p JOIN observer_events e ON e.id=p.event_id
+          JOIN selected s ON s.session_id=p.session_id WHERE p.workspace_id=?2 AND p.path=?3 AND e.expires_at>?4 GROUP BY p.session_id),
+        turns AS (SELECT DISTINCT p.session_id,json_extract(e.payload,'$.turnId') AS turn FROM observer_event_paths p
+          JOIN observer_events e ON e.id=p.event_id JOIN selected s ON s.session_id=p.session_id
+          WHERE p.workspace_id=?2 AND p.path=?3 AND e.expires_at>?4),
+        prompts AS (SELECT e.session_id,e.payload,row_number() OVER (PARTITION BY e.session_id
+          ORDER BY CASE WHEN json_type(e.payload,'$.prompt')='text' THEN 0 ELSE 1 END,e.received_at DESC,e.id DESC) AS position
+          FROM observer_events e JOIN selected s ON s.session_id=e.session_id LEFT JOIN path_stats ps ON ps.session_id=e.session_id
+          WHERE e.workspace_id=?2 AND e.expires_at>?4 AND (COALESCE(ps.count,0)=0
+            OR EXISTS(SELECT 1 FROM observer_event_paths p WHERE p.event_id=e.id AND p.path=?3)
+            OR EXISTS(SELECT 1 FROM turns t WHERE t.session_id=e.session_id AND t.turn=json_extract(e.payload,'$.turnId')))),
+        history AS (SELECT session_id,id,payload,row_number() OVER (PARTITION BY session_id ORDER BY {HISTORY_ORDER} DESC,created_at DESC,id DESC) AS position
+          FROM observer_association_history WHERE workspace_id=?2 AND path=?3)
+        SELECT x.session_id,i.agent,s.native_session_id,s.native_agent_id,s.first_received_at,
+          st.first,st.last,COALESCE(st.count,0),COALESCE(ps.count,0),a.enabled,a.note,h.id,h.payload,pr.payload
+          FROM selected x LEFT JOIN observer_sessions s ON s.id=x.session_id AND s.workspace_id=?2
+          LEFT JOIN observer_installations i ON i.id=s.installation_id LEFT JOIN stats st ON st.session_id=x.session_id
+          LEFT JOIN path_stats ps ON ps.session_id=x.session_id
+          LEFT JOIN observer_associations a ON a.workspace_id=?2 AND a.path=?3 AND a.session_id=x.session_id AND a.updated_at>?5
+          LEFT JOIN history h ON h.session_id=x.session_id AND h.position=1 LEFT JOIN prompts pr ON pr.session_id=x.session_id AND pr.position=1");
+    let mut query = db.prepare(&sql)?;
+    let rows = query
+        .query_map(
+            params![selected, workspace, path, current, cutoff()],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<u64>>(4)?,
+                    row.get::<_, Option<u64>>(5)?,
+                    row.get::<_, Option<u64>>(6)?,
+                    row.get::<_, u64>(7)?,
+                    row.get::<_, u64>(8)?,
+                    row.get::<_, Option<bool>>(9)?,
+                    row.get::<_, Option<String>>(10)?,
+                    row.get::<_, Option<String>>(11)?,
+                    row.get::<_, Option<String>>(12)?,
+                    row.get::<_, Option<String>>(13)?,
+                ))
+            },
+        )?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut found = std::collections::HashMap::new();
+    for (
+        id,
+        agent,
+        native_session_id,
+        native_agent_id,
+        started,
+        first,
+        last,
+        count,
+        path_count,
+        enabled,
+        note,
+        head,
+        history,
+        prompt,
+    ) in rows
+    {
+        if let Some(history) = history {
+            let _: ChangePayload = serde_json::from_str(&history)?;
+        }
+        let user_override = enabled.map(|enabled| AssociationOverride {
+            enabled,
+            note: note.unwrap_or_default(),
+        });
+        let revision = fingerprint(&[
+            workspace.as_bytes(),
+            path.as_bytes(),
+            id.as_bytes(),
+            epoch.as_bytes(),
+            policy.as_bytes(),
+            history_epoch.as_bytes(),
+            head.as_deref().unwrap_or_default().as_bytes(),
+            &serde_json::to_vec(&started)?,
+            &serde_json::to_vec(&user_override)?,
+        ]);
+        let (excerpt, status) = match prompt {
+            Some(payload) => {
+                let event: ObserverEvent = serde_json::from_str(&payload)?;
+                (
+                    event.prompt.map(|s| s.chars().take(240).collect()),
+                    event
+                        .field_status
+                        .get("prompt")
+                        .cloned()
+                        .unwrap_or_else(|| "not_provided".into()),
+                )
+            }
+            None => (None, "expired".into()),
+        };
+        let agent = agent
+            .map(|agent| serde_json::from_value(serde_json::Value::String(agent)))
+            .transpose()?;
+        found.insert(
+            id.clone(),
+            ContextLink {
+                session: ContextSession {
+                    id,
+                    agent,
+                    native_session_id,
+                    native_agent_id,
+                    first_received_at: first,
+                    last_received_at: last,
+                    event_count: count,
+                    prompt_excerpt: excerpt,
+                    prompt_status: status,
+                    cleared: count == 0,
+                },
+                original_evidence: AssociationEvidence {
+                    path_event_count: path_count,
+                    ..Default::default()
+                },
+                active: user_override
+                    .as_ref()
+                    .map_or(path_count > 0, |value| value.enabled),
+                user_override,
+                revision,
+            },
+        );
+    }
+    let mut query = db.prepare("SELECT session_id,id,payload FROM (SELECT e.session_id,e.id,e.payload,row_number() OVER (PARTITION BY e.session_id ORDER BY e.received_at DESC,e.id DESC) AS position
+        FROM observer_event_paths p JOIN observer_events e ON e.id=p.event_id WHERE p.workspace_id=?1 AND p.path=?2 AND e.expires_at>?3 AND p.session_id IN(SELECT value FROM json_each(?4))) WHERE position<=20 ORDER BY session_id,position")?;
+    let rows = query
+        .query_map(params![workspace, path, current, selected], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    for (session, id, payload) in rows {
+        let event: ObserverEvent = serde_json::from_str(&payload)?;
+        if let Some(link) = found.get_mut(&session) {
+            link.original_evidence.event_ids.push(id);
+            link.original_evidence.matched_at_capture |=
+                event.matched_content_hashes.contains_key(path);
+        }
+    }
+    Ok(ids.iter().filter_map(|id| found.remove(id)).collect())
 }
 impl Proof {
     fn context_scope(&self, workspace: &str, path: &str, verify_identity: bool) -> Result<()> {
@@ -347,17 +512,13 @@ impl Proof {
             &self.store.connection,
             TransactionBehavior::Deferred,
         )?;
-        let mut query=tx.prepare("SELECT session_id FROM (SELECT session_id,max(received_at) AS at FROM observer_events WHERE workspace_id=?1 AND expires_at>?2 AND EXISTS(SELECT 1 FROM json_each(payload,'$.paths') WHERE value=?3) GROUP BY session_id UNION ALL SELECT session_id,updated_at FROM observer_associations WHERE workspace_id=?1 AND path=?3 AND enabled=1 AND updated_at>?4) x WHERE NOT EXISTS(SELECT 1 FROM observer_associations a WHERE a.workspace_id=?1 AND a.path=?3 AND a.session_id=x.session_id AND a.enabled=0 AND a.updated_at>?4) GROUP BY session_id ORDER BY max(at) DESC,session_id LIMIT 31")?;
+        let mut query=tx.prepare("SELECT session_id FROM (SELECT p.session_id,max(e.received_at) AS at FROM observer_event_paths p JOIN observer_events e ON e.id=p.event_id WHERE p.workspace_id=?1 AND e.expires_at>?2 AND p.path=?3 GROUP BY p.session_id UNION ALL SELECT session_id,updated_at FROM observer_associations WHERE workspace_id=?1 AND path=?3 AND enabled=1 AND updated_at>?4) x WHERE NOT EXISTS(SELECT 1 FROM observer_associations a WHERE a.workspace_id=?1 AND a.path=?3 AND a.session_id=x.session_id AND a.enabled=0 AND a.updated_at>?4) GROUP BY session_id ORDER BY max(at) DESC,session_id LIMIT 31")?;
         let ids = query
             .query_map(params![workspace, now(), path, cutoff()], |r| {
                 r.get::<_, String>(0)
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-        let links = ids
-            .iter()
-            .take(PAGE)
-            .map(|id| link(&tx, workspace, path, id))
-            .collect::<Result<Vec<_>>>()?;
+        let links = links(&tx, workspace, path, &ids[..ids.len().min(PAGE)])?;
         let excluded_count=tx.query_row("SELECT count(*) FROM observer_associations WHERE workspace_id=? AND path=? AND enabled=0 AND updated_at>?",params![workspace,path,cutoff()],|r|r.get(0))?;
         let history_count=tx.query_row("SELECT count(*) FROM observer_association_history WHERE workspace_id=? AND path=? AND created_at>?",params![workspace,path,cutoff()],|r|r.get(0))?;
         drop(query);
@@ -428,11 +589,15 @@ impl Proof {
                 |r| Ok((r.get::<_, String>(0)?, r.get::<_, u64>(1)?)),
             )?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-        let links = ids
-            .iter()
-            .take(PAGE)
-            .map(|(id, _)| link(&tx, workspace, path, id))
-            .collect::<Result<Vec<_>>>()?;
+        let links = links(
+            &tx,
+            workspace,
+            path,
+            &ids.iter()
+                .take(PAGE)
+                .map(|(id, _)| id.clone())
+                .collect::<Vec<_>>(),
+        )?;
         drop(query);
         tx.commit()?;
         Ok(ContextCandidates {
@@ -485,8 +650,8 @@ impl Proof {
             });
         }
         let page_size = if path.is_some() { 100 } else { 20 };
-        let file_event_count = path.map(|path| self.store.connection.query_row("SELECT count(*) FROM observer_events WHERE workspace_id=?1 AND session_id=?2 AND expires_at>?3 AND EXISTS(SELECT 1 FROM json_each(payload,'$.paths') WHERE value=?4)", params![workspace,session,now(),path], |row| row.get::<_, u64>(0))).transpose()?;
-        let mut query=self.store.connection.prepare("SELECT payload,content_expires_at,expires_at FROM observer_events WHERE workspace_id=?1 AND session_id=?2 AND expires_at>?3 AND (?4 IS NULL OR received_at<?4 OR (received_at=?4 AND id<?5)) AND (?6 IS NULL OR EXISTS(SELECT 1 FROM json_each(payload,'$.paths') WHERE value=?6)) ORDER BY received_at DESC,id DESC LIMIT ?7")?;
+        let file_event_count = path.map(|path| self.store.connection.query_row("SELECT count(*) FROM observer_event_paths p JOIN observer_events e ON e.id=p.event_id WHERE p.workspace_id=?1 AND p.session_id=?2 AND e.expires_at>?3 AND p.path=?4", params![workspace,session,now(),path], |row| row.get::<_, u64>(0))).transpose()?;
+        let mut query=self.store.connection.prepare("SELECT payload,content_expires_at,expires_at FROM observer_events WHERE workspace_id=?1 AND session_id=?2 AND expires_at>?3 AND (?4 IS NULL OR received_at<?4 OR (received_at=?4 AND id<?5)) AND (?6 IS NULL OR EXISTS(SELECT 1 FROM observer_event_paths p WHERE p.event_id=observer_events.id AND p.path=?6)) ORDER BY received_at DESC,id DESC LIMIT ?7")?;
         let rows = query
             .query_map(
                 params![

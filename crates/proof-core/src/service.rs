@@ -32,6 +32,37 @@ pub struct Proof {
     pub(crate) diagnostic_previews:
         std::cell::RefCell<VecDeque<crate::diagnostics::PreparedDiagnostic>>,
 }
+
+/// Native watcher inputs captured through Core's selected Git/repository checks.
+/// The executable stays private; commands always use Core's fixed root and
+/// routing-environment policy rather than rediscovering a program through PATH.
+#[derive(Clone)]
+pub struct WorkspaceWatchSpec {
+    paths: Vec<PathBuf>,
+    root: PathBuf,
+    git: String,
+}
+impl WorkspaceWatchSpec {
+    pub fn paths(&self) -> &[PathBuf] {
+        &self.paths
+    }
+    pub fn command(&self) -> std::process::Command {
+        process::watch_git_command(&self.git, &self.root)
+    }
+}
+
+fn watch_paths(workspace: &Workspace) -> Vec<PathBuf> {
+    let mut paths = vec![PathBuf::from(&workspace.path)];
+    for path in [&workspace.git_dir, &workspace.common_dir] {
+        let path = PathBuf::from(path);
+        // Classification needs actual metadata even when root already covers it.
+        // The native watcher deduplicates recursive registration separately.
+        if !paths.contains(&path) {
+            paths.push(path);
+        }
+    }
+    paths
+}
 impl Proof {
     pub fn open(data_dir: impl AsRef<Path>) -> Result<Self> {
         let store = Store::open(data_dir.as_ref())?;
@@ -124,13 +155,27 @@ impl Proof {
     }
     pub fn workspace_watch_paths(&self, workspace_id: &str) -> Result<Vec<PathBuf>> {
         let workspace = self.store.workspace(workspace_id)?;
-        let mut paths = vec![PathBuf::from(&workspace.path)];
-        for path in [&workspace.git_dir, &workspace.common_dir] {
-            if !paths.iter().any(|root| Path::new(path).starts_with(root)) {
-                paths.push(PathBuf::from(path));
-            }
+        Ok(watch_paths(&workspace))
+    }
+    pub fn workspace_watch_spec(&self, workspace_id: &str) -> Result<WorkspaceWatchSpec> {
+        let git = self.git()?;
+        let workspace = self.store.workspace(workspace_id)?;
+        let actual = git.discover(&workspace.path)?.0;
+        if actual.path != workspace.path
+            || actual.git_dir != workspace.git_dir
+            || actual.common_dir != workspace.common_dir
+        {
+            return Err(Error::new(
+                "WORKSPACE_REPLACED",
+                "程序所在仓库身份已变化，请重新打开并确认信任。",
+                "Watcher Git selection no longer matches the registered repository",
+            ));
         }
-        Ok(paths)
+        Ok(WorkspaceWatchSpec {
+            paths: watch_paths(&workspace),
+            root: PathBuf::from(workspace.path),
+            git: git.executable,
+        })
     }
 
     pub fn file_diff(&mut self, workspace_id: &str, path: &str, side: Side) -> Result<FileDiff> {

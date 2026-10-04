@@ -211,7 +211,7 @@ fn schema_three_migrates_without_replacing_existing_preferences() {
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0))
             .unwrap(),
-        7
+        8
     );
     assert_eq!(
         db.query_row("SELECT COUNT(*) FROM repository_layouts", [], |r| r

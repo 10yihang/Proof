@@ -64,9 +64,9 @@ describe("repo file tree", () => {
     );
     expect(deep.some((row) => row.path.endsWith("App.java"))).toBe(true);
     const searching = repoTreeRows(paths, "main.kt", new Set());
-    expect(searching.some((row) => row.path === "src/main/kotlin/Main.kt")).toBe(
-      true,
-    );
+    expect(
+      searching.some((row) => row.path === "src/main/kotlin/Main.kt"),
+    ).toBe(true);
     // 搜索不命中的文件不出现，但保留其祖先链。
     expect(searching.some((row) => row.path.endsWith("App.java"))).toBe(false);
   });

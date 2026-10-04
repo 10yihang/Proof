@@ -64,5 +64,8 @@ function finalize(map: Map<string, MutableNode>): BranchTreeNode[] {
 /** Count real branches under a node (folders are not counted). */
 export function countTreeBranches(node: BranchTreeNode): number {
   if (node.branch) return 1;
-  return node.children.reduce((sum, child) => sum + countTreeBranches(child), 0);
+  return node.children.reduce(
+    (sum, child) => sum + countTreeBranches(child),
+    0,
+  );
 }

@@ -111,6 +111,132 @@ impl Drop for Fixture {
     }
 }
 
+fn delayed_heartbeat_fixture() -> Fixture {
+    let mut f = Fixture::new();
+    let wrapper = f.root.path().join("delayed-helper");
+    let gate = f.root.path().join("delay-heartbeat");
+    let started = f.root.path().join("heartbeat-waiting");
+    let released = f.root.path().join("release-heartbeat");
+    fs::write(&wrapper, format!(
+        "#!/bin/sh\nif [ \"$1\" = serve ] && [ -e '{}' ]; then\n  printf waiting > '{}'\n  while [ ! -e '{}' ]; do /bin/sleep 0.01; done\nfi\nexec '{}' \"$@\"\n",
+        gate.display(), started.display(), released.display(), env!("CARGO_BIN_EXE_proof-observer")
+    )).unwrap();
+    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o700)).unwrap();
+    f.manager = ObserverManager::new(
+        f.root.path().join("data"),
+        wrapper,
+        AgentConfigPaths {
+            codex: f.root.path().join("user/.codex"),
+            claude: f.root.path().join("user/.claude"),
+            codewiz: f.root.path().join("user/codewiz"),
+        },
+    );
+    let preview = f.preview();
+    assert!(
+        f.manager
+            .apply(&f.proof, &preview.id)
+            .unwrap()
+            .observing_enabled
+    );
+    f.manager.stop_owned_runtime(&f.proof).unwrap();
+    fs::write(gate, "delay fixture heartbeat").unwrap();
+    f
+}
+
+#[test]
+fn delayed_heartbeat_wait_releases_core_with_deterministic_before_and_after_evidence() {
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+    for locked_wait in [true, false] {
+        let mut f = delayed_heartbeat_fixture();
+        let core = Arc::new(Mutex::new(Proof::open(f.root.path().join("data")).unwrap()));
+        let manager = std::mem::replace(
+            &mut f.manager,
+            ObserverManager::new(
+                f.root.path().join("data"),
+                PathBuf::from(env!("CARGO_BIN_EXE_proof-observer")),
+                AgentConfigPaths {
+                    codex: f.root.path().join("user/.codex"),
+                    claude: f.root.path().join("user/.claude"),
+                    codewiz: f.root.path().join("user/codewiz"),
+                },
+            ),
+        );
+        let worker_core = core.clone();
+        let worker = std::thread::spawn(move || {
+            let mut manager = manager;
+            let result = if locked_wait {
+                // The previous native arrangement held core throughout tick.
+                let proof = worker_core.lock().unwrap();
+                manager.tick(&proof)
+            } else {
+                let prepared = {
+                    manager
+                        .prepare_tick(&worker_core.lock().unwrap())
+                        .unwrap()
+                        .unwrap()
+                };
+                let result = manager.run_prepared_tick(&prepared, || false);
+                result.and(manager.validate_prepared_tick(&worker_core.lock().unwrap(), &prepared))
+            };
+            (manager, result)
+        });
+        let started = f.root.path().join("heartbeat-waiting");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !started.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let waiting = started.exists();
+        let begin = Instant::now();
+        let readable = core
+            .try_lock()
+            .is_ok_and(|proof| proof.preferences().is_ok());
+        let read_elapsed = begin.elapsed();
+        // Release the fixture before asserting, so failure cannot leave a helper waiting.
+        fs::write(f.root.path().join("release-heartbeat"), "release").unwrap();
+        let (manager, result) = worker.join().unwrap();
+        f.manager = manager;
+        assert!(waiting, "heartbeat fixture never reached its gate");
+        assert_eq!(
+            readable, !locked_wait,
+            "shared core availability while heartbeat is gated"
+        );
+        assert!(read_elapsed < Duration::from_millis(100));
+        result.unwrap();
+        eprintln!("heartbeat gated: old_lock_held={locked_wait}, core_read_available={readable}, probe_us={}", read_elapsed.as_micros());
+    }
+}
+
+#[test]
+fn prepared_tick_cannot_accept_changed_consent_or_a_wiped_storage_generation() {
+    let mut f = delayed_heartbeat_fixture();
+    let prepared = f.manager.prepare_tick(&f.proof).unwrap().unwrap();
+    let mut other = Proof::open(f.root.path().join("data")).unwrap();
+    other.pause_all_observers().unwrap();
+    assert_eq!(
+        f.manager
+            .validate_prepared_tick(&other, &prepared)
+            .unwrap_err()
+            .code,
+        "OBSERVER_CONFIG_STALE"
+    );
+    let record = other.observer_hook_records().unwrap().remove(0);
+    let uninstall = f
+        .manager
+        .preview_uninstall(&other, &record.installation_id)
+        .unwrap();
+    f.manager.apply(&other, &uninstall.id).unwrap();
+    let wipe = other.prepare_data_deletion(DataScope::All).unwrap();
+    other.delete_local_data(&wipe.id).unwrap();
+    assert_eq!(
+        f.manager
+            .validate_prepared_tick(&other, &prepared)
+            .unwrap_err()
+            .code,
+        "OBSERVER_CONFIG_STALE"
+    );
+}
+
 #[test]
 fn codewiz_plugin_installs_captures_native_turns_and_uninstalls_without_changing_user_config() {
     let mut f = Fixture::new();

@@ -87,6 +87,153 @@ fn fixture() -> (tempfile::TempDir, Proof, proof_core::Workspace) {
 }
 
 #[test]
+#[ignore = "same-fixture native history pagination benchmark; no remotes"]
+fn graph_pagination_benchmark() {
+    let (temp, mut proof, workspace) = fixture();
+    let repo = Path::new(&workspace.path);
+    let mut stream = String::new();
+    for i in 1..=10_000 {
+        let parent = i - 1;
+        commit(
+            &mut stream,
+            "benchmark",
+            i,
+            if i == 1 {
+                &[]
+            } else {
+                std::slice::from_ref(&parent)
+            },
+        );
+    }
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["fast-import", "--quiet"])
+        .stdin(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(stream.as_bytes())
+        .unwrap();
+    assert!(child.wait().unwrap().success());
+    let expected = git(
+        repo,
+        &["log", "--topo-order", "refs/heads/benchmark", "--format=%H"],
+    );
+    let trace = temp.path().join("graph-trace.jsonl");
+    let mut samples = Vec::new();
+    let mut walks = Vec::new();
+    for _ in 0..3 {
+        fs::write(&trace, "").unwrap();
+        std::env::set_var("GIT_TRACE2_EVENT", &trace);
+        let start = std::time::Instant::now();
+        let page = proof
+            .commit_graph(&workspace.id, None, 0, "refs/heads/benchmark")
+            .unwrap();
+        let mut count = page.commits.len();
+        let mut actual = page
+            .commits
+            .iter()
+            .map(|commit| commit.oid.clone())
+            .collect::<Vec<_>>();
+        let mut more = page.has_more;
+        while more {
+            let next = proof
+                .commit_graph(
+                    &workspace.id,
+                    Some(&page.snapshot_id),
+                    count,
+                    "refs/heads/benchmark",
+                )
+                .unwrap();
+            count += next.commits.len();
+            actual.extend(next.commits.iter().map(|commit| commit.oid.clone()));
+            more = next.has_more;
+        }
+        samples.push(start.elapsed().as_secs_f64() * 1000.0);
+        std::env::remove_var("GIT_TRACE2_EVENT");
+        assert_eq!(count, 10_000);
+        assert_eq!(
+            actual.iter().map(String::as_str).collect::<Vec<_>>(),
+            expected.lines().collect::<Vec<_>>()
+        );
+        let entries: Vec<serde_json::Value> = fs::read_to_string(&trace)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        walks.push(
+            entries
+                .iter()
+                .filter(|event| {
+                    event["event"] == "start"
+                        && event["argv"]
+                            .as_array()
+                            .is_some_and(|args| args.iter().any(|arg| arg == "--topo-order"))
+                })
+                .count(),
+        );
+    }
+    println!(
+        "BENCH graph commits=10000 pages=100 milliseconds={samples:?} ancestry_walks={walks:?}"
+    );
+}
+
+#[test]
+fn a_future_page_encoding_error_does_not_break_the_current_page_prefetch() {
+    let (_temp, mut proof, workspace) = fixture();
+    let repo = Path::new(&workspace.path);
+    let mut stream = String::new();
+    for i in 1..=300 {
+        let parent = i - 1;
+        commit(
+            &mut stream,
+            "encoding",
+            i,
+            if i == 1 {
+                &[]
+            } else {
+                std::slice::from_ref(&parent)
+            },
+        );
+    }
+    let mut bytes = stream.into_bytes();
+    let at = bytes
+        .windows(b"Commit 50\n".len())
+        .position(|part| part == b"Commit 50\n")
+        .unwrap();
+    bytes[at + b"Commit 5".len()] = 0xff;
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["fast-import", "--quiet"])
+        .stdin(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(&bytes).unwrap();
+    assert!(child.wait().unwrap().success());
+    let page = proof
+        .commit_graph(&workspace.id, None, 0, "refs/heads/encoding")
+        .unwrap();
+    assert_eq!(page.commits.len(), 100);
+    assert_eq!(
+        proof
+            .commit_graph(
+                &workspace.id,
+                Some(&page.snapshot_id),
+                200,
+                "refs/heads/encoding"
+            )
+            .unwrap_err()
+            .code,
+        "TEXT_ENCODING"
+    );
+}
+
+#[test]
 fn graph_contains_all_branches_real_parents_and_paged_topological_order() {
     let (_temp, mut proof, workspace) = fixture();
     let page = proof.commit_graph(&workspace.id, None, 0, "all").unwrap();

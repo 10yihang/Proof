@@ -9,9 +9,12 @@ graph retain continuous, dense reading surfaces.
 ## Visual system
 
 The authoritative application tokens remain in `src/styles/ui.css`. Light mode
-uses white content, `#f3f4f6` chrome, `#242833` text and `#386bcb` accents. Dark
-mode uses `#202227` content, `#181a1e` chrome, `#292c32` raised surfaces,
-`#e9ebef` text and `#94b6fa` accents. Selections share a restrained background;
+uses white content, `#f1f3f6` chrome, `#252831` text and `#326bc8` accents. Dark
+mode uses `#212329` content, `#1c1e24` chrome, `#30333c` raised surfaces,
+`#eceef3` text and `#9abaff` accents. Sidebars use a separate quiet surface.
+The title bar and popups have lightly translucent materials; code surfaces stay
+opaque. Reduced transparency and increased contrast use solid materials.
+Selections share a restrained background;
 keyboard focus remains separate. Git additions, deletions and branch-lane colors
 retain their meaning.
 
@@ -86,10 +89,14 @@ removes its divider and gives the space back to the same mounted editor.
 ## Motion
 
 `src/styles/motion.css` provides 120ms feedback, 180ms popover entry, 220ms
-structural feedback and 100ms exit timing. Tab and segmented-control indicators
-move independently of their labels. Base UI retains responsibility for popup
-mounting, dismissal and keyboard semantics. The CSS and Motion paths both respect
-reduced motion. Whole-page transitions and animations on long lists or the code
+structural feedback and 100ms exit timing with a shared custom ease-out curve.
+Buttons give a small press response on pointer-down. Tab and segmented-control
+indicators move independently of their labels with a spring without overshoot.
+Keyboard actions and the command palette are immediate. Tooltips opened during
+an existing hover session skip their transition. Base UI retains responsibility
+for popup mounting, dismissal and keyboard semantics. Reduced motion replaces
+surface movement with a short opacity transition. Whole-page transitions and
+animations on long lists or the code
 surface remain disabled. No new animation library, network font or remote asset
 was added.
 
@@ -109,3 +116,7 @@ temporary Git repositories. This describes the coverage; run results belong to
 the current change's validation record. Packaged native WebView performance is a
 separate check. Earlier card-layout outputs remain under
 `.artifacts/card-workbench`.
+
+`tests/ui/motion.spec.ts` covers press cancellation, keyboard navigation without
+animated travel, immediate command-palette focus, centered dialogs and solid
+materials in both themes under reduced motion and increased contrast.

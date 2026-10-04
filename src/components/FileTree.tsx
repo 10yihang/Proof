@@ -1,13 +1,6 @@
 import { Button, Input } from "./ui/controls";
 import { t } from "../i18n";
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-  type MouseEvent,
-} from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   CaretDown,
@@ -22,6 +15,7 @@ import {
   List,
   Plus,
   Minus,
+  ArrowRight,
 } from "@phosphor-icons/react";
 import { fileKey } from "../types";
 import type { ChangedFile, FileDiff, Side } from "../types";
@@ -29,6 +23,7 @@ import { treeRows, type TreeRow } from "../file-tree";
 import { useClientStorage } from "../api";
 import { FileActionItems, FileActionsButton } from "./FileActions";
 import { GitContextMenu } from "./HistoryActions";
+import type { ReviewCoverage } from "../review-coverage";
 
 export function FileTree({
   files,
@@ -47,6 +42,8 @@ export function FileTree({
   onRecovery,
   workspacePath,
   reviewProgress,
+  onNextReview,
+  reviewLoading = false,
 }: {
   files: ChangedFile[];
   selected: string | null;
@@ -63,7 +60,9 @@ export function FileTree({
   onDiscard?: (files: ChangedFile[]) => void;
   onRecovery?: () => void;
   workspacePath?: string;
-  reviewProgress?: { reviewed: number; total: number };
+  reviewProgress?: ReviewCoverage;
+  onNextReview?: () => void;
+  reviewLoading?: boolean;
 }) {
   const clientStorage = useClientStorage();
   const parent = useRef<HTMLDivElement>(null);
@@ -213,25 +212,6 @@ export function FileTree({
           {!readOnly && <kbd>{t("⌘ P")}</kbd>}
         </div>
 
-        {!readOnly && reviewProgress && (
-          <span
-            className="review-progress"
-            title={`${t("Review")} ${reviewProgress.reviewed}/${reviewProgress.total} ${t("hunks reviewed")}`}
-          >
-            <span
-              className="progress-circle"
-              style={
-                {
-                  "--progress": `${reviewProgress.total ? (reviewProgress.reviewed / reviewProgress.total) * 100 : 0}%`,
-                } as CSSProperties
-              }
-            />
-            <span>
-              {reviewProgress.reviewed}/{reviewProgress.total}
-            </span>
-          </span>
-        )}
-
         <Button
           className="icon-button"
           aria-label={t("文件树视图")}
@@ -251,6 +231,47 @@ export function FileTree({
           <List size={16} />
         </Button>
       </div>
+      {!readOnly && reviewProgress && (
+        <section className="review-coverage" aria-label={t("审查范围")}>
+          <div
+            className="review-coverage-summary"
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            <strong>
+              {t("已加载 {loaded}/{files} 个文件版本", {
+                loaded: reviewProgress.loadedFiles,
+                files: reviewProgress.totalFiles,
+              })}
+            </strong>
+            <span>
+              {t("已加载内容 {reviewed}/{total} 个 Hunk 已审查", {
+                reviewed: reviewProgress.reviewed,
+                total: reviewProgress.total,
+              })}
+            </span>
+            {reviewProgress.unreadFiles > 0 && (
+              <span>
+                {t("还有 {count} 个文件版本未加载", {
+                  count: reviewProgress.unreadFiles,
+                })}
+              </span>
+            )}
+          </div>
+          {onNextReview && (
+            <Button
+              className="button compact next-review-file"
+              title={t("在全部变更中打开下一未审查文件")}
+              disabled={reviewLoading}
+              onClick={onNextReview}
+            >
+              {t("下一未审查文件")}
+              <ArrowRight size={14} />
+            </Button>
+          )}
+        </section>
+      )}
       {!readOnly && (
         <div className="file-filters" role="group" aria-label={t("比较范围")}>
           {(

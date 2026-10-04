@@ -13,6 +13,7 @@ import {
   X,
 } from "@phosphor-icons/react";
 import { Button } from "./ui/controls";
+import { useInputModality } from "./ui/input-modality";
 import { t } from "../i18n";
 import type { HistoryComparison } from "./HistoryDiff";
 
@@ -63,6 +64,7 @@ export function WorkspaceTabs({
     return () => observer.disconnect();
   }, [active, comparisons.length]);
   const reduced = useReducedMotion();
+  const keyboard = useInputModality() === "keyboard";
   const views = [
     {
       id: "changes",
@@ -76,12 +78,14 @@ export function WorkspaceTabs({
   ] as const;
   const indicator = (
     <motion.span
+      aria-hidden="true"
+      initial={false}
       layoutId="workspace-active-tab"
       className="workspace-tab-indicator"
       transition={
-        reduced
+        reduced || keyboard
           ? { duration: 0 }
-          : { type: "spring", stiffness: 460, damping: 38 }
+          : { type: "spring", duration: 0.3, bounce: 0 }
       }
     />
   );

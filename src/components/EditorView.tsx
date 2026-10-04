@@ -1,7 +1,6 @@
 import { CardSplit } from "./CardSplit";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { listen } from "@tauri-apps/api/event";
 import {
   CaretDown,
   CaretRight,
@@ -151,7 +150,6 @@ export function EditorView({
   // while another tab is active or the application window is hidden.
   useEffect(() => {
     let disposed = false;
-    let unlisten: (() => void) | undefined;
     const reads = new LatestEditorRead<TextFileContent>();
     const isVisible = () => live.current.active && !document.hidden;
     const scope = {
@@ -244,16 +242,19 @@ export function EditorView({
     scope.syncVisibility();
     const visibilityChanged = () => scope.syncVisibility();
     document.addEventListener("visibilitychange", visibilityChanged);
-    void listen<string>("workspace-invalidated", (event) => {
-      if (disposed || event.payload !== workspaceId) return;
+    const invalidated = (event: Event) => {
+      if (
+        disposed ||
+        (event as CustomEvent<{ workspaceId: string }>).detail?.workspaceId !==
+          workspaceId
+      )
+        return;
       // Read visibility at event time as well as after React's active prop effect.
       scope.syncVisibility();
       scope.files.invalidate();
       scope.document.invalidate();
-    }).then((stop) => {
-      if (disposed) stop();
-      else unlisten = stop;
-    });
+    };
+    window.addEventListener("proof:workspace-invalidated", invalidated);
     return () => {
       disposed = true;
       ++generation.current;
@@ -262,7 +263,7 @@ export function EditorView({
       reads.dispose();
       if (refreshScope.current === scope) refreshScope.current = null;
       document.removeEventListener("visibilitychange", visibilityChanged);
-      unlisten?.();
+      window.removeEventListener("proof:workspace-invalidated", invalidated);
     };
   }, [request, workspaceId]);
   useEffect(() => {

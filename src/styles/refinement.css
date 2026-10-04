@@ -2,9 +2,16 @@
 .app.layout-enabled .desktop-toolbar {
   gap: 6px;
   border-bottom-color: var(--border);
+  background: var(--chrome-material);
+  box-shadow: inset 0 1px 0 var(--material-edge);
+  backdrop-filter: blur(16px) saturate(1.25);
 }
 .desktop-toolbar .workspace-picker strong {
-  font-weight: 550;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.desktop-toolbar :is(.workspace-picker, .branch-picker, .command-trigger) {
+  border-radius: var(--radius-control);
 }
 .desktop-toolbar .branch-switcher,
 .workspace-tabs {
@@ -16,18 +23,18 @@
   border-color: transparent;
 }
 .workspace-tab-list {
-  gap: 2px;
+  gap: 3px;
 }
 .workspace-tabs .view-tab,
 .workspace-tabs .diff-tab-item {
   align-self: center;
   height: 32px;
   isolation: isolate;
-  border-radius: 7px;
+  border-radius: 8px;
 }
 .workspace-tabs .view-tab:hover,
 .workspace-tabs .diff-tab-button:hover {
-  border-radius: 7px;
+  border-radius: 8px;
 }
 .workspace-tabs .diff-tab-item {
   border-right: 0;
@@ -36,15 +43,23 @@
   background: color-mix(in srgb, var(--text) 7%, transparent);
   color: var(--muted);
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.workspace-tabs .view-tab.active .tab-count {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+.workspace-tabs .view-tab.active {
+  font-weight: 600;
 }
 .workspace-tab-indicator {
   z-index: -1;
   inset: 0;
   height: auto;
-  border-radius: 7px;
+  border-radius: 8px;
   background: var(--surface-raised);
   box-shadow:
-    var(--shadow-card),
+    0 1px 4px #0000000a,
     inset 0 0 0 1px var(--border);
 }
 .app .file-heading,
@@ -251,6 +266,43 @@
 .app .context-explanation,
 .app .evidence-label {
   font-size: 11px;
+}
+.app .file-tree-row.is-selected .tree-filename {
+  font-weight: 550;
+}
+.app .file-search,
+.app .graph-search {
+  border-radius: var(--radius-control);
+  background: var(--bg);
+  box-shadow: 0 1px 2px #00000004;
+}
+.app .file-search:focus-within,
+.app .graph-search:focus-within {
+  border-color: var(--accent);
+}
+.app .file-title strong {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.app .file-title > svg {
+  color: var(--accent);
+}
+.app .context-section .section-title h3 {
+  font-weight: 600;
+}
+.app .context-section .section-title > svg {
+  color: var(--muted);
+}
+.settings-nav [role="tab"] {
+  border-radius: 8px;
+  min-height: 36px;
+}
+.settings-nav [role="tab"][aria-selected="true"] {
+  color: var(--text);
+  font-weight: 600;
+}
+.theme-options button {
+  border-radius: 10px;
 }
 @media (max-width: 1180px) {
   .workspace-tabs .view-tab {

@@ -4,7 +4,75 @@
   --motion-exit: 100ms;
   --motion-fast: var(--motion-feedback);
   --motion-panel: 220ms;
-  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+/* Press feedback begins on pointer-down. Reading rows and drag handles stay still. */
+:is(
+  [data-slot="button"],
+  .icon-button,
+  .workspace-picker,
+  .branch-picker,
+  .command-trigger,
+  .observer-status,
+  .theme-options button
+) {
+  transition:
+    scale var(--motion-feedback) var(--ease-out),
+    background-color var(--motion-feedback) ease,
+    border-color var(--motion-feedback) ease,
+    color var(--motion-feedback) ease;
+  -webkit-tap-highlight-color: transparent;
+}
+:is(
+    [data-slot="button"],
+    .icon-button,
+    .workspace-picker,
+    .branch-picker,
+    .command-trigger,
+    .observer-status,
+    .theme-options button
+  ):active:not(:disabled):not([data-disabled]):not(.group-drag-handle) {
+  scale: 0.97;
+}
+.proof-action:active:not(:disabled) {
+  transform: none;
+}
+[data-slot="switch"] {
+  transition:
+    background-color var(--motion-feedback) ease,
+    border-color var(--motion-feedback) ease;
+}
+[data-slot="switch-thumb"] {
+  transition: transform var(--motion-popup) var(--ease-out);
+}
+
+/* Base UI owns mounting and focus; CSS retargets from the current presentation. */
+.proof-dialog {
+  animation: none;
+  opacity: 1;
+  scale: 1;
+  transform-origin: center;
+  transition:
+    opacity var(--motion-panel) var(--ease-out),
+    scale var(--motion-panel) var(--ease-out);
+}
+.proof-dialog[data-starting-style],
+.proof-dialog[data-ending-style] {
+  opacity: 0;
+  scale: 0.97;
+}
+.proof-dialog-backdrop {
+  animation: none;
+  transition: opacity var(--motion-popup) var(--ease-out);
+}
+.proof-dialog-backdrop[data-starting-style],
+.proof-dialog-backdrop[data-ending-style] {
+  opacity: 0;
+}
+.proof-dialog[data-ending-style],
+.proof-dialog-backdrop[data-ending-style] {
+  transition-duration: var(--motion-exit);
 }
 
 /* Animate the popup surface; its positioner remains anchored to the trigger. */
@@ -12,6 +80,9 @@
   --popup-offset-x: 0px;
   --popup-offset-y: 0px;
   transform-origin: var(--transform-origin);
+  opacity: 1;
+  scale: 1;
+  translate: 0 0;
   animation: none;
   transition:
     opacity var(--motion-popup) var(--ease-out),
@@ -38,6 +109,12 @@
 }
 .proof-popup-motion[data-slot="tooltip-content"] {
   transition-duration: var(--motion-feedback);
+}
+/* Aligned selects keep their selected row directly over the trigger. */
+.proof-popup-motion[data-align-trigger="true"][data-starting-style],
+.proof-popup-motion[data-align-trigger="true"][data-ending-style] {
+  scale: 1;
+  translate: none;
 }
 .proof-popup-motion[data-ending-style],
 [data-slot="toast"][data-ending-style] {
@@ -76,16 +153,125 @@
   --segment-active-bg: var(--accent-soft);
 }
 
+/* Commit selection and keyboard navigation are frequent reading actions. */
+.graph-node-halo,
+.graph-detail {
+  animation: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after,
+  *::backdrop {
+    scroll-behavior: auto !important;
+  }
+  /* Keep loading and legacy surfaces visible without continuous or spatial motion. */
+  .spinning,
+  .loading-line,
+  .toast,
+  .modal[open],
+  .modal[open]::backdrop,
+  .modal.is-closing,
+  .modal.is-closing::backdrop {
+    animation: none !important;
+  }
   .proof-popup-motion,
+  .proof-dialog,
+  .proof-dialog-backdrop {
+    transition-property: opacity !important;
+    transition-duration: var(--motion-feedback) !important;
+  }
+  .proof-dialog[data-starting-style],
+  .proof-dialog[data-ending-style],
+  .proof-popup-motion[data-starting-style],
+  .proof-popup-motion[data-ending-style] {
+    scale: 1;
+  }
+  .proof-popup-motion[data-starting-style],
+  .proof-popup-motion[data-ending-style] {
+    translate: none;
+  }
+  :is(
+    [data-slot="button"],
+    .icon-button,
+    .workspace-picker,
+    .branch-picker,
+    .command-trigger,
+    .observer-status,
+    .theme-options button
+  ) {
+    scale: 1 !important;
+  }
   [data-slot="segmented"] > button,
+  [data-slot="switch-thumb"],
   [data-slot="toast"],
   [data-slot="toast-content"] {
     transition: none !important;
   }
-  .proof-popup-motion[data-starting-style],
-  .proof-popup-motion[data-ending-style] {
-    scale: 1;
-    translate: none;
+}
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  :root,
+  :root[data-theme="dark"] {
+    --chrome-material: var(--chrome);
+    --popup-material: var(--bg);
   }
+  .app.layout-enabled .desktop-toolbar,
+  .proof-dialog,
+  .proof-dialog-backdrop,
+  [data-slot="popover-content"],
+  [data-slot="dropdown-menu-content"],
+  [data-slot="dropdown-menu-sub-content"],
+  [data-slot="context-menu-content"],
+  [data-slot="context-menu-sub-content"],
+  [data-slot="select-content"] {
+    backdrop-filter: none;
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --border-strong: #778397;
+    --border: var(--border-strong);
+  }
+  :root[data-theme="dark"] {
+    --border-strong: #78869e;
+    --border: var(--border-strong);
+  }
+}
+
+/* High-frequency tools and all keyboard actions are immediate, including exit. */
+.proof-popup-motion[data-instant],
+.proof-dialog[data-instant],
+.proof-dialog-backdrop[data-instant],
+:root[data-input-modality="keyboard"]
+  :is(
+    .proof-popup-motion,
+    .proof-dialog,
+    .proof-dialog-backdrop,
+    button,
+    [data-slot="switch"],
+    [data-slot="switch-thumb"]
+  ) {
+  transition: none !important;
+}
+:root[data-input-modality="keyboard"]
+  :is(.proof-popup-motion, .proof-dialog, button) {
+  scale: 1;
+}
+:root[data-input-modality="keyboard"] .proof-popup-motion {
+  translate: none;
+}
+.proof-dialog[data-instant] {
+  scale: 1;
+}
+.proof-dialog[data-instant][data-starting-style],
+:root[data-input-modality="keyboard"]
+  :is(
+    .proof-dialog,
+    .proof-dialog-backdrop,
+    .proof-popup-motion
+  )[data-starting-style] {
+  opacity: 1;
 }

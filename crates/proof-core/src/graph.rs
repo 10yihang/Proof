@@ -6,6 +6,8 @@ use std::{
 };
 
 const PAGE: usize = 100;
+const CHUNK: usize = 1000;
+const CHUNK_BYTES: usize = 8 * 1024 * 1024;
 const FORMAT: &str = "--format=%H%x00%P%x00%an%x00%aI%x00%s%x00%D";
 
 pub(crate) struct GraphSnapshot {
@@ -20,6 +22,43 @@ pub(crate) struct GraphSnapshot {
     shallow: bool,
     source_shape: String,
     boundaries: HashSet<String>,
+    ordered: Option<GraphChunk>,
+}
+
+struct GraphChunk {
+    offset: usize,
+    commits: Vec<CommitEntry>,
+    complete: bool,
+}
+impl GraphChunk {
+    fn page(&self, offset: usize) -> Option<(Vec<CommitEntry>, bool)> {
+        let index = offset.checked_sub(self.offset)?;
+        if index > self.commits.len() || (!self.complete && index + PAGE >= self.commits.len()) {
+            return None;
+        }
+        let end = (index + PAGE).min(self.commits.len());
+        Some((
+            self.commits[index..end].to_vec(),
+            end < self.commits.len() || !self.complete,
+        ))
+    }
+    fn retained_bytes(&self) -> usize {
+        self.commits.capacity() * std::mem::size_of::<CommitEntry>()
+            + self
+                .commits
+                .iter()
+                .map(|c| {
+                    c.oid.capacity()
+                        + c.author.capacity()
+                        + c.date.capacity()
+                        + c.subject.capacity()
+                        + c.refs.capacity()
+                        + c.parents.capacity() * std::mem::size_of::<String>()
+                        + c.parents.iter().map(String::capacity).sum::<usize>()
+                        + c.boundary.as_ref().map_or(0, String::capacity)
+                })
+                .sum::<usize>()
+    }
 }
 
 impl Proof {
@@ -186,12 +225,13 @@ impl Proof {
                 shallow,
                 source_shape: shape.fingerprint,
                 boundaries: shape.boundaries,
+                ordered: None,
             });
             id
         };
         let snapshot = self
             .graphs
-            .iter()
+            .iter_mut()
             .find(|s| s.id == id && s.workspace_id == workspace_id && s.scope == scope)
             .ok_or_else(|| {
                 Error::new(
@@ -200,31 +240,76 @@ impl Proof {
                     "Graph snapshot unavailable",
                 )
             })?;
-        let skip = format!("--skip={offset}");
         if graph_shape(&git, &workspace)?.fingerprint != snapshot.source_shape {
             return Err(shape_changed());
         }
-        let count = format!("--max-count={}", PAGE + 1);
-        let mut args = vec![
-            "log",
-            "--no-show-signature",
-            "--topo-order",
-            "-z",
-            &skip,
-            &count,
-            FORMAT,
-        ];
-        args.extend(snapshot.tips.iter().map(|tip| tip.oid.as_str()));
-        args.push("--");
-        let mut commits = if snapshot.tips.is_empty() {
-            Vec::new()
+        crate::check_read_cancellation()?;
+        let cached = snapshot
+            .ordered
+            .as_ref()
+            .and_then(|chunk| chunk.page(offset));
+        let mut refill = None;
+        let (mut commits, has_more) = if let Some(page) = cached {
+            page
         } else {
-            parse_commits(&git.query(&workspace, &args)?)?
+            let skip = format!("--skip={offset}");
+            let read = |count: usize, limit: Option<usize>| {
+                let count = format!("--max-count={count}");
+                let mut args = vec![
+                    "log",
+                    "--no-show-signature",
+                    "--topo-order",
+                    "-z",
+                    &skip,
+                    &count,
+                    FORMAT,
+                ];
+                args.extend(snapshot.tips.iter().map(|tip| tip.oid.as_str()));
+                args.push("--");
+                match limit {
+                    Some(limit) => git.query_diff(&workspace, &args, limit),
+                    None => git.query(&workspace, &args),
+                }
+            };
+            let (commits, count) = if snapshot.tips.is_empty() {
+                (Vec::new(), CHUNK + 1)
+            } else {
+                let (raw, count) = match read(CHUNK + 1, Some(CHUNK_BYTES)) {
+                    Ok(raw) => (raw, CHUNK + 1),
+                    Err(error) if error.code == "DIFF_OUTPUT_LIMIT" => {
+                        (read(PAGE + 1, None)?, PAGE + 1)
+                    }
+                    Err(error) => return Err(error),
+                };
+                match parse_commits(&raw) {
+                    Ok(commits) => (commits, count),
+                    // Prefetch must not expose an encoding/parse failure from
+                    // a later page before the user reaches it.
+                    Err(_) if count > PAGE + 1 => {
+                        (parse_commits(&read(PAGE + 1, None)?)?, PAGE + 1)
+                    }
+                    Err(error) => return Err(error),
+                }
+            };
+            let chunk = GraphChunk {
+                offset,
+                complete: commits.len() < count,
+                commits,
+            };
+            let page = chunk
+                .page(offset)
+                .expect("A fresh chunk contains the requested page");
+            // One ordered refill per ten pages, under the same captured tips.
+            // Oversized subjects fall back to uncached reads without weakening
+            // the process-output bound or retaining an oversized snapshot.
+            refill = (chunk.retained_bytes() <= CHUNK_BYTES).then_some(chunk);
+            page
         };
-        let has_more = commits.len() > PAGE;
-        commits.truncate(PAGE);
         if graph_shape(&git, &workspace)?.fingerprint != snapshot.source_shape {
             return Err(shape_changed());
+        }
+        if let Some(chunk) = refill {
+            snapshot.ordered = Some(chunk);
         }
         for commit in &mut commits {
             commit.boundary = snapshot

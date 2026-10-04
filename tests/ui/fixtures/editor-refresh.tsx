@@ -1,5 +1,5 @@
 // Synthetic IPC around the real EditorView; no real files, Git or Agent processes.
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { UIProvider } from "../../../src/components/ui/provider";
 import "../../../src/styles/theme.css";
@@ -34,6 +34,24 @@ w.editorFixture = {
       if (event === "workspace-invalidated")
         callbacks.get(callback)?.({ event, payload: workspace });
   },
+  invalidateBatch(
+    workspace = "alpha",
+    generation = w.editorFixture.generation,
+  ) {
+    for (const { event, callback } of listeners.values())
+      if (event === "workspace-invalidated")
+        callbacks.get(callback)?.({
+          event,
+          payload: {
+            workspaceId: workspace,
+            generation,
+            reasons: ["worktree"],
+            paths: ["code.txt"],
+            ignoredPaths: [],
+            overflow: false,
+          },
+        });
+  },
   visibility(hidden: boolean) {
     Object.defineProperty(document, "hidden", {
       configurable: true,
@@ -57,6 +75,10 @@ w.__TAURI_INTERNALS__ = {
       return id;
     }
     if (name.startsWith("plugin:event|")) return;
+    if (name === "watch_workspace") {
+      w.editorFixture.generation = payload.generation;
+      return true;
+    }
     const { command, args } = payload;
     if (command === "data_session")
       return { epoch: 0, wipeEpoch: 0, deletedWorkspaceIds: [] };
@@ -114,11 +136,22 @@ w.__TAURI_INTERNALS__ = {
   },
 };
 const { EditorView } = await import("../../../src/components/EditorView");
+const { watchWorkspace } = await import("../../../src/api");
 const { monaco } = await import("../../../src/monaco-runtime");
 w.editorFixture.models = () => monaco.editor.getModels();
 function Harness() {
   const [active, setActive] = useState(true);
   const [workspaceId, setWorkspace] = useState("alpha");
+  useEffect(
+    () =>
+      watchWorkspace(
+        workspaceId,
+        () => {},
+        () => {},
+        () => {},
+      ),
+    [workspaceId],
+  );
   w.editorFixture.activate = setActive;
   w.editorFixture.workspace = setWorkspace;
   return (

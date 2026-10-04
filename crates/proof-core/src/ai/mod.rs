@@ -1,9 +1,9 @@
 //! Active, user-requested analysis of immutable Git patches. No Observer calls.
 mod codewiz;
-mod ocr;
 mod events;
 mod groups;
 mod input;
+mod ocr;
 mod progress;
 pub use progress::AiProgress;
 mod provider;
@@ -197,6 +197,76 @@ impl Drop for PreparedAiTask {
         self.busy.store(false, Ordering::Release);
     }
 }
+impl PreparedAiTask {
+    /// Owned evidence and selection capacity, not allocator overhead or RSS.
+    /// Include spare vector slots and copied paths, not only canonical patches.
+    fn retained_input_bytes(&self) -> usize {
+        let strings = |values: &Vec<String>| {
+            values.capacity() * std::mem::size_of::<String>()
+                + values.iter().map(String::capacity).sum::<usize>()
+        };
+        let scope = match &self.request.scope {
+            AiScope::Local {
+                workspace_id,
+                expected_token,
+                files,
+            } => {
+                workspace_id.capacity()
+                    + expected_token.capacity()
+                    + files.as_ref().map_or(0, |files| {
+                        files.capacity() * std::mem::size_of::<AiFileSelection>()
+                            + files
+                                .iter()
+                                .map(|file| {
+                                    file.path.capacity()
+                                        + file.snapshot_token.as_ref().map_or(0, String::capacity)
+                                })
+                                .sum::<usize>()
+                    })
+            }
+            AiScope::Comparison {
+                workspace_id,
+                base,
+                target,
+                path,
+                paths,
+            } => {
+                workspace_id.capacity()
+                    + base.capacity()
+                    + target.capacity()
+                    + path.as_ref().map_or(0, String::capacity)
+                    + paths.as_ref().map_or(0, strings)
+            }
+        };
+        std::mem::size_of::<Self>()
+            + self
+                .diffs
+                .iter()
+                .map(FileDiff::retained_bytes)
+                .sum::<usize>()
+            + (self.diffs.capacity() - self.diffs.len()) * std::mem::size_of::<FileDiff>()
+            + self.selected.capacity() * std::mem::size_of::<(String, Side)>()
+            + self
+                .selected
+                .iter()
+                .map(|(path, _)| path.capacity())
+                .sum::<usize>()
+            + strings(&self.input.paths)
+            + self.input.project.capacity()
+            + self.input.manifest.capacity()
+            + scope
+            + self.data_directory.capacity()
+            + self.fingerprint.capacity()
+            + self.custom_prompt.capacity()
+            + self.amend_head.as_ref().map_or(0, String::capacity)
+            + self
+                .options
+                .executable_path
+                .as_ref()
+                .map_or(0, String::capacity)
+            + self.options.model.as_ref().map_or(0, String::capacity)
+    }
+}
 impl Proof {
     pub fn prepare_ai_task(&mut self, request: AiRequest) -> Result<PreparedAiTask> {
         self.prepare_ai_task_with_progress(request, &|_| {})
@@ -257,7 +327,9 @@ impl Proof {
         let mut bytes = 0;
         match &request.scope {
             AiScope::Local {
-                workspace_id, files, ..
+                workspace_id,
+                files,
+                ..
             } => {
                 // Live mode: no frozen snapshot. The current change list only
                 // selects which paths the agent must inspect; the agent diffs
@@ -346,14 +418,24 @@ impl Proof {
                     .collect();
                 check_count(&selected)?;
                 let total = selected.len();
+                let git = self.git()?;
                 for file in selected {
+                    crate::check_read_cancellation()?;
                     emit(AiProgress::capture(&file.path, diffs.len(), total));
                     selected_pairs.push((file.path.clone(), file.side));
-                    add_diff(
-                        &mut diffs,
-                        &mut bytes,
-                        self.compare_file(workspace_id, base, target, &file.path)?,
-                    )?;
+                    let diff = match self
+                        .read_frozen_comparison_file(&workspace, &git, base, target, file, true)?
+                    {
+                        crate::DiffRead::Ready { diff } => diff,
+                        crate::DiffRead::Deferred { .. } => {
+                            return Err(Error::new(
+                                "DIFF_READ_LIMIT",
+                                "此 Diff 超过读取上限，请使用外部 Git 工具查看。",
+                                "Patch exceeds the bounded reader limit",
+                            ))
+                        }
+                    };
+                    add_diff(&mut diffs, &mut bytes, diff)?;
                 }
             }
         }
@@ -377,9 +459,7 @@ impl Proof {
         }
         let fingerprint = fingerprint(&ids);
         let cancellation = crate::read_cancel::current().unwrap_or_default();
-        self.ai_cancellation = Some(cancellation.clone());
-        self.ai_busy.store(true, Ordering::Release);
-        Ok(PreparedAiTask {
+        let prepared = PreparedAiTask {
             request,
             diffs,
             selected: selected_pairs,
@@ -394,7 +474,13 @@ impl Proof {
             language,
             custom_prompt,
             amend_head,
-        })
+        };
+        if prepared.retained_input_bytes() > MAX_INPUT {
+            return Err(input_limit());
+        }
+        self.ai_cancellation = Some(prepared.cancellation.clone());
+        self.ai_busy.store(true, Ordering::Release);
+        Ok(prepared)
     }
 }
 fn check_count(files: &[ChangedFile]) -> Result<()> {
@@ -407,18 +493,23 @@ fn check_count(files: &[ChangedFile]) -> Result<()> {
     Ok(())
 }
 fn add_diff(diffs: &mut Vec<FileDiff>, bytes: &mut usize, diff: FileDiff) -> Result<()> {
-    *bytes += diff.patch.len();
-    if *bytes > MAX_INPUT {
+    // Raw patches are only part of the retained evidence: hunk copies, line
+    // structs and String capacities live until the Agent task finishes too.
+    let retained = bytes
+        .checked_add(diff.retained_bytes())
+        .ok_or_else(input_limit)?;
+    if retained > MAX_INPUT {
         return Err(input_limit());
     }
     diffs.push(diff);
+    *bytes = retained;
     Ok(())
 }
 fn input_limit() -> Error {
     Error::new(
         "AI_INPUT_LIMIT",
         "变更清单超过本机资源上限，请缩小范围。",
-        "Maximum 20,000 file entries / 128 MiB captured patches; no Agent started",
+        "Maximum 20,000 file entries / 128 MiB retained Diff evidence; no Agent started",
     )
 }
 pub(super) fn invalid(detail: impl std::fmt::Display) -> Error {

@@ -27,8 +27,10 @@ export function ContextInspector({
   drawer = false,
   closeDisabled = false,
   onLeave,
+  active = true,
 }: {
   activeTab?: "context" | "ai";
+  active?: boolean;
   onTab?: (tab: "context" | "ai") => void;
   aiPanel?: ReactNode;
   diff: FileDiff | null;
@@ -79,23 +81,13 @@ export function ContextInspector({
           aiPanel
         ) : (
           <>
-            {demo && diff && diff.path !== "README.md" ? (
-              <DemoContext path={diff.path} />
-            ) : (
-              <RealContext
-                key={`${diff?.workspaceId}:${diff?.path}`}
-                diff={diff}
-                demo={demo}
-                onSettings={onSettings}
-                onError={onError}
-              />
-            )}
             {diff && (
               <div className="context-section snapshot-info">
                 <div className="section-title">
                   <ClockCounterClockwise size={16} />
-                  <h3>{t("Diff details")}</h3>
+                  <h3>{t("当前 Diff 快照")}</h3>
                 </div>
+                <code className="context-path">{diff.path}</code>
                 <dl>
                   <dt>{t("比较范围")}</dt>
                   <dd>
@@ -121,6 +113,18 @@ export function ContextInspector({
                   {t("文件保存后自动更新 Diff。")}
                 </p>
               </div>
+            )}
+            {demo && diff && diff.path !== "README.md" ? (
+              <DemoContext path={diff.path} />
+            ) : (
+              <RealContext
+                key={`${diff?.workspaceId}:${diff?.path}`}
+                diff={diff}
+                demo={demo}
+                active={active}
+                onSettings={onSettings}
+                onError={onError}
+              />
             )}
           </>
         )}
@@ -149,6 +153,21 @@ function DemoContext({ path }: { path: string }) {
       </div>
       <section className="context-section">
         <div className="section-title">
+          <ShieldCheck size={15} />
+          <h3>{t("验证记录")}</h3>
+        </div>
+        <div className="context-verification">
+          <span>{t("示例命令退出码")}</span>
+          <code>0</code>
+        </div>
+        <p>
+          {t(
+            "此处演示命令记录的呈现方式。未确认它对应当前代码，也未展示结构化测试结果。",
+          )}
+        </p>
+      </section>
+      <section className="context-section">
+        <div className="section-title">
           <Fingerprint size={15} />
           <h3>{t("任务背景")}</h3>
         </div>
@@ -171,11 +190,8 @@ function DemoContext({ path }: { path: string }) {
           {t("相关会话 · 示例关联")}
         </span>
       </section>
-      <section className="context-section">
-        <div className="section-title">
-          <ClockCounterClockwise size={15} />
-          <h3>{t("活动示例")}</h3>
-        </div>
+      <details className="context-section context-activity-disclosure">
+        <summary>{t("活动示例 · 4 条")}</summary>
         <div className="context-timeline">
           <div>
             <time>14:31</time>
@@ -203,22 +219,7 @@ function DemoContext({ path }: { path: string }) {
             </span>
           </div>
         </div>
-      </section>
-      <section className="context-section">
-        <div className="section-title">
-          <ShieldCheck size={15} />
-          <h3>{t("验证记录")}</h3>
-        </div>
-        <div className="context-verification">
-          <span>{t("示例命令退出码")}</span>
-          <code>0</code>
-        </div>
-        <p>
-          {t(
-            "此处演示命令记录的呈现方式。未确认它对应当前代码，也未展示结构化测试结果。",
-          )}
-        </p>
-      </section>
+      </details>
     </>
   );
 }

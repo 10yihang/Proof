@@ -260,15 +260,16 @@ export function Settings({
                     </Button>
                   ))}
                 </div>
-                <label className="field-label" htmlFor="font-size">
+                <label className="field-label" id="font-size-label">
                   {t("代码字号 ")}
-                  <span>
+                  <span aria-hidden="true">
                     {preferences.fontSize}
                     {t("px")}
                   </span>
                 </label>
                 <Input
                   id="font-size"
+                  aria-labelledby="font-size-label"
                   type="range"
                   min="10"
                   max="26"

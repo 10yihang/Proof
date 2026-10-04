@@ -201,25 +201,63 @@
   margin-left: 0;
 }
 /* 文件类型图标配色（跟随 VS Code 常见色系）。 */
-.fi-ts { color: #3178c6 !important; }
-.fi-js { color: #c8a415 !important; }
-.fi-vue { color: #41b883 !important; }
-.fi-rs { color: #dea584 !important; }
-.fi-py { color: #3572a5 !important; }
-.fi-go { color: #00add8 !important; }
-.fi-java { color: #b07219 !important; }
-.fi-c { color: #555 !important; }
-.fi-html { color: #e34c26 !important; }
-.fi-css { color: #563d7c !important; }
-.fi-md { color: #6a9fb5 !important; }
-.fi-json { color: #b5a642 !important; }
-.fi-yaml { color: #cb7b5e !important; }
-.fi-sql { color: #e38c00 !important; }
-.fi-sh { color: #89e051 !important; }
-.fi-image { color: #a074c4 !important; }
-.fi-zip { color: #8b8b8b !important; }
-.fi-lock { color: #8b8b8b !important; }
-.fi-text { color: var(--muted) !important; }
+.fi-ts {
+  color: #3178c6 !important;
+}
+.fi-js {
+  color: #c8a415 !important;
+}
+.fi-vue {
+  color: #41b883 !important;
+}
+.fi-rs {
+  color: #dea584 !important;
+}
+.fi-py {
+  color: #3572a5 !important;
+}
+.fi-go {
+  color: #00add8 !important;
+}
+.fi-java {
+  color: #b07219 !important;
+}
+.fi-c {
+  color: #555 !important;
+}
+.fi-html {
+  color: #e34c26 !important;
+}
+.fi-css {
+  color: #563d7c !important;
+}
+.fi-md {
+  color: #6a9fb5 !important;
+}
+.fi-json {
+  color: #b5a642 !important;
+}
+.fi-yaml {
+  color: #cb7b5e !important;
+}
+.fi-sql {
+  color: #e38c00 !important;
+}
+.fi-sh {
+  color: #89e051 !important;
+}
+.fi-image {
+  color: #a074c4 !important;
+}
+.fi-zip {
+  color: #8b8b8b !important;
+}
+.fi-lock {
+  color: #8b8b8b !important;
+}
+.fi-text {
+  color: var(--muted) !important;
+}
 
 /* ---------- 中栏：编辑区 ---------- */
 .editor-main {
@@ -449,7 +487,9 @@
   background: var(--bg);
   text-align: left;
   color: var(--text);
-  transition: border-color 120ms ease, background 120ms ease;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease;
 }
 .editor-history-item:hover {
   border-color: var(--accent);

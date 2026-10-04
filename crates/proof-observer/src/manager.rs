@@ -111,6 +111,16 @@ struct Prepared {
     snapshot: ConfigSnapshot,
     helper_hash: String,
 }
+/// Trusted startup inputs captured while the caller holds its core lock.
+/// Completion must be checked against current storage and consent revisions.
+pub struct PreparedRuntime {
+    helper: PathBuf,
+    helper_hash: String,
+    generation: u64,
+    epoch: u64,
+    policy: u64,
+}
+
 pub struct ObserverManager {
     data_dir: PathBuf,
     helper_source: PathBuf,
@@ -646,16 +656,44 @@ impl ObserverManager {
         ))
     }
     fn start_runtime(&mut self, proof: &Proof, helper: &Path) -> Result<()> {
+        let prepared = self.prepare_runtime(proof, helper)?;
+        self.run_prepared_tick(&prepared, || false)
+    }
+    fn prepare_runtime(&mut self, proof: &Proof, helper: &Path) -> Result<PreparedRuntime> {
         self.validate_helper(proof, helper)?;
         self.renew_foreground(proof)?;
-        let generation = proof.observer_storage_generation()?;
+        Ok(PreparedRuntime {
+            helper: helper.to_owned(),
+            helper_hash: read_helper(helper)?.1,
+            generation: proof.observer_storage_generation()?,
+            epoch: proof.data_session()?.epoch,
+            policy: proof.observer_policy_revision()?,
+        })
+    }
+    /// Process startup and heartbeat waiting do not access the shared core.
+    pub fn run_prepared_tick(
+        &mut self,
+        prepared: &PreparedRuntime,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<()> {
+        let generation = prepared.generation;
+        if cancelled() {
+            return Ok(());
+        }
+        if read_helper(&prepared.helper)?.1 != prepared.helper_hash {
+            return Err(Error::new(
+                "OBSERVER_HELPER_CHANGED",
+                "观察程序已改变，请卸载后重新安装。",
+                "Prepared helper hash mismatch",
+            ));
+        }
         if let Some(child) = self.collector.as_mut() {
             if child.try_wait()?.is_none() && self.collector_generation != Some(generation) {
                 unsafe {
                     libc::kill(child.id() as i32, libc::SIGTERM);
                 }
                 let until = Instant::now() + Duration::from_secs(3);
-                while child.try_wait()?.is_none() && Instant::now() < until {
+                while child.try_wait()?.is_none() && Instant::now() < until && !cancelled() {
                     std::thread::sleep(Duration::from_millis(20));
                 }
                 if child.try_wait()?.is_none() {
@@ -678,7 +716,7 @@ impl ObserverManager {
         // Never send a signal to a PID read from a health file.
         if self.collector.is_none() {
             self.collector = Some(
-                Command::new(helper)
+                Command::new(&prepared.helper)
                     .args(["serve", "--data-dir"])
                     .arg(&self.data_dir)
                     .stdin(Stdio::null())
@@ -690,6 +728,9 @@ impl ObserverManager {
         }
         let until = Instant::now() + Duration::from_secs(3);
         while Instant::now() < until {
+            if cancelled() {
+                return Ok(());
+            }
             if self.health_is_fresh(generation) {
                 return Ok(());
             }
@@ -771,6 +812,14 @@ impl ObserverManager {
         ))
     }
     pub fn tick(&mut self, proof: &Proof) -> Result<()> {
+        if let Some(prepared) = self.prepare_tick(proof)? {
+            self.run_prepared_tick(&prepared, || false)?;
+            self.validate_prepared_tick(proof, &prepared)?;
+        }
+        Ok(())
+    }
+    /// Validate permissions, ownership and lease state before leaving the core lock.
+    pub fn prepare_tick(&mut self, proof: &Proof) -> Result<Option<PreparedRuntime>> {
         self.clear_stale_previews(proof.data_session()?.epoch);
         for record in proof
             .observer_hook_records()?
@@ -790,7 +839,8 @@ impl ObserverManager {
             .iter()
             .any(|consent| consent.enabled);
         if !active {
-            return self.release_foreground(proof);
+            self.release_foreground(proof)?;
+            return Ok(None);
         }
         self.renew_foreground(proof)?;
         let generation = proof.observer_storage_generation()?;
@@ -810,7 +860,43 @@ impl ObserverManager {
                         "Installed helper hash mismatch",
                     ));
                 }
-                self.start_runtime(proof, Path::new(&ownership.spec.helper_path))?;
+                return self
+                    .prepare_runtime(proof, Path::new(&ownership.spec.helper_path))
+                    .map(Some);
+            }
+        }
+        Ok(None)
+    }
+    /// A heartbeat for prepared inputs never establishes current authorization.
+    pub fn validate_prepared_tick(&self, proof: &Proof, prepared: &PreparedRuntime) -> Result<()> {
+        if proof.observer_storage_generation()? != prepared.generation
+            || proof.data_session()?.epoch != prepared.epoch
+            || proof.observer_policy_revision()? != prepared.policy
+            || !proof
+                .observer_consents()?
+                .iter()
+                .any(|consent| consent.enabled)
+        {
+            return Err(Error::new(
+                "OBSERVER_CONFIG_STALE",
+                "观察设置已变化，请重试。",
+                "Prepared observer startup is no longer authorized",
+            ));
+        }
+        self.validate_helper(proof, &prepared.helper)?;
+        for record in proof
+            .observer_hook_records()?
+            .iter()
+            .filter(|r| r.state == "installed")
+        {
+            if !proof.observer_hook_program_source_trusted(record)?
+                || self.configuration_issue(record).is_some()
+            {
+                return Err(Error::new(
+                    "OBSERVER_CONFIG_CHANGED",
+                    "Hook 配置已改变，请先检查接入。",
+                    "Observer trust changed during startup",
+                ));
             }
         }
         Ok(())
@@ -841,6 +927,10 @@ impl ObserverManager {
     /// Test/explicit-stop path; only the process handle created here is used.
     pub fn stop_owned_runtime(&mut self, proof: &Proof) -> Result<()> {
         self.release_foreground(proof)?;
+        self.stop_prepared_runtime()
+    }
+    /// Stop only the child handle this manager owns, outside the core lock.
+    pub fn stop_prepared_runtime(&mut self) -> Result<()> {
         if let Some(mut child) = self.collector.take() {
             if child.try_wait()?.is_none() {
                 unsafe {

@@ -32,6 +32,10 @@
   width: 100%;
   flex: 1;
   padding: 0 8px;
+  background: var(--surface-sidebar);
+}
+.app .files-page .editor-sidebar {
+  background: var(--surface-sidebar);
 }
 .app .history-page .repository-nav .sidebar-heading {
   padding-inline: 8px;

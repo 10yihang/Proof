@@ -21,7 +21,7 @@ plist = { version = "=1.10.1", features = ["enable_unstable_features_that_may_br
 libc = "0.2"
 
 [dev-dependencies]
-rusqlite = { workspace = true, features = ["hooks"] }
+rusqlite = { workspace = true, features = ["hooks", "trace"] }
 
 [[example]]
 name = "ui-fixture-driver"

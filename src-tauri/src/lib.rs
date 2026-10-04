@@ -53,24 +53,26 @@ async fn watch_workspace(
     workspace_id: Option<String>,
     generation: u64,
 ) -> Result<bool, Error> {
-    let paths = if let Some(id) = &workspace_id {
+    let spec = if let Some(id) = &workspace_id {
         let core = state.0.clone()?;
         let id = id.clone();
-        tauri::async_runtime::spawn_blocking(move || {
-            core.lock()
-                .map_err(|error| Error::new("CORE_UNAVAILABLE", "无法监听 Worktree。", error))?
-                .workspace_watch_paths(&id)
-        })
-        .await
-        .map_err(|error| {
-            Error::new(
-                "WATCH_UNAVAILABLE",
-                "文件监听不可用，已改用定时刷新。",
-                error,
-            )
-        })??
+        Some(
+            tauri::async_runtime::spawn_blocking(move || {
+                core.lock()
+                    .map_err(|error| Error::new("CORE_UNAVAILABLE", "无法监听 Worktree。", error))?
+                    .workspace_watch_spec(&id)
+            })
+            .await
+            .map_err(|error| {
+                Error::new(
+                    "WATCH_UNAVAILABLE",
+                    "文件监听不可用，已改用定时刷新。",
+                    error,
+                )
+            })??,
+        )
     } else {
-        vec![]
+        None
     };
     let mut owners = watch.lock().map_err(|error| {
         Error::new(
@@ -85,8 +87,8 @@ async fn watch_workspace(
     }
     current.generation = generation;
     current.watcher = None;
-    if let Some(id) = workspace_id {
-        current.watcher = Some(watcher::start(app, id, generation, paths)?);
+    if let (Some(id), Some(spec)) = (workspace_id, spec) {
+        current.watcher = Some(watcher::start(app, id, generation, spec)?);
     }
     Ok(current.watcher.is_some())
 }
@@ -538,9 +540,7 @@ fn dispatch_with_progress(
             args["revision"].as_str(),
             args["offset"].as_u64().unwrap_or(0) as usize,
         )?),
-        "list_files" => {
-            serde_json::to_value(proof.list_files(string(&args, "workspaceId")?)?)
-        }
+        "list_files" => serde_json::to_value(proof.list_files(string(&args, "workspaceId")?)?),
         "read_text_file" => serde_json::to_value(proof.read_text_file(
             string(&args, "workspaceId")?,
             string(&args, "path")?,
@@ -552,19 +552,17 @@ fn dispatch_with_progress(
             string(&args, "content")?,
             args["expectedFingerprint"].as_str(),
         )?),
-        "create_text_file" => serde_json::to_value(proof.create_text_file(
-            string(&args, "workspaceId")?,
-            string(&args, "path")?,
-        )?),
+        "create_text_file" => serde_json::to_value(
+            proof.create_text_file(string(&args, "workspaceId")?, string(&args, "path")?)?,
+        ),
         "rename_text_file" => serde_json::to_value(proof.rename_text_file(
             string(&args, "workspaceId")?,
             string(&args, "from")?,
             string(&args, "to")?,
         )?),
-        "delete_text_file" => serde_json::to_value(proof.delete_text_file(
-            string(&args, "workspaceId")?,
-            string(&args, "path")?,
-        )?),
+        "delete_text_file" => serde_json::to_value(
+            proof.delete_text_file(string(&args, "workspaceId")?, string(&args, "path")?)?,
+        ),
         "commit_diff" => serde_json::to_value(proof.commit_diff(
             string(&args, "workspaceId")?,
             string(&args, "oid")?,

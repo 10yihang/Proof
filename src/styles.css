@@ -1841,15 +1841,6 @@ kbd {
     font-size: 25px;
   }
 }
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation: none !important;
-    transition: none !important;
-    scroll-behavior: auto !important;
-  }
-}
 ::selection {
   background: #b9cef2;
   color: #1b2a47;
@@ -1915,17 +1906,6 @@ kbd {
 }
 .toast {
   animation: detail-enter 180ms var(--ease-out);
-}
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after,
-  *::backdrop {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
-  }
 }
 
 .workspace-page {

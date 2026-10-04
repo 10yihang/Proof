@@ -11,6 +11,10 @@ import {
   reconcileClientStorage,
 } from "./client-storage";
 import type { DataDeletionResult, DataSession, ProofError } from "./types";
+import {
+  isCurrentWorkspaceInvalidation,
+  type WorkspaceInvalidation,
+} from "./workspace-invalidation";
 
 export const isDesktop =
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -323,8 +327,18 @@ export function watchWorkspace(
     onError(error);
   };
   void Promise.allSettled([
-    listen<string>("workspace-invalidated", (event) => {
-      if (!closed && event.payload === workspaceId) onChange();
+    listen<string | WorkspaceInvalidation>("workspace-invalidated", (event) => {
+      if (
+        !closed &&
+        isCurrentWorkspaceInvalidation(event.payload, workspaceId, generation)
+      ) {
+        window.dispatchEvent(
+          new CustomEvent("proof:workspace-invalidated", {
+            detail: { workspaceId, generation, batch: event.payload },
+          }),
+        );
+        onChange();
+      }
     }),
     listen<{ workspaceId: string; generation: number }>(
       "workspace-watch-failed",

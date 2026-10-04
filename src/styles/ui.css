@@ -2,42 +2,54 @@
 /* Application tokens override imported legacy rules; components use Tailwind. */
 :root {
   --bg: #fff;
-  --surface: #f3f4f6;
-  --surface-2: #e9ecf0;
+  --surface: #f1f3f6;
+  --surface-2: #e8ebf0;
+  --surface-sidebar: #f8f9fb;
   --surface-raised: #fff;
-  --text: #242833;
-  --muted: #626b78;
-  --faint: #697180;
-  --border: #e3e6eb;
+  --text: #252831;
+  --muted: #606977;
+  --faint: #697383;
+  --border: #dde2e9;
   --border-strong: #bec6d2;
-  --chrome: #f3f4f6;
-  --accent: #386bcb;
-  --accent-soft: #eaf0fb;
+  --chrome: #f1f3f6;
+  --accent: #326bc8;
+  --accent-soft: #e8effc;
   --on-accent: #fff;
-  --hover: #e9edf3;
+  --hover: #e7ebf1;
+  --chrome-material: #f1f3f6eb;
+  --popup-material: #fffffff5;
+  --material-edge: #ffffffb3;
+  --shadow-popup: 0 16px 48px #18243b24, 0 3px 10px #18243b0d;
+  --radius-control: 7px;
   --radius-card: 12px;
   --panel-header-height: 44px;
-  --shadow-card: 0 2px 5px #24283306;
+  --shadow-card: 0 1px 3px #18243b06, 0 4px 14px #18243b04;
 }
 :root[data-theme="dark"] {
-  --bg: #202227;
-  --surface: #181a1e;
-  --surface-2: #2b2e35;
-  --surface-raised: #292c32;
-  --text: #e9ebef;
-  --muted: #a8afbc;
-  --faint: #9ca4b2;
-  --border: #32353d;
+  --bg: #212329;
+  --surface: #191b20;
+  --surface-2: #2c2f37;
+  --surface-sidebar: #1e2026;
+  --surface-raised: #30333c;
+  --text: #eceef3;
+  --muted: #b1b8c5;
+  --faint: #a0a9b8;
+  --border: #363a44;
   --border-strong: #505969;
-  --chrome: #181a1e;
-  --accent: #94b6fa;
-  --accent-soft: #2b3850;
+  --chrome: #1c1e24;
+  --accent: #9abaff;
+  --accent-soft: #2c3b56;
   --on-accent: #162641;
-  --hover: #2c3038;
-  --shadow-card: 0 2px 5px #00000012;
+  --hover: #30343e;
+  --chrome-material: #1c1e24eb;
+  --popup-material: #292c33f5;
+  --material-edge: #ffffff0d;
+  --shadow-popup: 0 18px 56px #00000055, 0 3px 12px #00000029;
+  --shadow-card: 0 1px 3px #0000001a, 0 4px 14px #0000000d;
 }
 :root {
   font-size: 14px;
+  font-optical-sizing: auto;
 }
 .proof-action {
   @apply rounded-md text-[12px] leading-4;
@@ -73,24 +85,15 @@
   max-width: calc(100vw - 48px);
   max-height: calc(100dvh - 64px);
   overflow: auto;
-  transition:
-    opacity 160ms,
-    scale 160ms;
+  border-radius: 16px;
+  background: var(--popup-material);
+  box-shadow:
+    var(--shadow-popup),
+    inset 0 1px 0 var(--material-edge);
+  backdrop-filter: blur(20px) saturate(1.25);
 }
 .proof-dialog.modal-wide {
   width: 720px;
-}
-.proof-dialog[data-starting-style],
-.proof-dialog[data-ending-style] {
-  opacity: 0;
-  scale: 0.98;
-}
-.proof-dialog-backdrop {
-  transition: opacity 160ms;
-}
-.proof-dialog-backdrop[data-starting-style],
-.proof-dialog-backdrop[data-ending-style] {
-  opacity: 0;
 }
 .proof-dialog .modal-header {
   @apply mb-5;
@@ -115,14 +118,25 @@
 [data-slot="tooltip-content"] {
   @apply max-w-96 rounded-md text-[11px] leading-4;
 }
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
-  }
+[data-slot="popover-content"],
+[data-slot="dropdown-menu-content"],
+[data-slot="dropdown-menu-sub-content"],
+[data-slot="context-menu-content"],
+[data-slot="context-menu-sub-content"],
+[data-slot="select-content"] {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--popup-material);
+  box-shadow:
+    var(--shadow-popup),
+    inset 0 1px 0 var(--material-edge);
+  backdrop-filter: blur(16px) saturate(1.25);
+}
+.proof-action,
+.proof-input,
+.proof-select,
+[data-slot="textarea"] {
+  border-radius: var(--radius-control);
 }
 .proof-workbench {
   display: flex !important;
@@ -430,6 +444,34 @@
 .proof-reading-options [role="status"] {
   color: var(--muted);
   font-size: 11px;
+}
+.reading-tool-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.reading-tool-actions > .reading-tool-action {
+  justify-content: flex-start;
+  width: 100%;
+}
+.reading-tool-actions .context-stepper {
+  justify-content: flex-start;
+  padding-bottom: 8px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.reading-tools-title {
+  font-size: 12px;
+}
+.hunk-header .hunk-review {
+  width: auto;
+  flex-shrink: 0;
+  gap: 5px;
+  padding-inline: 5px;
+}
+.hunk-review-label {
+  font-size: 11px;
+  font-weight: 500;
 }
 .proof-review-content .ai-inline-review {
   width: 100%;

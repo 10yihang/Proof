@@ -9,6 +9,21 @@
 .context-link-actions {
   margin-top: 12px;
 }
+.context-association-summary {
+  margin: 8px 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+.context-activity-disclosure > summary {
+  cursor: pointer;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+}
+.snapshot-info > .context-path {
+  display: block;
+  margin-bottom: 12px;
+}
 .context-linked-session > .button {
   margin: 8px 6px 0 0;
 }
@@ -243,7 +258,17 @@
   margin-top: 10px;
 }
 .context-more-sessions {
-  margin: 12px 0;
+  margin: 12px 20px;
+}
+.context-body > .inline-help {
+  margin: 0 20px 12px;
+}
+.context-body > .data-warning {
+  margin-left: 20px;
+  margin-right: 20px;
+}
+.context-body > .button {
+  margin: 12px 20px;
 }
 .context-section.context-session-heading {
   position: relative;

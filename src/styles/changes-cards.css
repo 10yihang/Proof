@@ -28,6 +28,10 @@
   background: var(--bg);
 }
 
+.app .changes-page .proof-panel-slot .files-panel {
+  background: var(--surface-sidebar);
+}
+
 .app .changes-page .proof-separator::after {
   inset: 12px auto 12px calc(50% - 1px);
   width: 2px;
