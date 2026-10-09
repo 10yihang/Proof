@@ -45,6 +45,7 @@ export function useHistoryActions(
   externalBusy = false,
   onBusyChange?: (busy: boolean) => void,
   onRecovery?: () => void,
+  active = true,
 ) {
   const request = useRequest();
   const [revision, setRevision] = useState(0);
@@ -76,7 +77,8 @@ export function useHistoryActions(
     };
   }, [changes.workspace.id]);
   useEffect(() => {
-    if (!historyActive || demo || !changes.workspace.trusted) return;
+    if (!active || !historyActive || demo || !changes.workspace.trusted) return;
+    let disposed = false;
     const fetch = () => {
       if (document.visibilityState === "hidden" || running.current) return;
       // Reconcile local refs on entry/focus even while network is throttled.
@@ -88,13 +90,17 @@ export function useHistoryActions(
       })
         .then((refsChanged) => {
           // A successful no-op Fetch keeps the current graph snapshot/pages.
-          if (fetchOwner.current === changes.workspace.id && refsChanged)
+          if (
+            !disposed &&
+            fetchOwner.current === changes.workspace.id &&
+            refsChanged
+          )
             setGraphRevision((value) => value + 1);
         })
         .catch(() => {
           // Offline/credentials failures are quiet; a partial fetch can still
           // have refreshed refs. Manual Fetch retains its full error feedback.
-          if (fetchOwner.current === changes.workspace.id)
+          if (!disposed && fetchOwner.current === changes.workspace.id)
             setRevision((value) => value + 1);
         });
     };
@@ -102,12 +108,19 @@ export function useHistoryActions(
     window.addEventListener("focus", fetch);
     document.addEventListener("visibilitychange", fetch);
     return () => {
+      disposed = true;
       window.removeEventListener("focus", fetch);
       document.removeEventListener("visibilitychange", fetch);
     };
-  }, [historyActive, demo, changes.workspace.id, changes.workspace.trusted]);
+  }, [
+    active,
+    historyActive,
+    demo,
+    changes.workspace.id,
+    changes.workspace.trusted,
+  ]);
   useEffect(() => {
-    if (demo) return;
+    if (!active || demo) return;
     let cancelled = false;
     void request<HistoryRepositoryState>("history_repository_state", {
       workspaceId: changes.workspace.id,
@@ -131,8 +144,10 @@ export function useHistoryActions(
     changes.operation,
     revision,
     demo,
+    active,
   ]);
   useEffect(() => {
+    if (!active) return;
     const changed = (event: Event) => {
       if (
         (event as CustomEvent<{ workspaceId: string }>).detail?.workspaceId ===
@@ -146,7 +161,7 @@ export function useHistoryActions(
     };
     window.addEventListener("proof:git-updated", changed);
     return () => window.removeEventListener("proof:git-updated", changed);
-  }, [changes.workspace.id]);
+  }, [changes.workspace.id, active]);
   function open(
     kind: HistoryActionKind,
     target?: HistoryTarget,
@@ -309,7 +324,7 @@ export function useHistoryActions(
         )}
       </div>
     ),
-    feedback: (
+    feedback: active ? (
       <>
         {stateError && (
           <div className="graph-error" role="alert">
@@ -398,8 +413,8 @@ export function useHistoryActions(
           </div>
         )}
       </>
-    ),
-    dialog: action ? (
+    ) : null,
+    dialog: !active ? null : action ? (
       <HistoryActionDialog
         key={`${changes.workspace.id}:${action.kind}:${action.path ?? ""}:${action.target?.type === "branch" ? action.target.branch.name : ""}`}
         action={action}

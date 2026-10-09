@@ -1,3 +1,4 @@
+import { Popover, PopoverTrigger, PopoverContent } from "./ui/popover";
 import { useHotkeys } from "react-hotkeys-hook";
 import { Button } from "./ui/controls";
 import { t, uiMessage } from "../i18n";
@@ -5,6 +6,9 @@ import { DiffLoading } from "./DiffLoading";
 import { publishDiffEvent } from "../diff-events";
 import { useAi, type DiffJump } from "../ai";
 import { AiReviewPanel } from "./AiReviewPanel";
+import { FindingLocationPane } from "./FindingLocationPane";
+import type { FindingLocationTarget } from "../finding-location";
+import type { AiFinding } from "../ai";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import {
   ArrowsLeftRight,
@@ -12,6 +16,8 @@ import {
   GitDiff,
   SidebarSimple,
   ArrowSquareOut,
+  CaretDown,
+  ShieldCheck,
 } from "@phosphor-icons/react";
 import { asError, useReadRequest, useRequest } from "../api";
 import { fileKey } from "../types";
@@ -66,6 +72,7 @@ export function HistoryDiff({
   onAgentSettings,
   panelLayout,
   onOpenWindow,
+  onPendingChange,
 }: {
   changes: Changes;
   demo: boolean;
@@ -81,6 +88,7 @@ export function HistoryDiff({
     target: string;
     path: string | null;
   }) => void;
+  onPendingChange?: (pending: boolean) => void;
 }) {
   const fileReader = useReadRequest();
   const comparisonReader = useReadRequest();
@@ -89,11 +97,23 @@ export function HistoryDiff({
   const [marking, setMarking] = useState(false);
   const [, setReviewRevision] = useState(0);
   const searchId = useId();
+  const rangeTriggerId = useId();
   const [result, setResult] = useState<Comparison | null>(null),
     [diff, setDiff] = useState<FileDiff | null>(null);
   const [summary, setSummary] = useState<DiffSummary | null>(null);
-  const ai = useAi(changes, diff, demo, result);
+  const ai = useAi(changes, diff, demo, result, active);
+  const pendingListener = useRef(onPendingChange);
+  pendingListener.current = onPendingChange;
+  const aiPending = !!(ai.pending || ai.saving || ai.decisionSaving);
+  useEffect(() => {
+    pendingListener.current?.(aiPending);
+  }, [aiPending, onPendingChange]);
+  useEffect(() => () => pendingListener.current?.(false), []);
   const [aiOpen, setAiOpen] = useState(false);
+  const [rangeOpen, setRangeOpen] = useState(false);
+  useEffect(() => {
+    if (!active) setRangeOpen(false);
+  }, [active]);
   const [filesOpen, setFilesOpen] = useState(true);
   const [focused, setFocused] = useState(false);
   const filesToggle = useRef<HTMLButtonElement>(null),
@@ -138,6 +158,14 @@ export function HistoryDiff({
     [active, searchId],
   );
   const [aiJump, setAiJump] = useState<DiffJump | null>(null);
+  const [findingTarget, setFindingTarget] = useState<{
+    target: FindingLocationTarget;
+    finding: AiFinding;
+  } | null>(null);
+  useEffect(
+    () => setFindingTarget(null),
+    [changes.workspace.id, selection.base, selection.target],
+  );
   const activeRef = useRef(active);
   activeRef.current = active;
   const loadedLarge = useRef(new Set<string>());
@@ -466,50 +494,46 @@ export function HistoryDiff({
     id === "empty" ? t("Empty tree") : id.slice(0, 8);
   const left = reversed ? selection.targetLabel : selection.baseLabel,
     right = reversed ? selection.baseLabel : selection.targetLabel;
-  return (
-    <section className="history-diff" aria-label={t("历史文件差异")}>
-      <div className="compare-capture">
-        <span className="history-endpoint" title={result?.baseOid}>
-          <code>{result ? short(result.baseOid) : "…"}</code>
-          {left && <span>{left}</span>}
-        </span>
-        <ArrowRight size={13} />
-        <span className="history-endpoint" title={result?.targetOid}>
-          <code>
-            {result ? short(result.targetOid) : short(selection.target)}
-          </code>
-          {right && <span>{right}</span>}
-        </span>
+  const rangeDetails = (
+    <PopoverContent
+      align="end"
+      className="comparison-range-popup"
+      aria-label={t("比较范围")}
+    >
+      <strong>{t("比较范围")}</strong>
+      <div className="history-endpoint">
+        <code>{result?.baseOid ?? "…"}</code>
+        {left && <span>{left}</span>}
+      </div>
+      <ArrowRight size={13} aria-hidden="true" />
+      <div className="history-endpoint">
+        <code>{result?.targetOid ?? selection.target}</code>
+        {right && <span>{right}</span>}
+      </div>
+      <span role="status">
+        {loading
+          ? t("读取中…")
+          : result
+            ? t("{v0} 个文件", { v0: result.files.length })
+            : error
+              ? uiMessage(error.message)
+              : t("Diff 尚未加载")}
+      </span>
+      <div className="comparison-detail-actions">
         {selection.base && (
           <Button
-            className="icon-button"
+            className="button compact"
             aria-label={t("交换比较方向")}
-            title={t("交换比较方向")}
             onClick={() => setReverseKey(reversed ? null : selectionKey)}
           >
             <ArrowsLeftRight size={14} />
+            {t("交换比较方向")}
           </Button>
         )}
-        <span className="toolbar-spacer" />
-        <Button
-          ref={filesToggle}
-          className="icon-button"
-          aria-label={filesVisible ? t("隐藏文件栏") : t("显示文件栏")}
-          title={t("Files")}
-          aria-controls={filesId}
-          aria-expanded={filesVisible}
-          onClick={() => {
-            setFocused(false);
-            setFilesOpen(!filesVisible);
-          }}
-        >
-          <SidebarSimple size={17} />
-        </Button>
         {onOpenWindow && (
           <Button
             className="button compact diff-open-window"
             aria-label={t("在独立窗口打开 Diff")}
-            title={t("Open in Separate Window")}
             disabled={!result}
             onClick={() => {
               if (result)
@@ -526,248 +550,327 @@ export function HistoryDiff({
             {t("Open in Window")}
           </Button>
         )}
-        <span>
-          {loading
-            ? t("读取中…")
-            : result
-              ? `${result.files.length} files changed`
-              : ""}
-        </span>
-        <Button
-          className="button subtle"
-          ref={aiToggle}
-          aria-controls={contextId}
-          aria-expanded={contextVisible}
-          onClick={() => {
-            setFocused(false);
-            setAiOpen(!contextVisible);
-          }}
-        >
-          {t("AI Review")}
-        </Button>
         {toolbar && <div className="comparison-actions">{toolbar}</div>}
       </div>
-      {error && (
-        <div className="inline-notice" role="alert">
-          {uiMessage(error.message)} · {error.code}
-          {(result || error.code === "READ_CANCELLED") && (
-            <Button
-              className="text-button"
-              onClick={() => {
-                const file = result?.files.find(
-                  (file) => fileKey(file) === selected,
-                );
-                if (file && result)
-                  void select(
-                    file,
-                    result,
-                    loadedLarge.current.has(cacheKey(file, result)),
-                  );
-                else if (!result) setComparisonRevision((value) => value + 1);
-              }}
-            >
-              {t("重新读取")}
-            </Button>
-          )}
-        </div>
-      )}
-
-      <div
-        className={`compare-content ${contextVisible ? "with-ai-review" : ""}`}
-      >
-        <ResizableWorkbench
-          layout={panelLayout.value}
-          scopeKey={`${panelLayout.scopeKey}:${selectionKey}`}
-          enabled={panelLayout.ready}
-          active={active}
-          sidebarId={filesId}
-          contextId={contextId}
-          sidebarVisible={filesVisible}
-          contextDocked={contextVisible}
-          onChange={(partial) => {
-            void panelLayout.update(partial);
-          }}
-          onCollapse={(side) =>
-            side === "sidebarWidth" ? closeFiles() : closeContext()
-          }
-          sidebar={
-            <DiffFilePane
-              ai={ai}
-              token={ai.sourceToken}
-              scopeKey={`${changes.workspace.id}:${ai.sourceToken}`}
-              containerProps={{
-                id: filesId,
-                "aria-label": t("变化文件"),
-                className: "compare-files",
-                hidden: !filesVisible,
-              }}
-              onClose={closeFiles}
-              closeDisabled={!panelLayout.ready}
-              readOnly
-              files={result?.files ?? []}
-              selected={selected}
-              onSelect={(file) => result && void select(file, result)}
-              search={search}
-              onSearch={setSearch}
-              searchId={`history-file-search-${searchId}`}
-              loaded={loadedFiles}
-              scope="all"
-              onScope={() => {}}
-              disabled
-              onStage={() => {}}
+    </PopoverContent>
+  );
+  const comparisonControls = (
+    <div className="comparison-tools">
+      <PopoverTrigger
+        id={rangeTriggerId}
+        render={
+          <Button
+            className="button compact comparison-range"
+            aria-label={t("比较范围")}
+            title={`${result?.baseOid ?? "…"} ${left ?? ""} → ${result?.targetOid ?? selection.target} ${right ?? ""}`}
+          >
+            <GitDiff
+              className="comparison-range-icon"
+              size={14}
+              aria-hidden="true"
             />
-          }
-          context={
-            contextVisible && (
-              <aside
-                id={contextId}
-                className="comparison-ai"
-                aria-label={t("AI Review")}
-              >
-                <header>
-                  <strong>{t("AI Review")}</strong>
-                  <Button
-                    className="text-button"
-                    aria-label={t("收起上下文")}
-                    onClick={closeContext}
-                  >
-                    {t("Close")}
-                  </Button>
-                </header>
-                <AiReviewPanel
-                  onSettings={onAgentSettings}
-                  ai={ai}
-                  hasDiff={!!diff && !!result}
-                  demo={demo}
-                  onFinding={(finding) => {
-                    const captured = ai.report?.files.find(
-                      (file) =>
-                        file.path === finding.file &&
-                        file.side === finding.side,
-                    );
-                    const file = result?.files.find(
-                      (file) => file.path === finding.file,
-                    );
-                    if (!captured || !file || !result || ai.stale) return;
-                    setAiJump({
-                      id: crypto.randomUUID(),
-                      comparisonId: captured.snapshotId,
-                      snapshotToken: captured.snapshotToken,
-                      path: captured.path,
-                      fileSide: captured.side,
-                      line: finding.line,
-                      endLine: finding.endLine,
-                      side: finding.lineSide,
-                    });
-                    void select(file, result);
-                  }}
-                />
-              </aside>
-            )
-          }
-        >
-          <div className="center-panel">
-            {(loading || loadingFile) && (
-              <DiffLoading
-                path={
-                  result?.files.find((file) => fileKey(file) === selected)?.path
-                }
-                updating={!!diff || !!summary}
-                onCancel={() => {
-                  ++fileSequence.current;
-                  fileReader.cancel();
-                  if (loading) {
-                    ++sequence.current;
-                    comparisonReader.cancel();
-                    setLoading(false);
-                  }
-                  setLoadingFile(false);
-                  if (loadingFile) showReading(null);
+            <code>
+              {result ? short(result.baseOid).slice(0, 7) : "…"} →{" "}
+              {result
+                ? short(result.targetOid).slice(0, 7)
+                : short(selection.target).slice(0, 7)}
+            </code>
+            <CaretDown size={11} />
+          </Button>
+        }
+      />
+
+      <Button
+        ref={filesToggle}
+        className="icon-button"
+        aria-label={filesVisible ? t("隐藏文件栏") : t("显示文件栏")}
+        title={t("Files")}
+        aria-controls={filesId}
+        aria-expanded={filesVisible}
+        onClick={() => {
+          setFocused(false);
+          setFilesOpen(!filesVisible);
+        }}
+      >
+        <SidebarSimple size={16} />
+      </Button>
+      <Button
+        className="icon-button"
+        aria-label={t("AI Review")}
+        title={t("AI Review")}
+        ref={aiToggle}
+        aria-controls={contextId}
+        aria-expanded={contextVisible}
+        onClick={() => {
+          setFocused(false);
+          setAiOpen(!contextVisible);
+        }}
+      >
+        <ShieldCheck size={16} />
+      </Button>
+    </div>
+  );
+  return (
+    <Popover open={rangeOpen && active} onOpenChange={setRangeOpen}>
+      <section className="history-diff" aria-label={t("历史文件差异")}>
+        {(!result || (!diff && !summary) || findingTarget) && (
+          <div className="comparison-fallback-toolbar">
+            {comparisonControls}
+          </div>
+        )}
+        {error && (
+          <div className="inline-notice" role="alert">
+            {uiMessage(error.message)} · {error.code}
+            {(result || error.code === "READ_CANCELLED") && (
+              <Button
+                className="text-button"
+                onClick={() => {
                   const file = result?.files.find(
                     (file) => fileKey(file) === selected,
                   );
                   if (file && result)
-                    loadedLarge.current.delete(cacheKey(file, result));
-                  setError({
-                    code: "READ_CANCELLED",
-                    message: t("读取已取消。"),
-                    detail: "Cancelled by user",
-                  });
+                    void select(
+                      file,
+                      result,
+                      loadedLarge.current.has(cacheKey(file, result)),
+                    );
+                  else if (!result) setComparisonRevision((value) => value + 1);
                 }}
-              />
-            )}
-            {summary && result ? (
-              <DeferredDiff
-                summary={summary}
-                pending={loadingFile || marking}
-                comparison={{
-                  base: short(result.baseOid),
-                  target: short(result.targetOid),
-                }}
-                onLoad={() => {
-                  const file = result.files.find(
-                    (file) => fileKey(file) === selected,
-                  );
-                  if (file) void select(file, result, true);
-                }}
-              />
-            ) : diff && result ? (
-              <DiffView
-                jumpTo={aiJump}
-                ai={ai}
-                key={diff.id}
-                positionRef={positionFor(
-                  `${result.baseOid}:${result.targetOid}:${diff.path}`,
-                )}
-                diff={diff}
-                preferences={preferences}
-                pending={loadingFile || marking}
-                onPreferences={onPreferences}
-                onMark={(hunkId, reviewed) => void mark(hunkId, reviewed)}
-                onStage={() => {}}
-                onDiscard={() => {}}
-                onFocus={() => setFocused((value) => !value)}
-                focused={focused}
-                onEditor={() => {}}
-                openingEditor={false}
-                onLoadContext={async (contextLines) =>
-                  demo
-                    ? demoDiffContext(diff, contextLines)
-                    : contextReader.read<DiffContext>("compare_context", {
-                        workspaceId: changes.workspace.id,
-                        base: result.baseOid,
-                        target: result.targetOid,
-                        path: diff.path,
-                        snapshotId: diff.id,
-                        ...(contextLines === "file"
-                          ? { fullFile: true }
-                          : { contextLines }),
-                      })
-                }
-                onCancelContext={contextReader.cancel}
-                comparison={{
-                  base: short(result.baseOid),
-                  target: short(result.targetOid),
-                }}
-              />
-            ) : (
-              <div className="compare-empty" hidden={loading || loadingFile}>
-                <GitDiff size={30} />
-                <h3>
-                  {selection.unavailable ??
-                    (loading || loadingFile
-                      ? t("正在读取 Diff…")
-                      : error
-                        ? t("无法读取 Diff")
-                        : result?.files.length
-                          ? t("选择文件查看 Diff")
-                          : t("没有文件差异"))}
-                </h3>
-              </div>
+              >
+                {t("重新读取")}
+              </Button>
             )}
           </div>
-        </ResizableWorkbench>
-      </div>
-    </section>
+        )}
+
+        <div
+          className={`compare-content ${contextVisible ? "with-ai-review" : ""}`}
+        >
+          <ResizableWorkbench
+            layout={panelLayout.value}
+            scopeKey={`${panelLayout.scopeKey}:${selectionKey}`}
+            enabled={panelLayout.ready}
+            active={active}
+            sidebarId={filesId}
+            contextId={contextId}
+            sidebarVisible={filesVisible}
+            contextDocked={contextVisible}
+            onChange={(partial) => {
+              void panelLayout.update(partial);
+            }}
+            onCollapse={(side) =>
+              side === "sidebarWidth" ? closeFiles() : closeContext()
+            }
+            sidebar={
+              <DiffFilePane
+                ai={ai}
+                token={ai.sourceToken}
+                scopeKey={`${changes.workspace.id}:${ai.sourceToken}`}
+                containerProps={{
+                  id: filesId,
+                  "aria-label": t("变化文件"),
+                  className: "compare-files",
+                  hidden: !filesVisible,
+                }}
+                onClose={closeFiles}
+                closeDisabled={!panelLayout.ready}
+                readOnly
+                files={result?.files ?? []}
+                selected={selected}
+                onSelect={(file) => {
+                  setFindingTarget(null);
+                  if (result) void select(file, result);
+                }}
+                search={search}
+                onSearch={setSearch}
+                searchId={`history-file-search-${searchId}`}
+                loaded={loadedFiles}
+                scope="all"
+                onScope={() => {}}
+                disabled
+                onStage={() => {}}
+              />
+            }
+            context={
+              contextVisible && (
+                <aside
+                  id={contextId}
+                  className="comparison-ai"
+                  aria-label={t("AI Review")}
+                >
+                  <header>
+                    <strong>{t("AI Review")}</strong>
+                    <Button
+                      className="text-button"
+                      aria-label={t("收起上下文")}
+                      onClick={closeContext}
+                    >
+                      {t("Close")}
+                    </Button>
+                  </header>
+                  <AiReviewPanel
+                    onSettings={onAgentSettings}
+                    ai={ai}
+                    hasDiff={!!diff && !!result}
+                    demo={demo}
+                    onFinding={(finding, index, contextId) => {
+                      if (!demo) {
+                        const reportId = contextId ? undefined : ai.report?.id;
+                        if (!contextId && !reportId) return;
+                        setFindingTarget({
+                          target: {
+                            workspaceId: changes.workspace.id,
+                            ...(contextId ? { contextId } : { reportId }),
+                            findingIndex: index,
+                          },
+                          finding,
+                        });
+                        setFocused(false);
+                        return;
+                      }
+                      const captured = ai.report?.files.find(
+                        (file) =>
+                          file.path === finding.file &&
+                          file.side === finding.side,
+                      );
+                      const file = result?.files.find(
+                        (file) => file.path === finding.file,
+                      );
+                      if (!captured || !file || !result || ai.stale) return;
+                      setAiJump({
+                        id: crypto.randomUUID(),
+                        comparisonId: captured.snapshotId,
+                        snapshotToken: captured.snapshotToken,
+                        path: captured.path,
+                        fileSide: captured.side,
+                        line: finding.line,
+                        endLine: finding.endLine,
+                        side: finding.lineSide,
+                      });
+                      void select(file, result);
+                    }}
+                  />
+                </aside>
+              )
+            }
+          >
+            <div className="center-panel">
+              {!findingTarget && (loading || loadingFile) && (
+                <DiffLoading
+                  path={
+                    result?.files.find((file) => fileKey(file) === selected)
+                      ?.path
+                  }
+                  updating={!!diff || !!summary}
+                  onCancel={() => {
+                    ++fileSequence.current;
+                    fileReader.cancel();
+                    if (loading) {
+                      ++sequence.current;
+                      comparisonReader.cancel();
+                      setLoading(false);
+                    }
+                    setLoadingFile(false);
+                    if (loadingFile) showReading(null);
+                    const file = result?.files.find(
+                      (file) => fileKey(file) === selected,
+                    );
+                    if (file && result)
+                      loadedLarge.current.delete(cacheKey(file, result));
+                    setError({
+                      code: "READ_CANCELLED",
+                      message: t("读取已取消。"),
+                      detail: "Cancelled by user",
+                    });
+                  }}
+                />
+              )}
+              {findingTarget ? (
+                <FindingLocationPane
+                  key={`${findingTarget.target.reportId ?? findingTarget.target.contextId}:${findingTarget.target.findingIndex}`}
+                  target={findingTarget.target}
+                  finding={findingTarget.finding}
+                  fontSize={preferences.fontSize}
+                  refreshToken={changes.token}
+                  active={active}
+                  onClose={() => setFindingTarget(null)}
+                />
+              ) : summary && result ? (
+                <DeferredDiff
+                  comparisonControls={comparisonControls}
+                  summary={summary}
+                  pending={loadingFile || marking}
+                  comparison={{
+                    base: short(result.baseOid),
+                    target: short(result.targetOid),
+                  }}
+                  onLoad={() => {
+                    const file = result.files.find(
+                      (file) => fileKey(file) === selected,
+                    );
+                    if (file) void select(file, result, true);
+                  }}
+                />
+              ) : diff && result ? (
+                <DiffView
+                  comparisonControls={comparisonControls}
+                  jumpTo={aiJump}
+                  ai={ai}
+                  key={diff.id}
+                  positionRef={positionFor(
+                    `${result.baseOid}:${result.targetOid}:${diff.path}`,
+                  )}
+                  diff={diff}
+                  preferences={preferences}
+                  pending={loadingFile || marking}
+                  onPreferences={onPreferences}
+                  onMark={(hunkId, reviewed) => void mark(hunkId, reviewed)}
+                  onStage={() => {}}
+                  onDiscard={() => {}}
+                  onFocus={() => setFocused((value) => !value)}
+                  focused={focused}
+                  onEditor={() => {}}
+                  openingEditor={false}
+                  onLoadContext={async (contextLines) =>
+                    demo
+                      ? demoDiffContext(diff, contextLines)
+                      : contextReader.read<DiffContext>("compare_context", {
+                          workspaceId: changes.workspace.id,
+                          base: result.baseOid,
+                          target: result.targetOid,
+                          path: diff.path,
+                          snapshotId: diff.id,
+                          ...(contextLines === "file"
+                            ? { fullFile: true }
+                            : { contextLines }),
+                        })
+                  }
+                  onCancelContext={contextReader.cancel}
+                  comparison={{
+                    base: short(result.baseOid),
+                    target: short(result.targetOid),
+                  }}
+                />
+              ) : (
+                <div className="compare-empty" hidden={loading || loadingFile}>
+                  <GitDiff size={30} />
+                  <h3>
+                    {selection.unavailable ??
+                      (loading || loadingFile
+                        ? t("正在读取 Diff…")
+                        : error
+                          ? t("无法读取 Diff")
+                          : result?.files.length
+                            ? t("选择文件查看 Diff")
+                            : t("没有文件差异"))}
+                  </h3>
+                </div>
+              )}
+            </div>
+          </ResizableWorkbench>
+        </div>
+        {rangeDetails}
+      </section>
+    </Popover>
   );
 }

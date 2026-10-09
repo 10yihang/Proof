@@ -25,73 +25,82 @@ export function AiReviewPanel({
   ai: AiController;
   hasDiff: boolean;
   demo: boolean;
-  onFinding: (finding: AiFinding) => void;
+  onFinding: (finding: AiFinding, index: number, contextId?: string) => void;
   onSettings?: () => void;
 }) {
   const review = ai.report?.review;
   const [exportId, setExportId] = useState<string | null>(null);
   return (
     <div className="ai-review-panel">
-      <div className="ai-provider">
-        <Sparkle size={16} />
-        <Select
-          aria-label={t("AI provider")}
-          value={ai.provider}
-          onChange={(e) => ai.setProvider(e.target.value as typeof ai.provider)}
-          disabled={!!ai.pending || demo}
-        >
-          {(ai.providers.length
-            ? ai.providers
-            : [{ id: "codex", name: "Codex", available: false }]
-          ).map((p) => (
-            <option key={p.id} value={p.id} disabled={!p.available}>
-              {p.name}
-              {p.available ? "" : t(" · unavailable")}
-            </option>
-          ))}
-        </Select>
-        <span className="tag">{t("Read-only")}</span>
-        {onSettings && (
-          <Button
-            className="icon-button"
-            title={t("Agent settings")}
-            aria-label={t("Agent settings")}
-            onClick={onSettings}
+      <div className="ai-review-launch">
+        <div className="ai-provider">
+          <Sparkle size={16} />
+          <Select
+            aria-label={t("AI provider")}
+            value={ai.provider}
+            onChange={(e) =>
+              ai.setProvider(e.target.value as typeof ai.provider)
+            }
+            disabled={!!ai.pending || demo}
           >
-            <GearSix size={16} />
-          </Button>
-        )}
-      </div>
-      <div className="ai-scope">
-        <span>{ai.scopeLabel}</span>
-        {ai.currentLabel && (
-          <strong title={ai.currentLabel}>{ai.currentLabel}</strong>
-        )}
-      </div>
-      <div className="ai-review-actions">
-        <Button
-          className="button primary"
-          disabled={!ai.canRun || !hasDiff}
-          onClick={() => void ai.run("review")}
-          title={t("审查当前 Change group；未分组时审查当前文件")}
-        >
-          {t("Review Current Change")}
-        </Button>
-        <Button
-          className="button"
-          disabled={!ai.canRun}
-          onClick={() => void ai.run("review", true)}
-        >
-          {t("Review All Changes")}
-        </Button>
-      </div>
-      <p className="ai-help">
-        {demo
-          ? t("演示模式不调用本机 Agent。")
-          : t(
-              "点击后由 Agent 只读访问完整项目目录，使用其现有登录和额度。AI 结果不会标记为 Reviewed。",
+            {(ai.providers.length
+              ? ai.providers
+              : [{ id: "codex", name: "Codex", available: false }]
+            ).map((p) => (
+              <option key={p.id} value={p.id} disabled={!p.available}>
+                {p.name}
+                {p.available ? "" : t(" · unavailable")}
+              </option>
+            ))}
+          </Select>
+          <span className="tag">{t("Read-only")}</span>
+          {onSettings && (
+            <Button
+              className="icon-button"
+              title={t("Agent settings")}
+              aria-label={t("Agent settings")}
+              onClick={onSettings}
+            >
+              <GearSix size={16} />
+            </Button>
+          )}
+        </div>
+        <div className="ai-scope">
+          <span>{ai.scopeLabel}</span>
+          {ai.currentLabel && (
+            <strong title={ai.currentLabel}>{ai.currentLabel}</strong>
+          )}
+        </div>
+        <div className="ai-review-actions">
+          <Button
+            className="button primary"
+            disabled={!ai.canRun || !hasDiff}
+            onClick={() => void ai.run("review")}
+            title={t(
+              "审查当前 Change group；未分组时审查当前文件。可读取完整仓库上下文。",
             )}
-      </p>
+          >
+            {t("Review Current Change")}
+          </Button>
+          <Button
+            className="button"
+            disabled={!ai.canRun}
+            onClick={() => void ai.run("review", true)}
+          >
+            {t("Review All Changes")}
+          </Button>
+        </div>
+        <details className="ai-review-guide">
+          <summary>{t("审查说明")}</summary>
+          <p className="ai-help">
+            {demo
+              ? t("演示模式不调用本机 Agent。")
+              : t(
+                  "Agent 可只读检索完整仓库，当前范围决定审查重点。AI 结果不会标记为 Reviewed。",
+                )}
+          </p>
+        </details>
+      </div>
       {!demo &&
         ai.providers.length > 0 &&
         !ai.providers.some((p) => p.available) && (
@@ -176,7 +185,7 @@ export function AiReviewPanel({
           )}
           {ai.stale && (
             <div className="ai-stale" role="status">
-              {t("Diff 已变化，此结果已过期。重新 Review 后可定位 Findings。")}
+              {t("Diff 已变化，此结果已过期。可定位当前代码，问题仍需复核。")}
             </div>
           )}
           <p className="ai-help">
@@ -205,8 +214,9 @@ export function AiReviewPanel({
                 </span>
                 <Button
                   className="ai-finding-link"
-                  disabled={ai.stale}
-                  onClick={() => onFinding(finding)}
+                  title={t("定位当前代码")}
+                  disabled={ai.reportLoading}
+                  onClick={() => onFinding(finding, index)}
                 >
                   <strong>{finding.title}</strong>
                   <ArrowRight size={14} />
@@ -233,8 +243,11 @@ export function AiReviewPanel({
               [t("Review priority"), review.reviewPriority],
             ] as const
           ).map(([title, items]) => (
-            <section key={title}>
-              <h3>{title}</h3>
+            <details className="ai-review-extra" key={title}>
+              <summary>
+                {title}
+                <span>{items.length}</span>
+              </summary>
               {items.length ? (
                 <ol>
                   {items.map((text, index) => (
@@ -244,7 +257,7 @@ export function AiReviewPanel({
               ) : (
                 <p className="ai-help">{t("此次分析未列出。")}</p>
               )}
-            </section>
+            </details>
           ))}
           {ai.report?.limitations.map((text) => (
             <p className="ai-help" key={text}>

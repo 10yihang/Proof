@@ -15,6 +15,7 @@ export function useAiReports(
   workspace: string | undefined,
   scope: string,
   demo: boolean,
+  active = true,
 ) {
   const request = useRequest();
   const [report, setReport] = useState<AiReport | null>(null);
@@ -29,8 +30,10 @@ export function useAiReports(
     saving = useRef(false);
   const refreshAfterSave = useRef(false);
   const refresh = useRef<(() => void) | null>(null);
+  // Project visibility suspends refreshes without discarding the selected
+  // report or invalidating a decision save already started by the user.
   useEffect(() => {
-    const gen = ++generation.current;
+    ++generation.current;
     ++sequence.current;
     current.current = null;
     saving.current = false;
@@ -40,8 +43,19 @@ export function useAiReports(
     setError(null);
     setSaving(false);
     setLoading(false);
+    return () => {
+      ++generation.current;
+      ++sequence.current;
+    };
+  }, [workspace, scope, demo]);
+  useEffect(() => {
+    ++sequence.current;
+    setLoading(false);
+    if (!active || !workspace || !scope || demo) return;
+    const gen = generation.current;
+    let disposed = false;
     const reload = async (event?: Event) => {
-      if (!workspace || !scope || demo) return;
+      if (disposed) return;
       const detail = (event as CustomEvent | undefined)?.detail;
       if (
         detail &&
@@ -57,7 +71,7 @@ export function useAiReports(
       }
       const seq = ++sequence.current;
       const valid = () =>
-        gen === generation.current && seq === sequence.current;
+        !disposed && gen === generation.current && seq === sequence.current;
       try {
         setLoading(true);
         const records = await request<AiReviewRecord[]>("ai_review_reports", {
@@ -95,13 +109,13 @@ export function useAiReports(
     window.addEventListener("proof:ai-review-updated", onRefresh);
     window.addEventListener("focus", onRefresh);
     return () => {
-      ++generation.current;
+      disposed = true;
       ++sequence.current;
       refresh.current = null;
       window.removeEventListener("proof:ai-review-updated", onRefresh);
       window.removeEventListener("focus", onRefresh);
     };
-  }, [workspace, scope, demo, request]);
+  }, [workspace, scope, demo, request, active]);
   function acceptReport(value: AiReport) {
     ++sequence.current;
     setLoading(false);

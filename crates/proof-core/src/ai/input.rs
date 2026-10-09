@@ -57,9 +57,9 @@ pub(super) fn prepare(
         }
     }
     let instructions = if live {
-        "Read the real project directory for full context. No patches are frozen: run git status and git diff yourself against the live repository to inspect the selected files (git diff for unstaged, git diff --cached for staged; git show <headOid>:path and git show :path give the HEAD and index versions). Working files may change while you analyze; review the live state you observe."
+        "Selected files are the review focus, not a read allowlist. Read relevant unchanged callers, implementations, tests, documentation and configuration, including ignored project files. No patches are frozen: run git status and git diff yourself against the live repository to inspect the selected files (git diff for unstaged, git diff --cached for staged; git show <headOid>:path and git show :path give the HEAD and index versions). For a staged change, inspect relevant tracked context in the index; do not substitute unstaged working files for the staged version. For an unstaged change, compare the index and working files. Working files may change while you analyze; review the live state you observe."
     } else {
-        "Read the real project directory for full context. These patches only freeze the selected Git Diff and its line numbers. For staged or historical versions, query Git objects; the current working files may differ."
+        "Selected files are the review focus, not a read allowlist. Read relevant unchanged callers, implementations, tests, documentation and configuration, including ignored project files. These patches only freeze the selected Git Diff and its line numbers. Read relevant tracked context at the same fixed base and target Git OIDs, even when those files are absent from the selected patches. Current working files and ignored configuration are current context, not evidence of the historical version; identify that distinction and any unavailable historical context."
     };
     let manifest = root.join("manifest.json");
     fs::write(

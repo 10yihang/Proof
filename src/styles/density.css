@@ -1,0 +1,505 @@
+/* Keep navigation compact; preserve the code's existing type and line spacing. */
+.app .project-header {
+  height: 48px;
+  gap: 12px;
+}
+.app .project-header .proof-mark {
+  width: 22px;
+  height: 22px;
+}
+.app.layout-enabled .workspace-content > .desktop-toolbar {
+  height: 36px;
+  min-height: 36px;
+  flex-wrap: nowrap;
+  gap: 4px;
+  padding-inline: 8px;
+}
+.workspace-tabs.workspace-sidebar {
+  width: 136px;
+  flex-basis: 136px;
+  padding: 8px;
+}
+.workspace-sidebar .workspace-tab-list {
+  gap: 4px;
+}
+.workspace-sidebar .view-tab {
+  height: 36px;
+  min-height: 36px;
+  padding-inline: 8px;
+  gap: 8px;
+}
+.workspace-sidebar .view-tab > svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
+.app .file-heading {
+  height: 36px;
+  min-height: 36px;
+  padding-inline: 8px;
+}
+.app .history-diff .diff-topbar {
+  min-height: 44px;
+  padding: 4px 8px;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+.app .history-diff .diff-file-header {
+  flex: 1 1 120px;
+  width: auto;
+  min-width: 80px;
+  padding-block: 0;
+  gap: 6px;
+}
+.history-diff .file-title {
+  flex: 1;
+  gap: 6px;
+}
+.history-diff .file-title > svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+.history-diff .file-title > div {
+  gap: 0;
+}
+.history-diff .diff-tally {
+  gap: 6px;
+  flex-shrink: 0;
+}
+.app .history-diff .diff-toolbar {
+  width: auto;
+  min-height: 28px;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  gap: 4px;
+}
+.history-diff .diff-toolbar > .toolbar-spacer {
+  display: none;
+}
+.comparison-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.history-diff .diff-topbar .icon-button,
+.comparison-tools .icon-button {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+}
+.comparison-range {
+  min-height: 28px;
+  padding: 3px 6px;
+  gap: 4px;
+}
+.comparison-range code {
+  font-size: 10px;
+}
+.comparison-range-popup {
+  width: min(360px, var(--available-width));
+  padding: 12px;
+  gap: 8px;
+  font-size: 12px;
+}
+.comparison-range-popup .history-endpoint {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  max-width: none;
+}
+.comparison-range-popup .history-endpoint code {
+  width: 100%;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+.comparison-range-popup .history-endpoint > span {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.comparison-detail-actions,
+.comparison-detail-actions .comparison-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+}
+.comparison-fallback-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  min-height: 36px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.app .history-diff .proof-panel-slot .comparison-ai {
+  position: static;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  box-shadow: none;
+}
+@container diff-pane (max-width: 840px) {
+  .history-diff .reading-tools-label {
+    display: none;
+  }
+}
+@container diff-pane (max-width: 620px) {
+  .app .history-diff .diff-topbar {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .app .history-diff .diff-file-header {
+    flex-basis: 100%;
+  }
+  .app .history-diff .diff-toolbar {
+    width: 100%;
+  }
+}
+@container diff-pane (max-width: 440px) {
+  .app .history-diff .diff-toolbar {
+    flex-wrap: wrap;
+  }
+}
+@media (max-width: 1180px) {
+  .workspace-tabs.workspace-sidebar {
+    width: 48px;
+    flex-basis: 48px;
+    padding: 8px 4px;
+  }
+  .workspace-sidebar .view-tab {
+    padding-inline: 0;
+    justify-content: center;
+  }
+  .workspace-sidebar .view-tab-label,
+  .workspace-sidebar .tab-count {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+}
+
+.diff-window-app[data-native-macos="true"]
+  .workspace-content
+  > .desktop-toolbar {
+  padding-left: 88px;
+}
+
+/* The toolbar and project tabs have separate jobs, as in the Fork reference. */
+.app .project-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 320px) minmax(0, 1fr);
+}
+.project-leading,
+.project-trailing {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 100%;
+}
+.project-trailing {
+  justify-content: flex-end;
+}
+.project-header .project-drag-space {
+  flex: 1 0 32px;
+  min-width: 32px;
+}
+.project-identity {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  height: 40px;
+  padding: 2px 8px;
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
+}
+.project-identity > strong {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 14px;
+  font-weight: 600;
+}
+.project-header .branch-control {
+  --branch-control-width: 280px;
+  max-width: 100%;
+  height: 22px;
+  margin: 0;
+}
+.project-header .branch-picker {
+  max-width: 100%;
+  height: 22px;
+  min-height: 22px;
+  padding: 0 4px;
+  font-size: 11px;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+}
+.project-header .branch-control > .icon-button {
+  height: 22px;
+  min-width: 22px;
+  width: 22px;
+}
+.app.layout-enabled .project-header .project-tools {
+  height: auto;
+  min-height: 0;
+  align-self: stretch;
+  padding: 0;
+  flex: 0 0 auto;
+  gap: 8px;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  flex-wrap: nowrap;
+}
+.project-tools .panel-toggle-right {
+  transform: scaleX(-1);
+}
+.project-tools .panel-toggle[aria-expanded="true"] {
+  background: var(--hover);
+  color: var(--text);
+}
+.project-tabs-row {
+  display: flex;
+  height: 32px;
+  min-height: 32px;
+  padding: 0 12px;
+  background: var(--chrome);
+  border-bottom: 1px solid var(--border);
+}
+.project-tabs-row > .project-tabs {
+  flex: 1;
+  height: 100%;
+  min-width: 0;
+  padding: 0;
+}
+.project-tabs-row .project-tab-strip {
+  flex: 1;
+}
+.project-tabs-row .project-tab-item {
+  flex: 1 0 96px;
+  max-width: 240px;
+  min-width: 96px;
+}
+.project-tabs-row .project-tab-button {
+  justify-content: center;
+  padding-inline: 8px;
+  font-size: 11px;
+}
+.project-tabs-row .project-tab-open {
+  width: 28px;
+  height: 28px;
+}
+.workspace-tabs.workspace-sidebar.with-comparisons {
+  width: 160px;
+  flex-basis: 160px;
+}
+.workspace-sidebar .diff-tab-strip {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  gap: 2px;
+  margin: 0 0 4px 12px;
+  border: 0;
+}
+.workspace-sidebar .diff-tab-item {
+  display: flex;
+  align-items: center;
+  align-self: stretch;
+  flex: 0 0 auto;
+  min-width: 0;
+  height: 28px;
+  border: 0;
+  border-radius: var(--radius-control);
+}
+.workspace-sidebar .diff-tab-button {
+  justify-content: flex-start;
+  flex: 1;
+  min-width: 0;
+  gap: 6px;
+  height: 28px;
+  padding: 0 4px 0 8px;
+  font-size: 11px;
+}
+.workspace-sidebar .diff-tab-button > svg {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+}
+.workspace-sidebar .diff-tab-button code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.workspace-sidebar .diff-tab-close {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  flex-shrink: 0;
+}
+.workspace-sidebar .diff-tab-item .workspace-tab-indicator {
+  box-shadow: none;
+}
+@media (max-width: 1380px) {
+  .app .project-header {
+    grid-template-columns: minmax(0, 1fr) minmax(240px, 280px) minmax(0, 1fr);
+  }
+  .project-header .observer-status {
+    display: none;
+  }
+}
+@media (max-width: 1180px) {
+  .workspace-sidebar.with-comparisons .view-tab {
+    justify-content: flex-start;
+    padding-inline: 8px;
+  }
+  .workspace-sidebar.with-comparisons .view-tab-label,
+  .workspace-sidebar.with-comparisons .tab-count {
+    position: static;
+    width: auto;
+    height: auto;
+    clip-path: none;
+  }
+  .project-header .command-trigger {
+    width: 28px;
+    min-width: 28px;
+    padding: 4px;
+    justify-content: center;
+  }
+  .project-header .command-trigger > span,
+  .project-header .command-trigger > kbd,
+  .project-header .demo-badge {
+    display: none;
+  }
+}
+@media (max-width: 780px) {
+  .app .project-header {
+    grid-template-columns: minmax(0, 1fr) minmax(160px, 220px) minmax(0, 1fr);
+    gap: 8px;
+  }
+}
+
+.workspace-sidebar .workspace-tab-list {
+  height: auto;
+  flex: 0 0 auto;
+  overflow: visible;
+}
+.comparison-range-icon {
+  display: none;
+}
+@container diff-pane (min-width: 440px) and (max-width: 620px) {
+  .comparison-range-icon {
+    display: block;
+  }
+  .comparison-range code {
+    display: none;
+  }
+  .app .history-diff .diff-topbar {
+    flex-wrap: nowrap;
+  }
+  .app .history-diff .diff-file-header {
+    flex-basis: 100px;
+  }
+  .app .history-diff .diff-toolbar {
+    width: auto;
+  }
+}
+
+/* Keep the navigation switch reachable while the comparison list scrolls. */
+.workspace-tabs.workspace-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: hidden;
+}
+.workspace-sidebar .workspace-tab-list {
+  min-height: 0;
+  flex: 0 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.workspace-sidebar .workspace-sidebar-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  margin-top: auto;
+  flex-shrink: 0;
+  padding: 0 8px;
+  color: var(--muted);
+  border-radius: var(--radius-control);
+  font-size: 12px;
+}
+.workspace-sidebar .workspace-sidebar-toggle:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.workspace-sidebar .workspace-sidebar-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.workspace-tabs.workspace-sidebar.is-expanded {
+  width: 136px;
+  flex-basis: 136px;
+  padding: 8px;
+}
+.workspace-tabs.workspace-sidebar.is-expanded.with-comparisons {
+  width: 160px;
+  flex-basis: 160px;
+}
+.workspace-sidebar.is-expanded .view-tab {
+  justify-content: flex-start;
+  padding-inline: 8px;
+}
+.workspace-sidebar.is-expanded .view-tab-label,
+.workspace-sidebar.is-expanded .tab-count {
+  position: static;
+  width: auto;
+  height: auto;
+  overflow: visible;
+  clip-path: none;
+}
+.workspace-sidebar.is-expanded .view-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.workspace-tabs.workspace-sidebar.is-collapsed {
+  width: 48px;
+  flex-basis: 48px;
+  padding: 8px 4px;
+}
+.workspace-sidebar.is-collapsed .view-tab,
+.workspace-sidebar.is-collapsed .diff-tab-button,
+.workspace-sidebar.is-collapsed .workspace-sidebar-toggle {
+  justify-content: center;
+  padding-inline: 0;
+  gap: 0;
+}
+.workspace-sidebar.is-collapsed .view-tab-label,
+.workspace-sidebar.is-collapsed .tab-count,
+.workspace-sidebar.is-collapsed .diff-tab-button code,
+.workspace-sidebar.is-collapsed .workspace-sidebar-toggle > span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.workspace-sidebar.is-collapsed .diff-tab-strip {
+  margin-inline: 0;
+}
+.workspace-sidebar.is-collapsed .diff-tab-close {
+  display: none;
+}

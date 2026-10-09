@@ -42,6 +42,7 @@ impl Store {
             CREATE TABLE IF NOT EXISTS comparison_change_groups (workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE, base_oid TEXT NOT NULL, target_oid TEXT NOT NULL, revision INTEGER NOT NULL, value TEXT NOT NULL, PRIMARY KEY(workspace_id,base_oid,target_oid));
             CREATE TABLE IF NOT EXISTS ai_review_reports (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE, scope_key TEXT NOT NULL, captured_at INTEGER NOT NULL, revision INTEGER NOT NULL, value TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS ai_review_scope ON ai_review_reports(workspace_id,scope_key,captured_at DESC);
+            CREATE TABLE IF NOT EXISTS ai_finding_anchors (report_id TEXT PRIMARY KEY REFERENCES ai_review_reports(id) ON DELETE CASCADE, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS repository_layouts (repository_id TEXT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS hidden_recent_workspaces (workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE);
             CREATE TABLE IF NOT EXISTS data_client_deletions (workspace_id TEXT PRIMARY KEY);

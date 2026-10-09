@@ -20,13 +20,13 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   ArrowClockwise,
   ArrowRight,
-  CaretDown,
   Check,
   FolderOpen,
   GearSix,
@@ -39,7 +39,6 @@ import {
   Warning,
   X,
   ClockCounterClockwise,
-  List,
   ArrowSquareOut,
   Terminal as TerminalIcon,
 } from "@phosphor-icons/react";
@@ -74,6 +73,9 @@ import type { HistoryComparison } from "./components/HistoryDiff";
 import { DiffView, type DiffPosition } from "./components/DiffView";
 import { useAi, type DiffJump } from "./ai";
 import { AiReviewPanel } from "./components/AiReviewPanel";
+import { FindingLocationPane } from "./components/FindingLocationPane";
+import type { FindingLocationTarget } from "./finding-location";
+import type { AiFinding } from "./ai";
 import { DiffFilePane } from "./components/DiffFilePane";
 import { DeferredDiff } from "./components/DeferredDiff";
 import { ContextInspector } from "./components/ContextInspector";
@@ -96,6 +98,8 @@ import { isMacDesktop, useWindowMenu } from "./use-window-menu";
 import { WorkspaceTabs, type WorkspaceView } from "./components/WorkspaceTabs";
 import { nextReviewFile, reviewCoverage } from "./review-coverage";
 import "./styles/review-flow.css";
+
+let preferenceWriteQueue: Promise<void> = Promise.resolve();
 
 const HistoryDiff = lazy(() =>
   import("./components/HistoryDiff").then((module) => ({
@@ -162,6 +166,13 @@ export default function App({
   diffWindow = false,
   initialDataNotice,
   onWorkspaceChange,
+  active = true,
+  autoDemo = true,
+  projectTabs,
+  onOpenProject,
+  onProjectReady,
+  onCloseProject,
+  onProjectCloseGuardChange,
 }: {
   initialWorkspaceId?: string;
   initialFile?: { path: string; side: "staged" | "unstaged" };
@@ -169,7 +180,32 @@ export default function App({
   diffWindow?: boolean;
   initialDataNotice?: string;
   onWorkspaceChange?: (id?: string) => void;
+  active?: boolean;
+  autoDemo?: boolean;
+  projectTabs?: ReactNode;
+  onOpenProject?: (path: string) => Promise<void>;
+  onProjectReady?: (workspace: Workspace) => void;
+  onCloseProject?: () => void;
+  onProjectCloseGuardChange?: (guard: {
+    dirty: boolean;
+    busy: boolean;
+  }) => void;
 } = {}) {
+  const appRoot = useRef<HTMLDivElement>(null);
+  const [editorDirty, setEditorDirty] = useState(false);
+  const [editorSaving, setEditorSaving] = useState(false);
+  const [childAiBusy, setChildAiBusy] = useState<Record<string, boolean>>({});
+  const trackChildAi = useCallback((key: string, pending: boolean) => {
+    setChildAiBusy((previous) => {
+      if (!!previous[key] === pending) return previous;
+      const next = { ...previous };
+      if (pending) next[key] = true;
+      else delete next[key];
+      return next;
+    });
+  }, []);
+  const element = (id: string) =>
+    appRoot.current?.querySelector<HTMLElement>(`#${CSS.escape(id)}`);
   const [windowUI] = useState(() =>
     createWindowUI(initialDataNotice ? "settings" : null),
   );
@@ -182,7 +218,6 @@ export default function App({
   const [preferences, setPreferences] = useState(defaultPreferences);
   const preferenceState = useRef(defaultPreferences);
   const savedPreferences = useRef(defaultPreferences);
-  const preferenceWrites = useRef<Promise<void>>(Promise.resolve());
   const preferenceLoad = useRef<Promise<Preferences>>(
     Promise.resolve(defaultPreferences),
   );
@@ -208,6 +243,11 @@ export default function App({
     "inspectorTab",
   );
   const [aiJump, setAiJump] = useState<DiffJump | null>(null);
+  const [findingTarget, setFindingTarget] = useState<{
+    target: FindingLocationTarget;
+    finding: AiFinding;
+  } | null>(null);
+  useEffect(() => setFindingTarget(null), [changes?.workspace.id]);
   const [reviewTarget, setReviewTarget] = useState<FileDiff | null>(null);
   const [commandTarget, setCommandTarget] = useState<EditorTarget | null>(null);
   const [loaded, setLoaded] = useState<Record<string, FileDiff>>({});
@@ -287,7 +327,7 @@ export default function App({
     setFocused(false);
     setTab(id);
     requestAnimationFrame(() => {
-      const button = document.querySelector<HTMLButtonElement>(
+      const button = appRoot.current?.querySelector<HTMLButtonElement>(
         ".diff-tab-item.active .diff-tab-button",
       );
       button?.focus();
@@ -324,16 +364,20 @@ export default function App({
   useWindowMenu(
     () => {
       if (tab.startsWith("diff:")) closeDiffTab(tab);
+      else if (onCloseProject && !diffWindow) onCloseProject();
       else
         void getCurrentWindow()
           .close()
           .catch((error) => setError(asError(error)));
     },
     (error) => setError(asError(error)),
+    active,
   );
   useEffect(() => {
-    if (!tab.startsWith("diff:")) return;
-    const item = document.querySelector<HTMLElement>(".diff-tab-item.active");
+    if (!active || !tab.startsWith("diff:")) return;
+    const item = appRoot.current?.querySelector<HTMLElement>(
+      ".diff-tab-item.active",
+    );
     const strip = item?.parentElement;
     if (!item || !strip) return;
     const reveal = () =>
@@ -342,7 +386,7 @@ export default function App({
     observer.observe(strip);
     reveal();
     return () => observer.disconnect();
-  }, [tab]);
+  }, [tab, active]);
   useEffect(() => {
     setDiffTabs((previous) =>
       previous.filter((t) => t.workspaceId === changes?.workspace.id),
@@ -386,7 +430,7 @@ export default function App({
   const [commitSearch, setCommitSearch] = useState("");
   const [focused, setFocused] = useWindowField(windowUI, "focused"),
     [demo, setDemo] = useState(false);
-  const ai = useAi(changes, diff, demo);
+  const ai = useAi(changes, diff, demo, undefined, active);
   const [narrow, setNarrow] = useState(window.innerWidth <= 1100),
     [contextDrawer, setContextDrawer] = useWindowField(
       windowUI,
@@ -415,8 +459,52 @@ export default function App({
     polling = useRef(false);
   current.current = changes;
   useEffect(() => {
-    onWorkspaceChange?.(changes?.workspace.id);
-  }, [changes?.workspace.id, onWorkspaceChange]);
+    if (active) onWorkspaceChange?.(changes?.workspace.id);
+  }, [active, changes?.workspace.id, onWorkspaceChange]);
+  useEffect(() => {
+    if (changes) onProjectReady?.(changes.workspace);
+  }, [changes?.workspace, onProjectReady]);
+  useEffect(() => {
+    onProjectCloseGuardChange?.({
+      dirty: editorDirty,
+      busy:
+        busy ||
+        editorSaving ||
+        !!ai.pending ||
+        ai.saving ||
+        ai.decisionSaving ||
+        Object.values(childAiBusy).some(Boolean),
+    });
+  }, [
+    editorDirty,
+    editorSaving,
+    busy,
+    ai.pending,
+    ai.saving,
+    ai.decisionSaving,
+    childAiBusy,
+    onProjectCloseGuardChange,
+  ]);
+  useEffect(() => {
+    if (!active) return;
+    const openProject = () => setDialog("open");
+    window.addEventListener("proof:open-project", openProject);
+    return () => window.removeEventListener("proof:open-project", openProject);
+  }, [active, setDialog]);
+  useEffect(() => {
+    if (!active || !isDesktop || dialog !== "open") return;
+    let cancelled = false;
+    void request<Workspace[]>("recent_workspaces")
+      .then((projects) => {
+        if (!cancelled) setRecent(projects);
+      })
+      .catch((cause) => {
+        if (!cancelled) setError(asError(cause));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [active, dialog, request]);
   selectedRef.current = selected;
   function setBusy(value: boolean) {
     busyRef.current = value;
@@ -432,10 +520,14 @@ export default function App({
       setTab("changes");
       if (file) void loadFile(file);
     },
-    !diffWindow && tab === "repository" && repositorySection === "history",
+    active &&
+      !diffWindow &&
+      tab === "repository" &&
+      repositorySection === "history",
     busy,
     setBusy,
     () => setDialog("recovery"),
+    active,
   );
 
   useEffect(() => {
@@ -497,6 +589,7 @@ export default function App({
           });
       }
     } else if (
+      autoDemo &&
       new URLSearchParams(window.location.search).get("demo") === "1"
     ) {
       setDemo(true);
@@ -532,6 +625,7 @@ export default function App({
     setContextDrawer(false);
   }, [changes?.workspace.id]);
   useEffect(() => {
+    if (!active) return;
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     let themeFrame = 0,
       settledFrame = 0;
@@ -559,9 +653,9 @@ export default function App({
       cancelAnimationFrame(settledFrame);
       delete document.documentElement.dataset.themeChanging;
     };
-  }, [preferences.theme]);
+  }, [preferences.theme, active]);
   useEffect(() => {
-    if (notification) {
+    if (active && notification) {
       const toastId = toast.add({
         title: uiMessage(notification),
         type: "info",
@@ -573,7 +667,7 @@ export default function App({
         toast.close(toastId);
       };
     }
-  }, [notification]);
+  }, [notification, active]);
   const acceptChangesRef = useRef<(next: Changes) => Promise<boolean>>(
     async () => true,
   );
@@ -582,7 +676,13 @@ export default function App({
   const [refreshError, setRefreshError] = useState<ProofError | null>(null);
   const pollRef = useRef<() => void>(() => {});
   useEffect(() => {
-    if (!isDesktop || demo || !changes || (diffWindow && initialComparison))
+    if (
+      !active ||
+      !isDesktop ||
+      demo ||
+      !changes ||
+      (diffWindow && initialComparison)
+    )
       return;
     let cancelled = false;
     setRefreshError(null);
@@ -662,10 +762,10 @@ export default function App({
       window.removeEventListener("focus", focus);
       document.removeEventListener("visibilitychange", focus);
     };
-  }, [changes?.workspace.id, demo, preferences.gitPath]);
+  }, [changes?.workspace.id, demo, preferences.gitPath, active]);
   useEffect(() => {
-    if (tab === "changes" || tab === "commit") pollRef.current();
-  }, [tab, changes?.workspace.id]);
+    if (active && (tab === "changes" || tab === "commit")) pollRef.current();
+  }, [active, tab, changes?.workspace.id]);
 
   // False means the current selection still needs a read. Cancellation and
   // superseded requests are complete, so background refresh cannot revive them.
@@ -829,6 +929,19 @@ export default function App({
 
   async function openWorkspace(repositoryPath: string) {
     if (!repositoryPath.trim() || busyRef.current) return;
+    if (changes && onOpenProject) {
+      setBusy(true);
+      setError(null);
+      try {
+        await onOpenProject(repositoryPath);
+        setDialog(null);
+      } catch (cause) {
+        setError(asError(cause));
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     const epoch = ++workspaceEpoch.current;
     fileReader.cancel();
     cache.current.cancelPending();
@@ -919,13 +1032,16 @@ export default function App({
     preferenceState.current = next;
     setPreferences(next);
     // Rapid reading toggles must compose and persist in the same order.
-    const write = preferenceWrites.current
+    const write = preferenceWriteQueue
       .then(async () => {
         await preferenceLoad.current;
         const persisted = { ...savedPreferences.current, ...partial };
         if (isDesktop)
           await request("set_preferences", { preferences: persisted });
         savedPreferences.current = persisted;
+        window.dispatchEvent(
+          new CustomEvent("proof:preferences-updated", { detail: persisted }),
+        );
         if (preferenceRevision.current === revision) {
           preferenceState.current = persisted;
           setPreferences(persisted);
@@ -941,9 +1057,26 @@ export default function App({
       .finally(() => {
         pendingPreferences.current.delete(revision);
       });
-    preferenceWrites.current = write;
+    preferenceWriteQueue = write;
     await write;
   }
+  useEffect(() => {
+    const updated = (event: Event) => {
+      const persisted = (event as CustomEvent<Preferences>).detail;
+      savedPreferences.current = persisted;
+      const visible = [
+        ...pendingPreferences.current.values(),
+      ].reduce<Preferences>(
+        (next, partial) => ({ ...next, ...partial }),
+        persisted,
+      );
+      preferenceState.current = visible;
+      setPreferences(visible);
+    };
+    window.addEventListener("proof:preferences-updated", updated);
+    return () =>
+      window.removeEventListener("proof:preferences-updated", updated);
+  }, []);
   async function mark(
     hunkId: string | null,
     reviewed: boolean,
@@ -1505,7 +1638,12 @@ export default function App({
   useHotkeys(
     "*",
     (event) => {
-      if (event.defaultPrevented || event.isComposing || event.keyCode === 229)
+      if (
+        !active ||
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.keyCode === 229
+      )
         return;
       if (
         diffWindow &&
@@ -1531,10 +1669,10 @@ export default function App({
       if (event.key === "Escape" && !dialog) {
         if (contextDrawer) {
           setContextDrawer(false);
-          document.getElementById("context-toggle")?.focus();
+          element("context-toggle")?.focus();
         } else if (filesDrawer) {
           setFilesDrawer(false);
-          document.getElementById("files-toggle")?.focus();
+          element("files-toggle")?.focus();
         } else setFocused(false);
       }
       if (
@@ -1542,10 +1680,11 @@ export default function App({
         !isMacDesktop &&
         (event.metaKey || event.ctrlKey) &&
         event.key.toLowerCase() === "w" &&
-        (tab.startsWith("diff:") || diffWindow)
+        (tab.startsWith("diff:") || diffWindow || onCloseProject)
       ) {
         event.preventDefault();
-        closeDiffTab(tab);
+        if (tab.startsWith("diff:") || diffWindow) closeDiffTab(tab);
+        else onCloseProject?.();
         return;
       }
       if (
@@ -1590,22 +1729,21 @@ export default function App({
         event.preventDefault();
         setFocused(false);
         if (tab === "repository") {
-          document
-            .querySelector<HTMLInputElement>(
+          appRoot.current
+            ?.querySelector<HTMLInputElement>(
               ".workspace-page:not([hidden]) .graph-search input",
             )
             ?.focus();
         } else if (tab.startsWith("diff:"))
-          document
-            .querySelector<HTMLInputElement>(
+          appRoot.current
+            ?.querySelector<HTMLInputElement>(
               ".diff-tab-page:not([hidden]) .file-search input",
             )
             ?.focus();
-        else if (tab === "commit")
-          document.getElementById("commit-file-search")?.focus();
+        else if (tab === "commit") element("commit-file-search")?.focus();
         else if (tab === "files")
-          document
-            .querySelector<HTMLInputElement>(".editor-file-search input")
+          appRoot.current
+            ?.querySelector<HTMLInputElement>(".editor-file-search input")
             ?.focus();
         else showFileSearch();
       }
@@ -1620,11 +1758,13 @@ export default function App({
       }
     },
     {
+      enabled: active,
       ignoreModifiers: true,
       enableOnFormTags: true,
       enableOnContentEditable: true,
     },
     [
+      active,
       dialog,
       busy,
       tab,
@@ -1648,6 +1788,7 @@ export default function App({
     [changes, loaded, selected],
   );
   function openNextReview() {
+    setFindingTarget(null);
     if (!nextReview || busy || loadingDiff) return;
     setSearch("");
     setScope("all");
@@ -1681,16 +1822,12 @@ export default function App({
   function showCommit() {
     setFocused(false);
     setTab("commit");
-    requestAnimationFrame(() =>
-      document.getElementById("quick-commit-message")?.focus(),
-    );
+    requestAnimationFrame(() => element("quick-commit-message")?.focus());
   }
   function showFileSearch() {
     if (tab === "commit") {
       setFocused(false);
-      requestAnimationFrame(() =>
-        document.getElementById("commit-file-search")?.focus(),
-      );
+      requestAnimationFrame(() => element("commit-file-search")?.focus());
       return;
     }
     ai.setView("files");
@@ -1701,24 +1838,18 @@ export default function App({
       setContextDrawer(false);
     } else if (!repositoryLayout.value.sidebarOpen)
       void repositoryLayout.update({ sidebarOpen: true });
-    requestAnimationFrame(() =>
-      document.getElementById("file-search")?.focus(),
-    );
+    requestAnimationFrame(() => element("file-search")?.focus());
   }
   function closeFiles() {
     if (tab === "commit") setFocused(true);
     else if (compact) setFilesDrawer(false);
     else void repositoryLayout.update({ sidebarOpen: false });
-    requestAnimationFrame(() =>
-      document.getElementById("files-toggle")?.focus(),
-    );
+    requestAnimationFrame(() => element("files-toggle")?.focus());
   }
   function closeContext() {
     if (narrow) setContextDrawer(false);
     else void repositoryLayout.update({ contextOpen: false });
-    requestAnimationFrame(() =>
-      document.getElementById("context-toggle")?.focus(),
-    );
+    requestAnimationFrame(() => element("context-toggle")?.focus());
   }
   function openSettings(
     section:
@@ -1793,8 +1924,133 @@ export default function App({
     else if (view === "commit") showCommit();
     else setTab(view);
   }
+  const workspaceToolbar = (
+    <div
+      className="app-header desktop-toolbar project-tools"
+      data-tauri-drag-region
+      role="toolbar"
+      aria-label={t("Worktree")}
+    >
+      {diffWindow && (
+        <div className="diff-window-label" data-tauri-drag-region>
+          {changes?.workspace.name ?? "Proof"}
+          <span>{initialComparison ? "Diff" : t("Local changes")}</span>
+        </div>
+      )}
+      {changes && !diffWindow && isDesktop && (
+        <Button
+          id="terminal-toggle"
+          className="icon-button"
+          aria-label={terminalOpen ? t("收起终端") : t("打开终端")}
+          aria-expanded={terminalOpen}
+          aria-controls="terminal-drawer"
+          title={t("终端")}
+          onClick={() => setTerminalOpen((value) => !value)}
+        >
+          <TerminalIcon size={17} />
+        </Button>
+      )}
+      {changes && !diffWindow && (tab === "changes" || tab === "commit") && (
+        <Button
+          id="files-toggle"
+          className="icon-button panel-toggle"
+          aria-label={filesControlExpanded ? t("收起文件栏") : t("显示文件栏")}
+          aria-expanded={filesControlExpanded}
+          aria-controls={tab === "commit" ? "commit-files-pane" : "files-panel"}
+          title={t("文件栏 · ⌘/Ctrl P 搜索")}
+          disabled={tab !== "commit" && !compact && !repositoryLayout.ready}
+          onClick={() => {
+            if (filesControlExpanded) closeFiles();
+            else showFileSearch();
+          }}
+        >
+          <SidebarSimple size={17} aria-hidden="true" />
+        </Button>
+      )}
+      {changes && !diffWindow && tab === "changes" && (
+        <Button
+          id="context-toggle"
+          className="icon-button panel-toggle"
+          aria-label={contextOpen ? t("收起上下文") : t("显示上下文")}
+          title={contextOpen ? t("收起上下文") : t("显示上下文")}
+          aria-expanded={contextOpen}
+          aria-controls="context-panel"
+          disabled={!narrow && !repositoryLayout.ready}
+          onClick={() => {
+            if (tab !== "changes" && tab !== "commit") setTab("changes");
+            if (contextOpen) {
+              closeContext();
+              return;
+            }
+            setFocused(false);
+            if (narrow) {
+              setContextDrawer(true);
+              setFilesDrawer(false);
+            } else
+              void repositoryLayout.update({
+                contextOpen: true,
+              });
+            requestAnimationFrame(() =>
+              appRoot.current
+                ?.querySelector<HTMLButtonElement>(
+                  "#context-panel .context-header button",
+                )
+                ?.focus(),
+            );
+          }}
+        >
+          <SidebarSimple
+            size={17}
+            className="panel-toggle-right"
+            aria-hidden="true"
+          />
+        </Button>
+      )}
+      {demo && <span className="demo-badge">{t("演示数据")}</span>}
+      {changes && (
+        <Button
+          className="icon-button"
+          disabled={busy}
+          aria-label={t("刷新 Worktree")}
+          title={t("刷新本地 Worktree")}
+          onClick={() => {
+            void refresh();
+          }}
+        >
+          <ArrowClockwise size={17} className={busy ? "spinning" : ""} />
+        </Button>
+      )}
+      <Button
+        className="observer-status"
+        onClick={() => openSettings("observer")}
+      >
+        <span className="status-dot neutral" />
+        {t("Agent Hook")}
+      </Button>
+      <Button
+        className="command-trigger"
+        title={t("命令面板")}
+        aria-label={t("打开命令面板")}
+        onClick={openCommands}
+      >
+        <MagnifyingGlass size={15} />
+        <span>{t("Command")}</span>
+        <kbd>{t("⌘ K")}</kbd>
+      </Button>
+      <Button
+        className="icon-button"
+        aria-label={t("设置")}
+        id="settings-toggle"
+        title={t("设置")}
+        onClick={() => openSettings()}
+      >
+        <GearSix size={19} />
+      </Button>
+    </div>
+  );
   const appContent = (
     <Tabs.Root
+      ref={appRoot}
       value={workspaceView}
       onValueChange={(value) => {
         if (typeof value === "string")
@@ -1803,51 +2059,58 @@ export default function App({
       className={`app layout-enabled ${diffWindow ? "diff-window-app" : ""} ${focused ? "is-focused" : ""}`}
       data-native-macos={isMacDesktop ? "true" : undefined}
     >
-      <header className="app-header desktop-toolbar" data-tauri-drag-region>
-        {diffWindow && (
-          <div className="diff-window-label" data-tauri-drag-region>
-            {changes?.workspace.name ?? "Proof"}
-            <span>{initialComparison ? "Diff" : t("Local changes")}</span>
+      {!diffWindow && (
+        <>
+          <header className="project-header" data-tauri-drag-region>
+            <div className="project-leading" data-tauri-drag-region>
+              <a
+                className="brand"
+                href="#"
+                aria-label={t("Proof 首页")}
+                onClick={(event) => {
+                  event.preventDefault();
+                  if (changes) setTab("changes");
+                }}
+              >
+                <ProofMark />
+              </a>
+              <div className="project-drag-space" data-tauri-drag-region />
+            </div>
+            <div className="project-identity">
+              <strong title={changes?.workspace.path}>
+                {changes?.workspace.name ?? "Proof"}
+              </strong>
+              {changes ? (
+                <BranchPicker
+                  key={changes.workspace.id}
+                  changes={changes}
+                  demo={demo}
+                  busy={busy}
+                  onSwitch={switchBranch}
+                  actions={gitActions}
+                  active={active}
+                />
+              ) : (
+                <Button onClick={() => setDialog("open")}>
+                  <FolderOpen size={15} />
+                  {t("打开仓库")}
+                </Button>
+              )}
+            </div>
+            <div className="project-trailing" data-tauri-drag-region>
+              <div className="project-drag-space" data-tauri-drag-region />
+              {workspaceToolbar}
+            </div>
+          </header>
+          <div className="project-tabs-row" data-tauri-drag-region>
+            {projectTabs}
           </div>
-        )}
-        <a
-          className="brand"
-          href="#"
-          aria-label={t("Proof 首页")}
-          onClick={(e) => {
-            e.preventDefault();
-            if (changes) setTab("changes");
-          }}
-        >
-          <ProofMark />
-          <span>{t("Proof")}</span>
-        </a>
-        <span className="header-divider" />
-        <Button
-          className="workspace-picker"
-          disabled={busy}
-          onClick={() => setDialog("open")}
-        >
-          <FolderOpen size={17} />
-          <strong>{changes?.workspace.name ?? t("打开仓库")}</strong>
-          <CaretDown size={12} />
-        </Button>
-        {changes && !diffWindow && (
-          <BranchPicker
-            key={changes.workspace.id}
-            changes={changes}
-            demo={demo}
-            busy={busy}
-            onSwitch={switchBranch}
-            actions={gitActions}
-          />
-        )}
+        </>
+      )}
+      <div className="workspace-body">
         {changes && !diffWindow && (
           <WorkspaceTabs
-            onReorder={(source, target) =>
-              setDiffTabs((tabs) => reorderComparisonTabs(tabs, source, target))
-            }
-            active={tab === "repository" ? "history" : tab}
+            active={workspaceView}
             changesCount={changes.files.length}
             stagedCount={stagedCount}
             comparisons={diffTabs.filter(
@@ -1856,1119 +2119,1100 @@ export default function App({
             historyRef={historyTab}
             onSelect={selectWorkspaceView}
             onClose={closeDiffTab}
+            onReorder={(source, target) =>
+              setDiffTabs((tabs) => reorderComparisonTabs(tabs, source, target))
+            }
           />
         )}
-        <div
-          className="toolbar-spacer window-drag-space"
-          data-tauri-drag-region
-        />
-        {changes && !diffWindow && isDesktop && (
-          <Button
-            id="terminal-toggle"
-            className="icon-button"
-            aria-label={terminalOpen ? t("收起终端") : t("打开终端")}
-            aria-expanded={terminalOpen}
-            aria-controls="terminal-drawer"
-            title={t("终端")}
-            onClick={() => setTerminalOpen((value) => !value)}
-          >
-            <TerminalIcon size={17} />
-          </Button>
-        )}
-        {changes && !diffWindow && (tab === "changes" || tab === "commit") && (
-          <Button
-            id="files-toggle"
-            className="icon-button"
-            aria-label={
-              filesControlExpanded ? t("收起文件栏") : t("显示文件栏")
-            }
-            aria-expanded={filesControlExpanded}
-            aria-controls={
-              tab === "commit" ? "commit-files-pane" : "files-panel"
-            }
-            title={t("文件栏 · ⌘/Ctrl P 搜索")}
-            disabled={tab !== "commit" && !compact && !repositoryLayout.ready}
-            onClick={() => {
-              if (filesControlExpanded) closeFiles();
-              else showFileSearch();
-            }}
-          >
-            <List size={17} />
-          </Button>
-        )}
-        {changes && !diffWindow && tab === "changes" && (
-          <Button
-            id="context-toggle"
-            className="button compact context-entry"
-            aria-label={contextOpen ? t("收起上下文") : t("显示上下文")}
-            title={t("Context 面板")}
-            aria-expanded={contextOpen}
-            aria-controls="context-panel"
-            disabled={!narrow && !repositoryLayout.ready}
-            onClick={() => {
-              if (tab !== "changes" && tab !== "commit") setTab("changes");
-              if (contextOpen) {
-                closeContext();
-                return;
-              }
-              setFocused(false);
-              if (narrow) {
-                setContextDrawer(true);
-                setFilesDrawer(false);
-              } else
-                void repositoryLayout.update({
-                  contextOpen: true,
-                });
-              requestAnimationFrame(() =>
-                document
-                  .querySelector<HTMLButtonElement>(
-                    "#context-panel .context-header button",
-                  )
-                  ?.focus(),
-              );
-            }}
-          >
-            <SidebarSimple size={17} />
-            <span>{t("证据")}</span>
-          </Button>
-        )}
-        {demo && <span className="demo-badge">{t("演示数据")}</span>}
-        {changes && (
-          <Button
-            className="icon-button"
-            disabled={busy}
-            aria-label={t("刷新 Worktree")}
-            title={t("刷新本地 Worktree")}
-            onClick={() => {
-              void refresh();
-            }}
-          >
-            <ArrowClockwise size={17} className={busy ? "spinning" : ""} />
-          </Button>
-        )}
-        <Button
-          className="observer-status"
-          onClick={() => openSettings("observer")}
-        >
-          <span className="status-dot neutral" />
-          {t("Agent Hook")}
-        </Button>
-        <Button
-          className="command-trigger"
-          title={t("命令面板")}
-          aria-label={t("打开命令面板")}
-          onClick={openCommands}
-        >
-          <MagnifyingGlass size={15} />
-          <span>{t("Command")}</span>
-          <kbd>{t("⌘ K")}</kbd>
-        </Button>
-        <Button
-          className="icon-button"
-          aria-label={t("设置")}
-          id="settings-toggle"
-          title={t("设置")}
-          onClick={() => openSettings()}
-        >
-          <GearSix size={19} />
-        </Button>
-      </header>
-      {changes && !diffWindow && gitActions.feedback}
-      {changes && !diffWindow && gitActions.dialog}
-      {changes ? (
-        <>
-          {demo && (
-            <div className="demo-notice">
-              <Info size={15} />
-              {t(
-                "当前为虚构的 demo-service 界面演示。审查标记仅用于体验，Git 写操作不可用。",
+        <div className="workspace-content">
+          {diffWindow && workspaceToolbar}
+
+          {changes && !diffWindow && gitActions.feedback}
+          {changes && !diffWindow && gitActions.dialog}
+          {changes ? (
+            <>
+              {demo && (
+                <div className="demo-notice">
+                  <Info size={15} />
+                  {t(
+                    "当前为虚构的 demo-service 界面演示。审查标记仅用于体验，Git 写操作不可用。",
+                  )}
+                  <Button
+                    onClick={() => {
+                      void chooseFolder();
+                    }}
+                  >
+                    {t("打开真实仓库")}
+                  </Button>
+                </div>
               )}
-              <Button
-                onClick={() => {
-                  void chooseFolder();
-                }}
-              >
-                {t("打开真实仓库")}
-              </Button>
-            </div>
-          )}
-          {!changes.workspace.trusted && !demo && (
-            <div className="trust-banner">
-              <ShieldCheck size={17} />
-              <span>
-                {t(
-                  "受限查看。信任此仓库后，可暂存和提交；Git Hook、签名及过滤器可能执行。",
-                )}
-              </span>
-              <Button
-                className="button compact"
-                onClick={() => setDialog("trust")}
-              >
-                {t("审阅信任设置")}
-              </Button>
-            </div>
-          )}
-          {changes.operation && (
-            <div className="trust-banner">
-              <Warning size={16} />
-              {changes.operation} {t(" 进行中。请在外部完成当前流程后刷新。")}
-            </div>
-          )}
-        </>
-      ) : null}
-      {error && (
-        <div className="error-banner" role="alert">
-          {!changes && (
-            <Button
-              className="button compact"
-              onClick={() => openSettings("diagnostics")}
-            >
-              {t("打开诊断")}
-            </Button>
-          )}
-          <Warning size={18} />
-          <div>
-            <strong>{uiMessage(error.message)}</strong>
-            <details>
-              <summary>
-                {error.code} {t(" · 查看详情")}
-              </summary>
-              <pre>{error.detail}</pre>
-            </details>
-          </div>
-          <Button
-            className="icon-button"
-            aria-label={t("关闭错误提示")}
-            onClick={() => setError(null)}
-          >
-            <X size={16} />
-          </Button>
-        </div>
-      )}
-      {changes && repositoryLayout.error && dialog !== "settings" && (
-        <div className="layout-error-banner" role="alert">
-          <Warning size={16} />
-          <span>
-            {repositoryLayout.ready
-              ? repositoryLayout.saving
-                ? t("有布局调整未保存，其余调整仍在保存。")
-                : t("有布局调整未保存，当前显示已保存的值。")
-              : t("无法读取此仓库布局。")}{" "}
-            {uiMessage(repositoryLayout.error.message)}
-          </span>
-          <Button
-            onClick={() =>
-              repositoryLayout.ready
-                ? openSettings()
-                : void repositoryLayout.retry()
-            }
-          >
-            {repositoryLayout.ready ? t("布局设置") : t("重试读取")}
-          </Button>
-        </div>
-      )}
-      {!changes ? (
-        <main className="welcome">
-          <div className="welcome-main">
-            <ProofMark large />
-            <p className="welcome-kicker">{t("Git, with context.")}</p>
-            <h1>{t("打开仓库，开始工作")}</h1>
-            <p className="welcome-description">
-              {t("查看 Diff、管理 Branch、提交代码。")}
-              <br />
-              {t("按需关联 Agent 的修改记录。")}
-            </p>
-            <Button
-              className="button primary welcome-open"
-              onClick={() => {
-                void chooseFolder();
-              }}
-              disabled={busy}
-            >
-              <FolderOpen size={19} />
-              {t("打开本地仓库")}
-            </Button>
-            <Button className="demo-link" onClick={startDemo}>
-              {t("体验演示 Worktree ")}
-              <ArrowRight size={15} />
-            </Button>
-            <div className="welcome-principles">
-              <span>
-                <Check size={14} />
-                {t("无需账号")}
-              </span>
-              <span>
-                <Check size={14} />
-                {t("本地优先")}
-              </span>
-              <span>
-                <Check size={14} />
-                {t("人工决定")}
-              </span>
-            </div>
-          </div>
-          {recent.length > 0 && (
-            <div className="recent-projects">
-              <h2>{t("最近打开")}</h2>
-              {recent.map((w) => (
-                <Button
-                  key={w.id}
-                  onClick={() => {
-                    void openWorkspace(w.path);
-                  }}
-                >
-                  <FolderOpen size={18} />
+              {!changes.workspace.trusted && !demo && (
+                <div className="trust-banner">
+                  <ShieldCheck size={17} />
                   <span>
-                    <strong>{w.name}</strong>
-                    <small>{w.path}</small>
+                    {t(
+                      "受限查看。信任此仓库后，可暂存和提交；Git Hook、签名及过滤器可能执行。",
+                    )}
                   </span>
+                  <Button
+                    className="button compact"
+                    onClick={() => setDialog("trust")}
+                  >
+                    {t("审阅信任设置")}
+                  </Button>
+                </div>
+              )}
+              {changes.operation && (
+                <div className="trust-banner">
+                  <Warning size={16} />
+                  {changes.operation}{" "}
+                  {t(" 进行中。请在外部完成当前流程后刷新。")}
+                </div>
+              )}
+            </>
+          ) : null}
+          {error && (
+            <div className="error-banner" role="alert">
+              {!changes && (
+                <Button
+                  className="button compact"
+                  onClick={() => openSettings("diagnostics")}
+                >
+                  {t("打开诊断")}
+                </Button>
+              )}
+              <Warning size={18} />
+              <div>
+                <strong>{uiMessage(error.message)}</strong>
+                <details>
+                  <summary>
+                    {error.code} {t(" · 查看详情")}
+                  </summary>
+                  <pre>{error.detail}</pre>
+                </details>
+              </div>
+              <Button
+                className="icon-button"
+                aria-label={t("关闭错误提示")}
+                onClick={() => setError(null)}
+              >
+                <X size={16} />
+              </Button>
+            </div>
+          )}
+          {changes && repositoryLayout.error && dialog !== "settings" && (
+            <div className="layout-error-banner" role="alert">
+              <Warning size={16} />
+              <span>
+                {repositoryLayout.ready
+                  ? repositoryLayout.saving
+                    ? t("有布局调整未保存，其余调整仍在保存。")
+                    : t("有布局调整未保存，当前显示已保存的值。")
+                  : t("无法读取此仓库布局。")}{" "}
+                {uiMessage(repositoryLayout.error.message)}
+              </span>
+              <Button
+                onClick={() =>
+                  repositoryLayout.ready
+                    ? openSettings()
+                    : void repositoryLayout.retry()
+                }
+              >
+                {repositoryLayout.ready ? t("布局设置") : t("重试读取")}
+              </Button>
+            </div>
+          )}
+          {!changes ? (
+            <main className="welcome">
+              <div className="welcome-main">
+                <ProofMark large />
+                <p className="welcome-kicker">{t("Git, with context.")}</p>
+                <h1>{t("打开仓库，开始工作")}</h1>
+                <p className="welcome-description">
+                  {t("查看 Diff、管理 Branch、提交代码。")}
+                  <br />
+                  {t("按需关联 Agent 的修改记录。")}
+                </p>
+                <Button
+                  className="button primary welcome-open"
+                  onClick={() => {
+                    void chooseFolder();
+                  }}
+                  disabled={busy}
+                >
+                  <FolderOpen size={19} />
+                  {t("打开本地仓库")}
+                </Button>
+                <Button className="demo-link" onClick={startDemo}>
+                  {t("体验演示 Worktree ")}
                   <ArrowRight size={15} />
                 </Button>
-              ))}
-            </div>
-          )}
-          <footer className="welcome-footer">
-            {t("Proof ")}
-            <span>{t("本地代码审查工作台")}</span>
-            <span className="version">{APP_VERSION}</span>
-          </footer>
-        </main>
-      ) : (
-        <>
-          {diffTabs
-            .filter((t) => t.workspaceId === changes.workspace.id)
-            .map((item) => (
+                <div className="welcome-principles">
+                  <span>
+                    <Check size={14} />
+                    {t("无需账号")}
+                  </span>
+                  <span>
+                    <Check size={14} />
+                    {t("本地优先")}
+                  </span>
+                  <span>
+                    <Check size={14} />
+                    {t("人工决定")}
+                  </span>
+                </div>
+              </div>
+              {recent.length > 0 && (
+                <div className="recent-projects">
+                  <h2>{t("最近打开")}</h2>
+                  {recent.map((w) => (
+                    <Button
+                      key={w.id}
+                      onClick={() => {
+                        void openWorkspace(w.path);
+                      }}
+                    >
+                      <FolderOpen size={18} />
+                      <span>
+                        <strong>{w.name}</strong>
+                        <small>{w.path}</small>
+                      </span>
+                      <ArrowRight size={15} />
+                    </Button>
+                  ))}
+                </div>
+              )}
+              <footer className="welcome-footer">
+                {t("Proof ")}
+                <span>{t("本地代码审查工作台")}</span>
+                <span className="version">{APP_VERSION}</span>
+              </footer>
+            </main>
+          ) : (
+            <>
+              {diffTabs
+                .filter((t) => t.workspaceId === changes.workspace.id)
+                .map((item) => (
+                  <Tabs.Panel
+                    keepMounted
+                    hidden={tab !== item.id}
+                    value={item.id}
+                    key={item.id}
+                    className="workspace-page diff-tab-page"
+                  >
+                    <Suspense
+                      fallback={
+                        <WorkspacePending label={t("正在载入比较视图…")} />
+                      }
+                    >
+                      <HistoryDiff
+                        panelLayout={repositoryLayout}
+                        onOpenWindow={
+                          demo || diffWindow
+                            ? undefined
+                            : (selection) => {
+                                void request("open_diff_window", {
+                                  selection: {
+                                    kind: "comparison",
+                                    workspaceId: changes.workspace.id,
+                                    ...selection,
+                                  },
+                                }).catch((e) => setError(asError(e)));
+                              }
+                        }
+                        onAgentSettings={() => openSettings("agents")}
+                        active={active && tab === item.id}
+                        onPendingChange={(pending) =>
+                          trackChildAi(item.id, pending)
+                        }
+                        changes={changes}
+                        demo={demo}
+                        preferences={preferences}
+                        onPreferences={(value) => void updatePreferences(value)}
+                        selection={item.selection}
+                        toolbar={
+                          diffWindow ? undefined : (
+                            <>
+                              {!item.selection.base &&
+                                (item.selection.parents?.length ?? 0) > 1 && (
+                                  <Select
+                                    aria-label={t("Diff 比较父提交")}
+                                    value={item.selection.parent ?? 0}
+                                    onChange={(e) =>
+                                      setDiffTabs((tabs) =>
+                                        tabs.map((t) =>
+                                          t.id === item.id
+                                            ? {
+                                                ...t,
+                                                selection: {
+                                                  ...t.selection,
+                                                  parent: Number(
+                                                    e.target.value,
+                                                  ),
+                                                },
+                                              }
+                                            : t,
+                                        ),
+                                      )
+                                    }
+                                  >
+                                    {item.selection.parents!.map(
+                                      (oid, index) => (
+                                        <option key={oid} value={index}>
+                                          {t("Parent ")}
+                                          {index + 1} · {oid.slice(0, 8)}
+                                        </option>
+                                      ),
+                                    )}
+                                  </Select>
+                                )}
+                              <Button
+                                className="button compact"
+                                onClick={() => {
+                                  setTab("repository");
+                                  setRepositorySection("history");
+                                }}
+                              >
+                                {t("返回 History")}
+                              </Button>
+                            </>
+                          )
+                        }
+                      />
+                    </Suspense>
+                  </Tabs.Panel>
+                ))}
               <Tabs.Panel
                 keepMounted
-                hidden={tab !== item.id}
-                value={item.id}
-                key={item.id}
-                className="workspace-page diff-tab-page"
+                hidden={tab !== "repository"}
+                value="history"
+                className="workspace-page history-page"
               >
-                <Suspense
-                  fallback={<WorkspacePending label={t("正在载入比较视图…")} />}
-                >
-                  <HistoryDiff
-                    panelLayout={repositoryLayout}
-                    onOpenWindow={
-                      demo || diffWindow
-                        ? undefined
-                        : (selection) => {
-                            void request("open_diff_window", {
-                              selection: {
-                                kind: "comparison",
-                                workspaceId: changes.workspace.id,
-                                ...selection,
-                              },
-                            }).catch((e) => setError(asError(e)));
-                          }
+                {(repositoryVisited || tab === "repository") && (
+                  <Suspense
+                    fallback={
+                      <WorkspacePending label={t("正在载入历史工作区…")} />
                     }
-                    onAgentSettings={() => openSettings("agents")}
-                    active={tab === item.id}
-                    changes={changes}
-                    demo={demo}
-                    preferences={preferences}
-                    onPreferences={(value) => void updatePreferences(value)}
-                    selection={item.selection}
-                    toolbar={
-                      <>
-                        {!item.selection.base &&
-                          (item.selection.parents?.length ?? 0) > 1 && (
-                            <Select
-                              aria-label={t("Diff 比较父提交")}
-                              value={item.selection.parent ?? 0}
-                              onChange={(e) =>
-                                setDiffTabs((tabs) =>
-                                  tabs.map((t) =>
-                                    t.id === item.id
-                                      ? {
-                                          ...t,
-                                          selection: {
-                                            ...t.selection,
-                                            parent: Number(e.target.value),
-                                          },
-                                        }
-                                      : t,
-                                  ),
-                                )
-                              }
-                            >
-                              {item.selection.parents!.map((oid, index) => (
-                                <option key={oid} value={index}>
-                                  {t("Parent ")}
-                                  {index + 1} · {oid.slice(0, 8)}
-                                </option>
-                              ))}
-                            </Select>
-                          )}
-                        <Button
-                          className="button compact"
-                          onClick={() => {
-                            setTab("repository");
-                            setRepositorySection("history");
-                          }}
-                        >
-                          {t("返回 History")}
-                        </Button>
-                      </>
-                    }
-                  />
-                </Suspense>
-              </Tabs.Panel>
-            ))}
-          <Tabs.Panel
-            keepMounted
-            hidden={tab !== "repository"}
-            value="history"
-            className="workspace-page history-page"
-          >
-            {(repositoryVisited || tab === "repository") && (
-              <Suspense
-                fallback={<WorkspacePending label={t("正在载入历史工作区…")} />}
-              >
-                <RepositoryView
-                  active={tab === "repository"}
-                  actions={gitActions}
-                  key={changes.workspace.id}
-                  onOpenDiff={openHistoryDiff}
-                  section={repositorySection}
-                  onSection={setRepositorySection}
-                  changes={changes}
-                  demo={demo}
-                  onOpen={openWorkspace}
-                  onError={(e) => {
-                    if (current.current?.workspace.id === changes.workspace.id)
-                      setError(asError(e));
-                  }}
-                  branchDelimiter={preferences.branchDelimiter}
-                />
-              </Suspense>
-            )}
-          </Tabs.Panel>
-          <Tabs.Panel
-            keepMounted
-            hidden={tab !== "files"}
-            value="files"
-            className="workspace-page files-page"
-          >
-            {(filesVisited || tab === "files") && (
-              <Suspense
-                fallback={<WorkspacePending label={t("正在载入文件工作区…")} />}
-              >
-                <EditorView
-                  key={changes.workspace.id}
-                  workspaceId={changes.workspace.id}
-                  fontSize={preferences.fontSize}
-                  trusted={changes.workspace.trusted}
-                  active={tab === "files"}
-                  changedFiles={changes.files}
-                  onChanged={() => void refresh()}
-                />
-              </Suspense>
-            )}
-          </Tabs.Panel>
-          <Tabs.Panel
-            keepMounted
-            hidden={tab !== "changes" && tab !== "commit"}
-            value={tab === "commit" ? "commit" : "changes"}
-            className={`workspace-page ${tab === "commit" ? "commit-page" : "changes-page"}`}
-          >
-            <ResizableWorkbench
-              layout={repositoryLayout.value}
-              scopeKey={repositoryLayout.scopeKey}
-              enabled={repositoryLayout.ready}
-              active={
-                (tab === "changes" || tab === "commit") && dialog === null
-              }
-              sidebarVisible={
-                tab === "commit" ? !focused : sidebarVisible && !compact
-              }
-              sidebarId={tab === "commit" ? "commit-files-pane" : "files-panel"}
-              gutterSize={12}
-              contextDocked={tab !== "commit" && contextOpen && !narrow}
-              onChange={(partial) => {
-                void repositoryLayout.update(partial);
-              }}
-              onCollapse={(side) => {
-                if (tab === "commit" && side === "sidebarWidth")
-                  setFocused(true);
-                else if (side === "sidebarWidth") closeFiles();
-                else closeContext();
-              }}
-              sidebar={
-                <>
-                  <div className="local-files-pane" hidden={tab === "commit"}>
-                    <DiffFilePane
-                      ai={ai}
-                      token={changes.token}
-                      scopeKey={changes.workspace.id}
-                      containerProps={{
-                        id: "files-panel",
-                        "aria-label": t("变化文件"),
-                        hidden: !sidebarVisible,
-                        className: compact ? "files-drawer" : "",
-                        onBlurCapture: (event) => {
-                          if (compact && shouldDismissDrawer(event))
-                            setFilesDrawer(false);
-                        },
-                      }}
-                      onClose={closeFiles}
-                      closeDisabled={!compact && !repositoryLayout.ready}
-                      disabled={
-                        busy ||
-                        demo ||
-                        !changes.workspace.trusted ||
-                        !!changes.operation
-                      }
-                      onStage={(files, side) => void stageFiles(files, side)}
-                      onDiscard={(files) => void prepareDiscardFiles(files)}
-                      onRecovery={() => setDialog("recovery")}
-                      reviewProgress={coverage}
-                      onNextReview={nextReview ? openNextReview : undefined}
-                      reviewLoading={busy || loadingDiff}
-                      workspacePath={changes.workspace.path}
-                      files={changes.files}
-                      selected={selected}
-                      onSelect={(file) => {
-                        void loadFile(file);
-                        if (compact) {
-                          setFilesDrawer(false);
-                          requestAnimationFrame(() =>
-                            document
-                              .querySelector<HTMLElement>(
-                                ".workspace-page:not([hidden]) .diff-scroll",
-                              )
-                              ?.focus(),
-                          );
-                        }
-                      }}
-                      search={search}
-                      onSearch={setSearch}
-                      loaded={loaded}
-                      scope={scope}
-                      onScope={setScope}
-                    />
-                  </div>
-                  <div
-                    id="commit-files-pane"
-                    className="commit-files-pane"
-                    hidden={tab !== "commit" || focused}
                   >
-                    {(commitVisited || tab === "commit") && (
-                      <CommitWorkspace
-                        key={changes.workspace.id}
-                        changes={changes}
-                        loaded={loaded}
-                        disabled={
-                          busy ||
-                          demo ||
-                          !changes.workspace.trusted ||
-                          !!changes.operation
-                        }
-                        onStage={(files, side) => void stageFiles(files, side)}
-                        onDiscard={(files) => void prepareDiscardFiles(files)}
-                        onRecovery={() => setDialog("recovery")}
-                        selected={selected}
-                        onSelect={(file) => void loadFile(file)}
-                        scope={commitScope}
-                        onScope={setCommitScope}
-                        search={commitSearch}
-                        onSearch={setCommitSearch}
+                    <RepositoryView
+                      active={active && tab === "repository"}
+                      actions={gitActions}
+                      key={changes.workspace.id}
+                      onOpenDiff={openHistoryDiff}
+                      section={repositorySection}
+                      onSection={setRepositorySection}
+                      changes={changes}
+                      demo={demo}
+                      onOpen={openWorkspace}
+                      onError={(e) => {
+                        if (
+                          current.current?.workspace.id === changes.workspace.id
+                        )
+                          setError(asError(e));
+                      }}
+                      branchDelimiter={preferences.branchDelimiter}
+                    />
+                  </Suspense>
+                )}
+              </Tabs.Panel>
+              <Tabs.Panel
+                keepMounted
+                hidden={tab !== "files"}
+                value="files"
+                className="workspace-page files-page"
+              >
+                {(filesVisited || tab === "files") && (
+                  <Suspense
+                    fallback={
+                      <WorkspacePending label={t("正在载入文件工作区…")} />
+                    }
+                  >
+                    <EditorView
+                      key={changes.workspace.id}
+                      workspaceId={changes.workspace.id}
+                      fontSize={preferences.fontSize}
+                      trusted={changes.workspace.trusted}
+                      active={active && tab === "files"}
+                      onDirtyChange={setEditorDirty}
+                      onSavingChange={setEditorSaving}
+                      changedFiles={changes.files}
+                      onChanged={() => void refresh()}
+                    />
+                  </Suspense>
+                )}
+              </Tabs.Panel>
+              <Tabs.Panel
+                keepMounted
+                hidden={tab !== "changes" && tab !== "commit"}
+                value={tab === "commit" ? "commit" : "changes"}
+                className={`workspace-page ${tab === "commit" ? "commit-page" : "changes-page"}`}
+              >
+                <ResizableWorkbench
+                  layout={repositoryLayout.value}
+                  scopeKey={repositoryLayout.scopeKey}
+                  enabled={repositoryLayout.ready}
+                  active={
+                    active &&
+                    (tab === "changes" || tab === "commit") &&
+                    dialog === null
+                  }
+                  sidebarVisible={
+                    tab === "commit" ? !focused : sidebarVisible && !compact
+                  }
+                  sidebarId={
+                    tab === "commit" ? "commit-files-pane" : "files-panel"
+                  }
+                  gutterSize={12}
+                  contextDocked={tab !== "commit" && contextOpen && !narrow}
+                  onChange={(partial) => {
+                    void repositoryLayout.update(partial);
+                  }}
+                  onCollapse={(side) => {
+                    if (tab === "commit" && side === "sidebarWidth")
+                      setFocused(true);
+                    else if (side === "sidebarWidth") closeFiles();
+                    else closeContext();
+                  }}
+                  sidebar={
+                    <>
+                      <div
+                        className="local-files-pane"
+                        hidden={tab === "commit"}
                       >
-                        <CommitComposer
-                          changes={changes}
+                        <DiffFilePane
                           ai={ai}
-                          onAgentSettings={() => openSettings("agents")}
-                          message={draft}
-                          onMessage={editDraft}
-                          amend={!!amendTarget}
-                          onAmend={(value) => void toggleAmend(value)}
-                          head={changes.head}
-                          branch={changes.branch}
-                          staged={stagedCount}
-                          unstaged={
-                            changes.files.filter(
-                              (file) => file.side === "unstaged",
-                            ).length
-                          }
-                          busy={busy}
+                          token={changes.token}
+                          scopeKey={changes.workspace.id}
+                          containerProps={{
+                            id: "files-panel",
+                            "aria-label": t("变化文件"),
+                            hidden: !sidebarVisible,
+                            className: compact ? "files-drawer" : "",
+                            onBlurCapture: (event) => {
+                              if (compact && shouldDismissDrawer(event))
+                                setFilesDrawer(false);
+                            },
+                          }}
+                          onClose={closeFiles}
+                          closeDisabled={!compact && !repositoryLayout.ready}
                           disabled={
+                            busy ||
                             demo ||
                             !changes.workspace.trusted ||
                             !!changes.operation
                           }
-                          demo={demo}
-                          strictReview={preferences.strictReview}
-                          onReviewSettings={() => openSettings("review")}
-                          onCommit={(all) => void quickCommit(all)}
+                          onStage={(files, side) =>
+                            void stageFiles(files, side)
+                          }
+                          onDiscard={(files) => void prepareDiscardFiles(files)}
+                          onRecovery={() => setDialog("recovery")}
+                          reviewProgress={coverage}
+                          onNextReview={nextReview ? openNextReview : undefined}
+                          reviewLoading={busy || loadingDiff}
+                          workspacePath={changes.workspace.path}
+                          files={changes.files}
+                          selected={selected}
+                          onSelect={(file) => {
+                            setFindingTarget(null);
+                            void loadFile(file);
+                            if (compact) {
+                              setFilesDrawer(false);
+                              requestAnimationFrame(() =>
+                                appRoot.current
+                                  ?.querySelector<HTMLElement>(
+                                    ".workspace-page:not([hidden]) .diff-scroll",
+                                  )
+                                  ?.focus(),
+                              );
+                            }
+                          }}
+                          search={search}
+                          onSearch={setSearch}
+                          loaded={loaded}
+                          scope={scope}
+                          onScope={setScope}
                         />
-                      </CommitWorkspace>
-                    )}
-                  </div>
-                </>
-              }
-              context={
-                tab !== "commit" &&
-                contextOpen && (
-                  <ContextInspector
-                    active={tab === "changes" && contextOpen}
-                    activeTab={inspectorTab}
-                    onTab={setInspectorTab}
-                    aiPanel={
-                      <AiReviewPanel
-                        onSettings={() => openSettings("agents")}
-                        ai={ai}
-                        hasDiff={!!diff}
+                      </div>
+                      <div
+                        id="commit-files-pane"
+                        className="commit-files-pane"
+                        hidden={tab !== "commit" || focused}
+                      >
+                        {(commitVisited || tab === "commit") && (
+                          <CommitWorkspace
+                            key={changes.workspace.id}
+                            changes={changes}
+                            loaded={loaded}
+                            disabled={
+                              busy ||
+                              demo ||
+                              !changes.workspace.trusted ||
+                              !!changes.operation
+                            }
+                            onStage={(files, side) =>
+                              void stageFiles(files, side)
+                            }
+                            onDiscard={(files) =>
+                              void prepareDiscardFiles(files)
+                            }
+                            onRecovery={() => setDialog("recovery")}
+                            selected={selected}
+                            onSelect={(file) => {
+                              setFindingTarget(null);
+                              void loadFile(file);
+                            }}
+                            scope={commitScope}
+                            onScope={setCommitScope}
+                            search={commitSearch}
+                            onSearch={setCommitSearch}
+                          >
+                            <CommitComposer
+                              active={active && tab === "commit"}
+                              onPendingChange={(pending) =>
+                                trackChildAi("commit", pending)
+                              }
+                              changes={changes}
+                              ai={ai}
+                              onAgentSettings={() => openSettings("agents")}
+                              message={draft}
+                              onMessage={editDraft}
+                              amend={!!amendTarget}
+                              onAmend={(value) => void toggleAmend(value)}
+                              head={changes.head}
+                              branch={changes.branch}
+                              staged={stagedCount}
+                              unstaged={
+                                changes.files.filter(
+                                  (file) => file.side === "unstaged",
+                                ).length
+                              }
+                              busy={busy}
+                              disabled={
+                                demo ||
+                                !changes.workspace.trusted ||
+                                !!changes.operation
+                              }
+                              demo={demo}
+                              strictReview={preferences.strictReview}
+                              onReviewSettings={() => openSettings("review")}
+                              onCommit={(all) => void quickCommit(all)}
+                            />
+                          </CommitWorkspace>
+                        )}
+                      </div>
+                    </>
+                  }
+                  context={
+                    tab !== "commit" &&
+                    contextOpen && (
+                      <ContextInspector
+                        active={active && tab === "changes" && contextOpen}
+                        activeTab={inspectorTab}
+                        onTab={setInspectorTab}
+                        aiPanel={
+                          <AiReviewPanel
+                            onSettings={() => openSettings("agents")}
+                            ai={ai}
+                            hasDiff={!!diff}
+                            demo={demo}
+                            onFinding={(finding, index, contextId) => {
+                              if (!demo) {
+                                const reportId = contextId
+                                  ? undefined
+                                  : ai.report?.id;
+                                if (!contextId && !reportId) return;
+                                setFindingTarget({
+                                  target: {
+                                    workspaceId: changes.workspace.id,
+                                    ...(contextId
+                                      ? { contextId }
+                                      : { reportId }),
+                                    findingIndex: index,
+                                  },
+                                  finding,
+                                });
+                                setFocused(false);
+                                if (narrow) closeContext();
+                                return;
+                              }
+                              const captured = ai.report?.files.find(
+                                (f) =>
+                                  f.path === finding.file &&
+                                  f.side === finding.side,
+                              );
+                              const file = changes.files.find(
+                                (f) =>
+                                  f.path === finding.file &&
+                                  f.side === finding.side,
+                              );
+                              if (!captured || !file || ai.stale) return;
+                              setAiJump({
+                                id: crypto.randomUUID(),
+                                snapshotToken: captured.snapshotToken,
+                                path: captured.path,
+                                fileSide: captured.side,
+                                line: finding.line,
+                                endLine: finding.endLine,
+                                side: finding.lineSide,
+                              });
+                              void loadFile(file);
+                            }}
+                          />
+                        }
+                        diff={diff}
                         demo={demo}
-                        onFinding={(finding) => {
-                          const captured = ai.report?.files.find(
-                            (f) =>
-                              f.path === finding.file &&
-                              f.side === finding.side,
-                          );
+                        drawer={narrow}
+                        closeDisabled={!narrow && !repositoryLayout.ready}
+                        onClose={closeContext}
+                        onLeave={() => setContextDrawer(false)}
+                        onSettings={() => openSettings("observer")}
+                        onError={(error) => setError(asError(error))}
+                      />
+                    )
+                  }
+                >
+                  <div className="center-panel">
+                    {findingTarget ? (
+                      <FindingLocationPane
+                        key={`${findingTarget.target.reportId ?? findingTarget.target.contextId}:${findingTarget.target.findingIndex}`}
+                        target={findingTarget.target}
+                        finding={findingTarget.finding}
+                        fontSize={preferences.fontSize}
+                        refreshToken={changes.token}
+                        active={
+                          active && (tab === "changes" || tab === "commit")
+                        }
+                        onClose={() => setFindingTarget(null)}
+                      />
+                    ) : summary ? (
+                      <DeferredDiff
+                        summary={summary}
+                        pending={busy || loadingDiff}
+                        onLoad={() => {
                           const file = changes.files.find(
-                            (f) =>
-                              f.path === finding.file &&
-                              f.side === finding.side,
+                            (file) => fileKey(file) === fileKey(summary),
                           );
-                          if (!captured || !file || ai.stale) return;
-                          setAiJump({
-                            id: crypto.randomUUID(),
-                            snapshotToken: captured.snapshotToken,
-                            path: captured.path,
-                            fileSide: captured.side,
-                            line: finding.line,
-                            endLine: finding.endLine,
-                            side: finding.lineSide,
-                          });
-                          void loadFile(file);
+                          if (file)
+                            void loadFile(file, changes.workspace, true, true);
+                        }}
+                        onStage={
+                          !demo &&
+                          changes.workspace.trusted &&
+                          !changes.operation &&
+                          summary.reason !== "file_limit" &&
+                          changes.files.some(
+                            (file) =>
+                              fileKey(file) === fileKey(summary) &&
+                              !file.conflicted,
+                          )
+                            ? () => {
+                                const file = changes.files.find(
+                                  (file) => fileKey(file) === fileKey(summary),
+                                );
+                                if (file && !file.conflicted)
+                                  void stageFiles([file], file.side);
+                              }
+                            : undefined
+                        }
+                      />
+                    ) : diff ? (
+                      <DiffView
+                        key={`${lastLocalView.current}:${diff.workspaceId}:${diff.path}:${diff.side}`}
+                        positionRef={localReadingPosition(diff)}
+                        onOpenWindow={
+                          demo || diffWindow
+                            ? undefined
+                            : () => {
+                                void request("open_diff_window", {
+                                  selection: {
+                                    kind: "local",
+                                    workspaceId: diff.workspaceId,
+                                    path: diff.path,
+                                    side: diff.side,
+                                  },
+                                }).catch((error) => setError(asError(error)));
+                              }
+                        }
+                        jumpTo={aiJump}
+                        ai={ai}
+                        diff={diff}
+                        preferences={preferences}
+                        onEditor={() => void openEditor()}
+                        openingEditor={openingEditor}
+                        pending={busy || loadingDiff}
+                        onMark={(h, r) => {
+                          void mark(h, r);
+                        }}
+                        onNextReview={
+                          tab === "changes" && nextReview
+                            ? openNextReview
+                            : undefined
+                        }
+                        onStage={(h) => {
+                          void stage(h);
+                        }}
+                        onDiscard={(h) => {
+                          void prepareDiscard(h);
+                        }}
+                        onHistory={
+                          demo ? undefined : () => setDialog("file-history")
+                        }
+                        onPreferences={(p) => {
+                          void updatePreferences(p);
+                        }}
+                        onLoadContext={async (contextLines) => {
+                          const epoch = workspaceEpoch.current;
+                          try {
+                            return demo
+                              ? demoDiffContext(diff, contextLines)
+                              : await contextReader.read<DiffContext>(
+                                  "diff_context",
+                                  {
+                                    snapshotId: diff.id,
+                                    ...(contextLines === "file"
+                                      ? { fullFile: true }
+                                      : { contextLines }),
+                                  },
+                                );
+                          } catch (error) {
+                            if (
+                              ["STALE_CONTENT", "SNAPSHOT_EXPIRED"].includes(
+                                asError(error).code,
+                              )
+                            )
+                              await snapshotError(error, diff, epoch);
+                            throw error;
+                          }
+                        }}
+                        onCancelContext={contextReader.cancel}
+                        onFocus={() => setFocused((f) => !f)}
+                        focused={focused}
+                      />
+                    ) : loadingDiff ? null : (
+                      <div className="empty-diff">
+                        <div className="empty-symbol">
+                          <Check size={30} />
+                        </div>
+                        <h2>
+                          {changes.files.length
+                            ? t("选择文件查看 Diff")
+                            : t("当前没有代码变化")}
+                        </h2>
+                        <p>
+                          {changes.files.length
+                            ? t("选择左侧文件查看 Diff。")
+                            : t("Worktree clean")}
+                        </p>
+                        {!changes.files.length && (
+                          <Button
+                            className="button"
+                            onClick={() => showRepository("history")}
+                          >
+                            {t("查看提交历史")}
+                          </Button>
+                        )}
+                      </div>
+                    )}
+                    {loadingDiff && !syncing && (
+                      <DiffLoading
+                        updating={!!diff || !!summary}
+                        path={
+                          changes.files.find(
+                            (file) => fileKey(file) === selected,
+                          )?.path
+                        }
+                        onCancel={() => {
+                          const file = changes.files.find(
+                            (file) => fileKey(file) === selectedRef.current,
+                          );
+                          if (file)
+                            cancelledRead.current = `${fileKey(file)}:${cache.current.version(changes, file)}`;
+                          ++sequence.current;
+                          fileReader.cancel();
+                          cache.current.cancelPending();
+                          setLoadingDiff(false);
+                          setNotification(
+                            t("读取已取消，选择文件可重新读取。"),
+                          );
                         }}
                       />
-                    }
-                    diff={diff}
-                    demo={demo}
-                    drawer={narrow}
-                    closeDisabled={!narrow && !repositoryLayout.ready}
-                    onClose={closeContext}
-                    onLeave={() => setContextDrawer(false)}
-                    onSettings={() => openSettings("observer")}
-                    onError={(error) => setError(asError(error))}
-                  />
-                )
-              }
-            >
-              <div className="center-panel">
-                {summary ? (
-                  <DeferredDiff
-                    summary={summary}
-                    pending={busy || loadingDiff}
-                    onLoad={() => {
-                      const file = changes.files.find(
-                        (file) => fileKey(file) === fileKey(summary),
-                      );
-                      if (file)
-                        void loadFile(file, changes.workspace, true, true);
-                    }}
-                    onStage={
-                      !demo &&
-                      changes.workspace.trusted &&
-                      !changes.operation &&
-                      summary.reason !== "file_limit" &&
-                      changes.files.some(
-                        (file) =>
-                          fileKey(file) === fileKey(summary) &&
-                          !file.conflicted,
-                      )
-                        ? () => {
-                            const file = changes.files.find(
-                              (file) => fileKey(file) === fileKey(summary),
-                            );
-                            if (file && !file.conflicted)
-                              void stageFiles([file], file.side);
-                          }
-                        : undefined
-                    }
-                  />
-                ) : diff ? (
-                  <DiffView
-                    key={`${lastLocalView.current}:${diff.workspaceId}:${diff.path}:${diff.side}`}
-                    positionRef={localReadingPosition(diff)}
-                    onOpenWindow={
-                      demo || diffWindow
-                        ? undefined
-                        : () => {
-                            void request("open_diff_window", {
-                              selection: {
-                                kind: "local",
-                                workspaceId: diff.workspaceId,
-                                path: diff.path,
-                                side: diff.side,
-                              },
-                            }).catch((error) => setError(asError(error)));
-                          }
-                    }
-                    jumpTo={aiJump}
-                    ai={ai}
-                    diff={diff}
-                    preferences={preferences}
-                    onEditor={() => void openEditor()}
-                    openingEditor={openingEditor}
-                    pending={busy || loadingDiff}
-                    onMark={(h, r) => {
-                      void mark(h, r);
-                    }}
-                    onNextReview={
-                      tab === "changes" && nextReview
-                        ? openNextReview
-                        : undefined
-                    }
-                    onStage={(h) => {
-                      void stage(h);
-                    }}
-                    onDiscard={(h) => {
-                      void prepareDiscard(h);
-                    }}
-                    onHistory={
-                      demo ? undefined : () => setDialog("file-history")
-                    }
-                    onPreferences={(p) => {
-                      void updatePreferences(p);
-                    }}
-                    onLoadContext={async (contextLines) => {
-                      const epoch = workspaceEpoch.current;
-                      try {
-                        return demo
-                          ? demoDiffContext(diff, contextLines)
-                          : await contextReader.read<DiffContext>(
-                              "diff_context",
-                              {
-                                snapshotId: diff.id,
-                                ...(contextLines === "file"
-                                  ? { fullFile: true }
-                                  : { contextLines }),
-                              },
-                            );
-                      } catch (error) {
-                        if (
-                          ["STALE_CONTENT", "SNAPSHOT_EXPIRED"].includes(
-                            asError(error).code,
-                          )
-                        )
-                          await snapshotError(error, diff, epoch);
-                        throw error;
-                      }
-                    }}
-                    onCancelContext={contextReader.cancel}
-                    onFocus={() => setFocused((f) => !f)}
-                    focused={focused}
-                  />
-                ) : loadingDiff ? null : (
-                  <div className="empty-diff">
-                    <div className="empty-symbol">
-                      <Check size={30} />
-                    </div>
-                    <h2>
-                      {changes.files.length
-                        ? t("选择文件查看 Diff")
-                        : t("当前没有代码变化")}
-                    </h2>
-                    <p>
-                      {changes.files.length
-                        ? t("选择左侧文件查看 Diff。")
-                        : t("Worktree clean")}
-                    </p>
-                    {!changes.files.length && (
-                      <Button
-                        className="button"
-                        onClick={() => showRepository("history")}
-                      >
-                        {t("查看提交历史")}
-                      </Button>
                     )}
                   </div>
+                </ResizableWorkbench>
+              </Tabs.Panel>
+            </>
+          )}
+          {/* 终端抽屉位于全局状态栏之上、贴窗口底部；所有标签页共用同一会话。 */}
+          {changes && isDesktop && (
+            <TerminalDrawer
+              key={changes.workspace.id}
+              open={active && terminalOpen}
+              workspacePath={changes.workspace.path}
+              onClose={() => setTerminalOpen(false)}
+            />
+          )}
+          {active && dialog === "file-history" && diff && (
+            <FileHistory
+              key={`${diff.workspaceId}:${diff.path}`}
+              workspaceId={diff.workspaceId}
+              path={diff.path}
+              onClose={() => setDialog(null)}
+            />
+          )}
+          {active && dialog === "recovery" && changes && (
+            <RecoveryDialog
+              key={changes.workspace.id}
+              workspaceId={changes.workspace.id}
+              onClose={() => setDialog(null)}
+              onChanged={() => {
+                void refresh();
+              }}
+            />
+          )}
+          {active && dialog === "discard" && discardPoint && (
+            <Modal
+              title={t("确认丢弃未暂存变化")}
+              error={error}
+              onClose={() => void cancelDiscard()}
+            >
+              <div className="discard-scope">
+                {discardPoints.length > 1 && (
+                  <strong>
+                    {t("{v0} 个文件", { v0: discardPoints.length })}
+                  </strong>
                 )}
-                {loadingDiff && !syncing && (
-                  <DiffLoading
-                    updating={!!diff || !!summary}
-                    path={
-                      changes.files.find((file) => fileKey(file) === selected)
-                        ?.path
-                    }
-                    onCancel={() => {
-                      const file = changes.files.find(
-                        (file) => fileKey(file) === selectedRef.current,
-                      );
-                      if (file)
-                        cancelledRead.current = `${fileKey(file)}:${cache.current.version(changes, file)}`;
-                      ++sequence.current;
-                      fileReader.cancel();
-                      cache.current.cancelPending();
-                      setLoadingDiff(false);
-                      setNotification(t("读取已取消，选择文件可重新读取。"));
-                    }}
-                  />
-                )}
+                <ul>
+                  {discardPoints.map((point) => (
+                    <li key={point.id}>
+                      <strong>{point.path}</strong>
+                      <small>{point.scope}</small>
+                    </li>
+                  ))}
+                </ul>
               </div>
-            </ResizableWorkbench>
-          </Tabs.Panel>
-        </>
-      )}
-      {/* 终端抽屉位于全局状态栏之上、贴窗口底部；所有标签页共用同一会话。 */}
-      {changes && isDesktop && (
-        <TerminalDrawer
-          key={changes.workspace.id}
-          open={terminalOpen}
-          workspacePath={changes.workspace.path}
-          onClose={() => setTerminalOpen(false)}
-        />
-      )}
-      {dialog === "file-history" && diff && (
-        <FileHistory
-          key={`${diff.workspaceId}:${diff.path}`}
-          workspaceId={diff.workspaceId}
-          path={diff.path}
-          onClose={() => setDialog(null)}
-        />
-      )}
-      {dialog === "recovery" && changes && (
-        <RecoveryDialog
-          key={changes.workspace.id}
-          workspaceId={changes.workspace.id}
-          onClose={() => setDialog(null)}
-          onChanged={() => {
-            void refresh();
-          }}
-        />
-      )}
-      {dialog === "discard" && discardPoint && (
-        <Modal
-          title={t("确认丢弃未暂存变化")}
-          error={error}
-          onClose={() => void cancelDiscard()}
-        >
-          <div className="discard-scope">
-            {discardPoints.length > 1 && (
-              <strong>{t("{v0} 个文件", { v0: discardPoints.length })}</strong>
-            )}
-            <ul>
-              {discardPoints.map((point) => (
-                <li key={point.id}>
-                  <strong>{point.path}</strong>
-                  <small>{point.scope}</small>
-                </li>
-              ))}
-            </ul>
-          </div>
-          <p>
-            {t(
-              "恢复点已经保存。已跟踪文件会还原到 Index 版本，untracked 文件会移出 Worktree；均可从恢复点撤销。",
-            )}
-          </p>
-          <p className="inline-help">
-            {t("恢复内容保留至 ")}
-            {new Date(discardPoint.expiresAt).toLocaleString(getLanguage())}
-            {t(
-              "，总计上限 256 MiB。撤销时若文件已有新改动，Proof 会停止恢复并保留副本。",
-            )}
-          </p>
-          <div className="modal-actions">
-            <Button
-              className="button"
-              disabled={busy}
-              onClick={() => void cancelDiscard()}
-            >
-              {t("取消")}
-            </Button>
-            <Button
-              className="button danger"
-              disabled={busy}
-              onClick={() => void confirmDiscard()}
-            >
-              {busy ? t("正在核对…") : t("确认丢弃所选变化")}
-            </Button>
-          </div>
-        </Modal>
-      )}
-      {dialog === "open" && (
-        <Modal
-          title={t("打开仓库")}
-          error={error}
-          onClose={() => setDialog(null)}
-        >
-          <p className="modal-intro">
-            {t("选择已有 Git 仓库，或输入仓库内的目录路径。")}
-          </p>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              void openWorkspace(path);
-            }}
-          >
-            <label className="field-label" htmlFor="repository-path">
-              {t("本地目录")}
-            </label>
-            <div className="path-input">
-              <Input
-                id="repository-path"
-                autoFocus
-                value={path}
-                onChange={(e) => setPath(e.target.value)}
-                placeholder={t("/Users/you/code/project")}
-              />
-              <Button
-                type="button"
-                className="button"
-                onClick={() => {
-                  void chooseFolder();
-                }}
-                disabled={!isDesktop}
-              >
-                <FolderOpen size={16} />
-                {t("选择")}
-              </Button>
-            </div>
-            <div className="dialog-recent">
-              {recent.map((w) => (
+              <p>
+                {t(
+                  "恢复点已经保存。已跟踪文件会还原到 Index 版本，untracked 文件会移出 Worktree；均可从恢复点撤销。",
+                )}
+              </p>
+              <p className="inline-help">
+                {t("恢复内容保留至 ")}
+                {new Date(discardPoint.expiresAt).toLocaleString(getLanguage())}
+                {t(
+                  "，总计上限 256 MiB。撤销时若文件已有新改动，Proof 会停止恢复并保留副本。",
+                )}
+              </p>
+              <div className="modal-actions">
                 <Button
-                  type="button"
-                  key={w.id}
+                  className="button"
+                  disabled={busy}
+                  onClick={() => void cancelDiscard()}
+                >
+                  {t("取消")}
+                </Button>
+                <Button
+                  className="button danger"
+                  disabled={busy}
+                  onClick={() => void confirmDiscard()}
+                >
+                  {busy ? t("正在核对…") : t("确认丢弃所选变化")}
+                </Button>
+              </div>
+            </Modal>
+          )}
+          {active && dialog === "open" && (
+            <Modal
+              title={t("打开仓库")}
+              error={error}
+              onClose={() => setDialog(null)}
+            >
+              <p className="modal-intro">
+                {t("选择已有 Git 仓库，或输入仓库内的目录路径。")}
+              </p>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void openWorkspace(path);
+                }}
+              >
+                <label className="field-label" htmlFor="repository-path">
+                  {t("本地目录")}
+                </label>
+                <div className="path-input">
+                  <Input
+                    id="repository-path"
+                    autoFocus
+                    value={path}
+                    onChange={(e) => setPath(e.target.value)}
+                    placeholder={t("/Users/you/code/project")}
+                  />
+                  <Button
+                    type="button"
+                    className="button"
+                    onClick={() => {
+                      void chooseFolder();
+                    }}
+                    disabled={!isDesktop}
+                  >
+                    <FolderOpen size={16} />
+                    {t("选择")}
+                  </Button>
+                </div>
+                <div className="dialog-recent">
+                  {recent.map((w) => (
+                    <Button
+                      type="button"
+                      key={w.id}
+                      onClick={() => {
+                        void openWorkspace(w.path);
+                      }}
+                    >
+                      <FolderOpen size={17} />
+                      <span>
+                        <strong>{w.name}</strong>
+                        <small>{w.path}</small>
+                      </span>
+                    </Button>
+                  ))}
+                </div>
+                {!isDesktop && (
+                  <p className="inline-help">
+                    {t(
+                      "浏览器无法读取本地 Git。请运行桌面应用，或体验虚构演示。",
+                    )}
+                  </p>
+                )}
+                <div className="modal-actions">
+                  <Button
+                    className="button subtle"
+                    type="button"
+                    onClick={startDemo}
+                  >
+                    {t("体验演示")}
+                  </Button>
+                  <Button
+                    type="submit"
+                    className="button primary"
+                    disabled={!isDesktop || !path.trim() || busy}
+                  >
+                    {t("打开仓库")}
+                  </Button>
+                </div>
+              </form>
+            </Modal>
+          )}
+          {active && dialog === "trust" && changes && (
+            <Modal
+              title={t("信任此仓库")}
+              error={error}
+              onClose={() => setDialog(null)}
+            >
+              <div className="trust-summary">
+                <ShieldCheck size={28} />
+                <strong>{changes.workspace.name}</strong>
+                <code>{changes.workspace.path}</code>
+              </div>
+              <p>
+                {t(
+                  "执行暂存、提交和分支操作时，Git 可能运行此仓库及你的 Git 配置中的过滤器、Hook 和签名程序。",
+                )}
+              </p>
+              <p className="inline-help">
+                {t(
+                  "此选择保存在 Proof 本地。不会修改 safe.directory、现有 Hook 或全局 Git 配置。",
+                )}
+              </p>
+              <div className="modal-actions">
+                <Button className="button" onClick={() => setDialog(null)}>
+                  {t("继续受限查看")}
+                </Button>
+                <Button
+                  className="button primary"
+                  disabled={busy}
                   onClick={() => {
-                    void openWorkspace(w.path);
+                    void trustWorkspace();
                   }}
                 >
-                  <FolderOpen size={17} />
-                  <span>
-                    <strong>{w.name}</strong>
-                    <small>{w.path}</small>
-                  </span>
+                  {t("信任并启用 Git 操作")}
                 </Button>
-              ))}
-            </div>
-            {!isDesktop && (
-              <p className="inline-help">
-                {t("浏览器无法读取本地 Git。请运行桌面应用，或体验虚构演示。")}
-              </p>
-            )}
-            <div className="modal-actions">
-              <Button
-                className="button subtle"
-                type="button"
-                onClick={startDemo}
-              >
-                {t("体验演示")}
-              </Button>
-              <Button
-                type="submit"
-                className="button primary"
-                disabled={!isDesktop || !path.trim() || busy}
-              >
-                {t("打开仓库")}
-              </Button>
-            </div>
-          </form>
-        </Modal>
-      )}
-      {dialog === "trust" && changes && (
-        <Modal
-          title={t("信任此仓库")}
-          error={error}
-          onClose={() => setDialog(null)}
-        >
-          <div className="trust-summary">
-            <ShieldCheck size={28} />
-            <strong>{changes.workspace.name}</strong>
-            <code>{changes.workspace.path}</code>
-          </div>
-          <p>
-            {t(
-              "执行暂存、提交和分支操作时，Git 可能运行此仓库及你的 Git 配置中的过滤器、Hook 和签名程序。",
-            )}
-          </p>
-          <p className="inline-help">
-            {t(
-              "此选择保存在 Proof 本地。不会修改 safe.directory、现有 Hook 或全局 Git 配置。",
-            )}
-          </p>
-          <div className="modal-actions">
-            <Button className="button" onClick={() => setDialog(null)}>
-              {t("继续受限查看")}
-            </Button>
-            <Button
-              className="button primary"
-              disabled={busy}
-              onClick={() => {
-                void trustWorkspace();
-              }}
-            >
-              {t("信任并启用 Git 操作")}
-            </Button>
-          </div>
-        </Modal>
-      )}
-      {dialog === "mark-file" && reviewTarget && (
-        <Modal
-          title={t("标记整个文件已审查")}
-          error={error}
-          onClose={() => setDialog(null)}
-        >
-          <p>
-            {t("此标记覆盖 ")}
-            <strong>{reviewTarget.path}</strong> {t(" 当前完整 Diff 的")}{" "}
-            <strong>
-              {reviewTarget.hunks.length} {t(" 个变化块")}
-            </strong>
-            {t("，包含尚未滚动到的内容。")}
-          </p>
-          <p className="inline-help">
-            {t("只记录你对这个版本的人工审查，不会 Stage 文件或改变测试状态。")}
-          </p>
-          {diff?.id !== reviewTarget.id && (
-            <p role="status" className="inline-help">
-              {t("文件已更新，请关闭此窗口并重新选择 Review 范围。")}
-            </p>
-          )}
-          <div className="modal-actions">
-            <Button className="button" onClick={() => setDialog(null)}>
-              {t("继续逐段阅读")}
-            </Button>
-            <Button
-              className="button primary"
-              disabled={busy || diff?.id !== reviewTarget.id || loadingDiff}
-              onClick={() => {
-                void mark(null, true, true);
-              }}
-            >
-              {t("确认已审查全部内容")}
-            </Button>
-          </div>
-        </Modal>
-      )}
-      {dialog === "commit" && preview && (
-        <Modal
-          title={t("提交预览")}
-          error={error}
-          onClose={() => {
-            if (!busy) setDialog(null);
-          }}
-          wide
-        >
-          <div className="commit-target">
-            <GitBranch size={17} />
-            <strong>{preview.branch ?? "Detached HEAD"}</strong>
-            <span>
-              {preview.files.length} {t(" staged files")}
-            </span>
-            <code>{preview.head?.slice(0, 8) ?? t("首次提交")}</code>
-          </div>
-          <div className="commit-files">
-            {preview.files.map((f) => (
-              <div key={fileKey(f)}>
-                <span className={`file-status status-${f.status}`}>
-                  {f.status}
-                </span>
-                <span>{f.path}</span>
-                {preview.unreadFiles?.includes(f.path) && (
-                  <small className="commit-unread">
-                    {t("Diff 超过读取上限")}
-                  </small>
-                )}
               </div>
-            ))}
-          </div>
-          <div
-            className={`commit-coverage ${preview.coverageComputed && !preview.unreadFiles?.length && preview.reviewed === preview.total ? "complete" : ""}`}
-          >
-            <Info size={16} />
-            <span>
-              {!preview.coverageComputed
-                ? t("未统计 Review。")
-                : preview.unreadFiles?.length
-                  ? t("{v0} 个文件的 Diff 未加载，Review 未完成。", {
-                      v0: preview.unreadFiles.length,
-                    })
-                  : `${preview.reviewed}/${preview.total} hunks reviewed。`}
-              {preferences.strictReview
-                ? t("Strict Review 已启用。")
-                : t("将提交列出的全部 Staged 文件。")}
-            </span>
-          </div>
-          <label className="field-label" htmlFor="commit-message">
-            {t("提交说明")}
-          </label>
-          <Textarea
-            id="commit-message"
-            autoFocus
-            rows={4}
-            value={draft}
-            placeholder={t("描述这次修改的目的…")}
-            onChange={(e) => {
-              setDraft(e.target.value);
-              try {
-                clientStorage.writeDraft(preview.workspaceId, e.target.value);
-              } catch (error) {
-                setError({
-                  code: "DRAFT_STORAGE",
-                  message: t("提交草稿未能持久保存，请保留当前窗口。"),
-                  detail: String(error),
-                });
-              }
-            }}
-          />
-          <p className="inline-help">
-            <ShieldCheck size={14} />
-            {t("Git Hook 与签名将按现有配置执行。只提交已暂存内容。")}
-          </p>
-          <div className="modal-actions">
-            <Button
-              className="button"
-              disabled={busy}
-              onClick={() => setDialog(null)}
+            </Modal>
+          )}
+          {active && dialog === "mark-file" && reviewTarget && (
+            <Modal
+              title={t("标记整个文件已审查")}
+              error={error}
+              onClose={() => setDialog(null)}
             >
-              {t("返回审查")}
-            </Button>
-            <Button
-              className="button primary"
-              disabled={
-                busy ||
-                !draft.trim() ||
-                (preferences.strictReview &&
-                  (!preview.coverageComputed ||
-                    !!preview.unreadFiles?.length ||
-                    preview.reviewed !== preview.total))
-              }
-              onClick={() => {
-                void commit();
+              <p>
+                {t("此标记覆盖 ")}
+                <strong>{reviewTarget.path}</strong> {t(" 当前完整 Diff 的")}{" "}
+                <strong>
+                  {reviewTarget.hunks.length} {t(" 个变化块")}
+                </strong>
+                {t("，包含尚未滚动到的内容。")}
+              </p>
+              <p className="inline-help">
+                {t(
+                  "只记录你对这个版本的人工审查，不会 Stage 文件或改变测试状态。",
+                )}
+              </p>
+              {diff?.id !== reviewTarget.id && (
+                <p role="status" className="inline-help">
+                  {t("文件已更新，请关闭此窗口并重新选择 Review 范围。")}
+                </p>
+              )}
+              <div className="modal-actions">
+                <Button className="button" onClick={() => setDialog(null)}>
+                  {t("继续逐段阅读")}
+                </Button>
+                <Button
+                  className="button primary"
+                  disabled={busy || diff?.id !== reviewTarget.id || loadingDiff}
+                  onClick={() => {
+                    void mark(null, true, true);
+                  }}
+                >
+                  {t("确认已审查全部内容")}
+                </Button>
+              </div>
+            </Modal>
+          )}
+          {active && dialog === "commit" && preview && (
+            <Modal
+              title={t("提交预览")}
+              error={error}
+              onClose={() => {
+                if (!busy) setDialog(null);
               }}
+              wide
             >
-              <GitCommit size={16} />
-              {busy ? t("正在提交…") : t("确认提交")}
-            </Button>
-          </div>
-        </Modal>
-      )}
-      {changes && (
-        <div className="workspace-statusbar">
-          <span className="workspace-path" title={changes.workspace.path}>
-            {changes.workspace.path}
-          </span>
-          <span>
-            <GitBranch size={12} />
-            {changes.branch ?? "Detached HEAD"}
-          </span>
-          <span
-            className="live-status"
-            title={refreshError ? uiMessage(refreshError.message) : undefined}
-          >
-            <span className={`status-dot ${refreshError ? "neutral" : ""}`} />
-            {diffWindow && initialComparison
-              ? t("Snapshot")
-              : refreshError
-                ? t("正在重试刷新")
-                : t("Live")}
-          </span>
+              <div className="commit-target">
+                <GitBranch size={17} />
+                <strong>{preview.branch ?? "Detached HEAD"}</strong>
+                <span>
+                  {preview.files.length} {t(" staged files")}
+                </span>
+                <code>{preview.head?.slice(0, 8) ?? t("首次提交")}</code>
+              </div>
+              <div className="commit-files">
+                {preview.files.map((f) => (
+                  <div key={fileKey(f)}>
+                    <span className={`file-status status-${f.status}`}>
+                      {f.status}
+                    </span>
+                    <span>{f.path}</span>
+                    {preview.unreadFiles?.includes(f.path) && (
+                      <small className="commit-unread">
+                        {t("Diff 超过读取上限")}
+                      </small>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <div
+                className={`commit-coverage ${preview.coverageComputed && !preview.unreadFiles?.length && preview.reviewed === preview.total ? "complete" : ""}`}
+              >
+                <Info size={16} />
+                <span>
+                  {!preview.coverageComputed
+                    ? t("未统计 Review。")
+                    : preview.unreadFiles?.length
+                      ? t("{v0} 个文件的 Diff 未加载，Review 未完成。", {
+                          v0: preview.unreadFiles.length,
+                        })
+                      : `${preview.reviewed}/${preview.total} hunks reviewed。`}
+                  {preferences.strictReview
+                    ? t("Strict Review 已启用。")
+                    : t("将提交列出的全部 Staged 文件。")}
+                </span>
+              </div>
+              <label className="field-label" htmlFor="commit-message">
+                {t("提交说明")}
+              </label>
+              <Textarea
+                id="commit-message"
+                autoFocus
+                rows={4}
+                value={draft}
+                placeholder={t("描述这次修改的目的…")}
+                onChange={(e) => {
+                  setDraft(e.target.value);
+                  try {
+                    clientStorage.writeDraft(
+                      preview.workspaceId,
+                      e.target.value,
+                    );
+                  } catch (error) {
+                    setError({
+                      code: "DRAFT_STORAGE",
+                      message: t("提交草稿未能持久保存，请保留当前窗口。"),
+                      detail: String(error),
+                    });
+                  }
+                }}
+              />
+              <p className="inline-help">
+                <ShieldCheck size={14} />
+                {t("Git Hook 与签名将按现有配置执行。只提交已暂存内容。")}
+              </p>
+              <div className="modal-actions">
+                <Button
+                  className="button"
+                  disabled={busy}
+                  onClick={() => setDialog(null)}
+                >
+                  {t("返回审查")}
+                </Button>
+                <Button
+                  className="button primary"
+                  disabled={
+                    busy ||
+                    !draft.trim() ||
+                    (preferences.strictReview &&
+                      (!preview.coverageComputed ||
+                        !!preview.unreadFiles?.length ||
+                        preview.reviewed !== preview.total))
+                  }
+                  onClick={() => {
+                    void commit();
+                  }}
+                >
+                  <GitCommit size={16} />
+                  {busy ? t("正在提交…") : t("确认提交")}
+                </Button>
+              </div>
+            </Modal>
+          )}
+          {changes && (
+            <div className="workspace-statusbar">
+              <span className="workspace-path" title={changes.workspace.path}>
+                {changes.workspace.path}
+              </span>
+              <span>
+                <GitBranch size={12} />
+                {changes.branch ?? "Detached HEAD"}
+              </span>
+              <span
+                className="live-status"
+                title={
+                  refreshError ? uiMessage(refreshError.message) : undefined
+                }
+              >
+                <span
+                  className={`status-dot ${refreshError ? "neutral" : ""}`}
+                />
+                {diffWindow && initialComparison
+                  ? t("Snapshot")
+                  : refreshError
+                    ? t("正在重试刷新")
+                    : t("Live")}
+              </span>
+            </div>
+          )}
         </div>
-      )}
-      {dialog === "settings" && (
+      </div>
+      {active && dialog === "settings" && (
         <Suspense
           fallback={
             <WorkspacePending
@@ -2978,7 +3222,7 @@ export default function App({
                 requestAnimationFrame(() => {
                   (settingsTrigger.current?.isConnected
                     ? settingsTrigger.current
-                    : document.getElementById("settings-toggle")
+                    : element("settings-toggle")
                   )?.focus();
                 });
               }}
@@ -3019,7 +3263,7 @@ export default function App({
           />
         </Suspense>
       )}
-      {dialog === "commands" && (
+      {active && dialog === "commands" && (
         <Modal
           title={t("命令面板")}
           onClose={() => setDialog(null)}

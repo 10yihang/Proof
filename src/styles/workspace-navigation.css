@@ -1,0 +1,173 @@
+/* Projects identify the window; navigation and tools belong to its active repo. */
+.project-workspace {
+  height: 100dvh;
+  min-width: 0;
+}
+.project-session[hidden] {
+  display: none !important;
+}
+.project-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 44px;
+  flex-shrink: 0;
+  padding: 0 12px;
+  background: var(--chrome);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+}
+.app[data-native-macos="true"] .project-header {
+  padding-left: 88px;
+}
+.project-header .brand {
+  flex-shrink: 0;
+}
+.project-header .proof-mark {
+  width: 24px;
+  height: 24px;
+}
+.project-drag-space {
+  align-self: stretch;
+  flex: 0 0 32px;
+}
+.workspace-body {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.workspace-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.app.layout-enabled .workspace-content > .desktop-toolbar {
+  height: 44px;
+  min-height: 44px;
+  padding: 0 12px;
+  background: var(--chrome);
+  backdrop-filter: none;
+  box-shadow: none;
+}
+.workspace-content > .desktop-toolbar .branch-control,
+.workspace-content > .desktop-toolbar .branch-picker {
+  max-width: 280px;
+}
+.workspace-tabs.workspace-sidebar {
+  width: 144px;
+  flex: 0 0 144px;
+  padding: 12px 8px;
+  border-right: 1px solid var(--border);
+  background: var(--chrome);
+  overflow-y: auto;
+}
+.workspace-sidebar .workspace-tab-list {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  width: 100%;
+}
+.workspace-sidebar .view-tab {
+  display: flex;
+  align-self: stretch;
+  justify-content: flex-start;
+  min-width: 0;
+  min-height: 36px;
+  height: 36px;
+  padding: 0 10px;
+  gap: 8px;
+  border-radius: var(--radius-control);
+  font-size: 12px;
+}
+.workspace-sidebar .view-tab > svg {
+  flex-shrink: 0;
+  width: 17px;
+  height: 17px;
+}
+.workspace-sidebar .view-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.workspace-sidebar .tab-count {
+  margin-left: auto;
+  padding: 0;
+  background: transparent;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.workspace-sidebar .workspace-tab-indicator {
+  inset: 0;
+  width: auto;
+  height: auto;
+  border-radius: var(--radius-control);
+  background: var(--hover);
+}
+.workspace-sidebar .view-tab.active {
+  color: var(--text);
+  font-weight: 600;
+}
+.workspace-tabs.workspace-comparisons {
+  height: 36px;
+  min-height: 36px;
+  flex: 0 0 36px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  background: var(--chrome);
+}
+.workspace-comparisons .workspace-tab-list {
+  flex: 0 0 auto;
+}
+.workspace-comparisons .diff-tab-strip {
+  margin: 0;
+  border: 0;
+}
+@media (max-width: 1100px) {
+  .workspace-tabs.workspace-sidebar {
+    width: 56px;
+    flex-basis: 56px;
+    padding: 12px 6px;
+  }
+  .workspace-sidebar .view-tab > svg {
+    display: block;
+  }
+  .workspace-sidebar .view-tab {
+    justify-content: center;
+    padding: 0;
+    height: 40px;
+  }
+  .workspace-sidebar .view-tab-label,
+  .workspace-sidebar .tab-count {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .workspace-content > .desktop-toolbar .observer-status {
+    display: none;
+  }
+}
+@media (max-width: 780px) {
+  .project-header {
+    gap: 8px;
+    padding-inline: 8px;
+  }
+  .project-drag-space {
+    flex-basis: 8px;
+  }
+  .workspace-content > .desktop-toolbar .branch-control {
+    --branch-control-width: 180px;
+    max-width: 180px;
+  }
+}
+
+.diff-window-app[data-native-macos="true"]
+  .workspace-content
+  > .desktop-toolbar {
+  padding-left: 88px;
+}

@@ -3,6 +3,7 @@ import { chooseOption, openReadingTools, closeReadingTools } from "./controls";
 import { assertCommitGeometry } from "./commit-geometry";
 import { assertContextGeometry } from "./context-geometry";
 import { test, expect, type Locator, type Page } from "@playwright/test";
+import { mkdir } from "node:fs/promises";
 import { demoChanges, demoDiff } from "../../src/demo";
 import { demoGraphPage } from "../../src/graph-demo";
 import { defaultPreferences } from "../../src/types";
@@ -12,6 +13,47 @@ async function openCommit(page: Page) {
     .getByRole("navigation", { name: "Worktree" })
     .getByRole("tab", { name: /^Commit/ })
     .click();
+}
+
+/** Comparison context and actions live in a portal outside the reader. */
+async function openComparisonScope(surface: Page | Locator) {
+  const page = "page" in surface ? surface.page() : surface;
+  const popup = page.getByRole("dialog", {
+    name: /^(比较范围|Comparison range)$/,
+  });
+  const trigger = surface.getByRole("button", {
+    name: /^(比较范围|Comparison range)$/,
+  });
+  if ((await trigger.getAttribute("aria-expanded")) !== "true") {
+    await expect(popup).toBeHidden();
+    await trigger.click();
+  }
+  await expect(popup).toBeVisible();
+  await expect(trigger).toHaveAttribute("aria-expanded", "true");
+  await expect(popup).toHaveAttribute("data-open", "");
+  return popup;
+}
+
+async function closeComparisonScope(surface: Page | Locator) {
+  const page = "page" in surface ? surface.page() : surface;
+  const trigger = surface.getByRole("button", {
+    name: /^(比较范围|Comparison range)$/,
+  });
+  if ((await trigger.getAttribute("aria-expanded")) === "true")
+    await trigger.click();
+  await expect(
+    page.getByRole("dialog", { name: /^(比较范围|Comparison range)$/ }),
+  ).toBeHidden();
+}
+
+async function returnToHistory(page: Page) {
+  const popup = await openComparisonScope(
+    page.locator(".diff-tab-page:not([hidden])"),
+  );
+  await popup
+    .getByRole("button", { name: "返回 History", exact: true })
+    .click();
+  await expect(popup).toBeHidden();
 }
 
 async function prepareFileHistoryFixture(
@@ -178,7 +220,9 @@ test("Local changes reading tools preserve one-line context steps and Full file 
 }) => {
   await openFixture(page);
   await expect(
-    page.locator(".workspace-tabs .view-tab").filter({ hasText: /^本地变更/ }),
+    page
+      .locator(".workspace-sidebar .view-tab")
+      .filter({ hasText: /^本地变更/ }),
   ).toBeVisible();
   const context = (await openReadingTools(page)).getByLabel("上下文行数");
   await openReadingTools(page);
@@ -319,7 +363,7 @@ test("comparison Review reconciles late replies across two tabs without restorin
     "aria-pressed",
     "true",
   );
-  await page.getByRole("button", { name: "返回 History", exact: true }).click();
+  await returnToHistory(page);
   await graph
     .getByRole("option")
     .nth(1)
@@ -354,12 +398,18 @@ test("comparison Review reconciles late replies across two tabs without restorin
       return value;
     };
   });
-  await navigation.locator(".diff-tab-button").first().click();
+  await page
+    .locator(".workspace-sidebar:visible .diff-tab-button")
+    .first()
+    .click();
   await tabs.first().locator(".hunk-review").nth(0).click();
   await expect
     .poll(() => page.evaluate(() => !!(window as any).releaseReview))
     .toBe(true);
-  await navigation.locator(".diff-tab-button").last().click();
+  await page
+    .locator(".workspace-sidebar:visible .diff-tab-button")
+    .last()
+    .click();
   await page.evaluate(() => {
     (window as any).deferReviewRead = true;
   });
@@ -380,7 +430,10 @@ test("comparison Review reconciles late replies across two tabs without restorin
     (window as any).releaseReviewRead();
   });
   for (const tabIndex of [0, 1]) {
-    await navigation.locator(".diff-tab-button").nth(tabIndex).click();
+    await page
+      .locator(".workspace-sidebar:visible .diff-tab-button")
+      .nth(tabIndex)
+      .click();
     for (const index of [0, 1])
       await expect(
         tabs.nth(tabIndex).locator(".hunk-review").nth(index),
@@ -404,7 +457,7 @@ test("Review invalidates cached comparison directions even while another directi
   await navigation.getByRole("tab", { name: "History", exact: true }).click();
   const graph = page.getByRole("listbox", { name: "提交列表与分支关系" });
   await graph.getByRole("option").first().dblclick();
-  await page.getByRole("button", { name: "返回 History", exact: true }).click();
+  await returnToHistory(page);
   await graph
     .getByRole("option")
     .nth(1)
@@ -414,26 +467,36 @@ test("Review invalidates cached comparison directions even while another directi
     "aria-pressed",
     "false",
   );
-  await tabs
-    .last()
+  await (
+    await openComparisonScope(tabs.last())
+  )
     .getByRole("button", { name: "交换比较方向", exact: true })
     .click();
+  await closeComparisonScope(tabs.last());
   await expect(tabs.last().locator(".hunk-review").first()).toBeVisible();
-  await navigation.locator(".diff-tab-button").first().click();
+  await page
+    .locator(".workspace-sidebar:visible .diff-tab-button")
+    .first()
+    .click();
   await tabs.first().locator(".hunk-review").first().click();
   await expect(tabs.first().locator(".hunk-review").first()).toHaveAttribute(
     "aria-pressed",
     "true",
   );
-  await navigation.locator(".diff-tab-button").last().click();
+  await page
+    .locator(".workspace-sidebar:visible .diff-tab-button")
+    .last()
+    .click();
   await expect(tabs.last().locator(".hunk-review").first()).toHaveAttribute(
     "aria-pressed",
     "false",
   );
-  await tabs
-    .last()
+  await (
+    await openComparisonScope(tabs.last())
+  )
     .getByRole("button", { name: "交换比较方向", exact: true })
     .click();
+  await closeComparisonScope(tabs.last());
   await expect(tabs.last().locator(".hunk-review").first()).toHaveAttribute(
     "aria-pressed",
     "true",
@@ -473,7 +536,10 @@ test("Review reconciliation resumes after its tab is hidden during a read", asyn
     .poll(() => page.evaluate(() => !!(window as any).releaseReviewRead))
     .toBe(true);
   await navigation.getByRole("tab", { name: "History", exact: true }).click();
-  await navigation.locator(".diff-tab-button").last().click();
+  await page
+    .locator(".workspace-sidebar:visible .diff-tab-button")
+    .last()
+    .click();
   await page.evaluate(() => {
     (window as any).releaseReviewRead();
   });
@@ -681,7 +747,10 @@ test("full-file search restores its range after leaving a historical tab", async
   await expect(tab.locator(".diff-scroll")).not.toContainText(
     "unchanged searchable tail",
   );
-  await navigation.locator(".diff-tab-button").last().click();
+  await page
+    .locator(".workspace-sidebar:visible .diff-tab-button")
+    .last()
+    .click();
   await expect(
     (await openReadingTools(tab)).getByRole("button", {
       name: "全文",
@@ -800,7 +869,10 @@ for (const route of [
         .getByRole("tab", { name: "History", exact: true })
         .click();
       if (route === "unmounted") await expect(scroll).toHaveCount(0);
-      await navigation.locator(".diff-tab-button").last().click();
+      await page
+        .locator(".workspace-sidebar:visible .diff-tab-button")
+        .last()
+        .click();
     }
     if (route === "unmounted")
       await tab.getByRole("button", { name: "阅读工具", exact: true }).click();
@@ -1272,7 +1344,10 @@ test("large historical Diff loads in its tab and releases its hidden rendered bo
   await expect(
     tab.getByRole("region", { name: "代码差异", exact: true }),
   ).toHaveCount(0);
-  await navigation.locator(".diff-tab-button").last().click();
+  await page
+    .locator(".workspace-sidebar:visible .diff-tab-button")
+    .last()
+    .click();
   await expect(
     tab.getByRole("region", { name: "代码差异", exact: true }),
   ).toBeVisible();
@@ -1421,7 +1496,10 @@ test("a released large historical Diff restores its wrapped source line", async 
     .not.toBeNull();
   await navigation.getByRole("tab", { name: "History", exact: true }).click();
   await expect(scroll).toHaveCount(0);
-  await navigation.locator(".diff-tab-button").last().click();
+  await page
+    .locator(".workspace-sidebar:visible .diff-tab-button")
+    .last()
+    .click();
   await expect(scroll).toBeVisible();
   await expect.poll(visiblePosition).toEqual(before);
 });
@@ -1490,7 +1568,10 @@ test("a regular historical Diff preserves its reading position across tabs", asy
     .toBeGreaterThan(100);
   const top = (await editorState(scroll))!.top;
   await navigation.getByRole("tab", { name: "History", exact: true }).click();
-  await navigation.locator(".diff-tab-button").last().click();
+  await page
+    .locator(".workspace-sidebar:visible .diff-tab-button")
+    .last()
+    .click();
   await expect
     .poll(() =>
       editorState(scroll).then((state) =>
@@ -3084,14 +3165,20 @@ test("late context reply cannot evict the next workspace cache or show its error
       page.evaluate(() => typeof (window as any).fixture.rejectContext),
     )
     .toBe("function");
-  await page.locator(".workspace-picker").click();
+  await page.getByRole("button", { name: "打开项目", exact: true }).click();
   await page.getByLabel("本地目录", { exact: true }).fill("/fixture-second");
   await page
     .getByRole("dialog", { name: "打开仓库", exact: true })
     .getByRole("button", { name: "打开仓库", exact: true })
     .click();
-  await expect(page.locator(".workspace-picker")).toContainText("Second");
-  await expect(page.locator(".diff-file-header")).toContainText("requests.ts");
+  await expect(
+    page.locator(
+      ".project-session:not([hidden]) .project-tab-button[aria-selected=true]:visible",
+    ),
+  ).toContainText("Second");
+  await expect(
+    page.locator(".project-session:not([hidden]) .diff-file-header"),
+  ).toContainText("requests.ts");
   await page.evaluate(async () => {
     (window as any).fixture.rejectContext({
       code: "SNAPSHOT_EXPIRED",
@@ -3114,17 +3201,21 @@ test("late context reply cannot evict the next workspace cache or show its error
       ).length,
   );
   await page
-    .locator(".tree-file")
+    .locator(".project-session:not([hidden]) .tree-file")
     .filter({ hasText: "response.ts" })
     .first()
     .click();
-  await expect(page.locator(".diff-file-header")).toContainText("response.ts");
+  await expect(
+    page.locator(".project-session:not([hidden]) .diff-file-header"),
+  ).toContainText("response.ts");
   await page
-    .locator(".tree-file")
+    .locator(".project-session:not([hidden]) .tree-file")
     .filter({ hasText: "requests.ts" })
     .first()
     .click();
-  await expect(page.locator(".diff-file-header")).toContainText("requests.ts");
+  await expect(
+    page.locator(".project-session:not([hidden]) .diff-file-header"),
+  ).toContainText("requests.ts");
   expect(
     await page.evaluate(
       () =>
@@ -3955,15 +4046,25 @@ test("standards automatic restoration after deletion must not replace a newer wo
     .locator(".recent-projects button")
     .filter({ hasText: "/fixture/linked" })
     .click();
-  await expect(page.locator(".workspace-picker")).toContainText("linked");
-  await expect(page.locator(".diff-file-header")).toContainText("requests.ts");
+  await expect(
+    page.locator(
+      ".project-session:not([hidden]) .project-tab-button[aria-selected=true]:visible",
+    ),
+  ).toContainText("linked");
+  await expect(
+    page.locator(".project-session:not([hidden]) .diff-file-header"),
+  ).toContainText("requests.ts");
   await page.evaluate(async () => {
     (window as any).finishOldRestore();
     await new Promise((resolve) =>
       requestAnimationFrame(() => requestAnimationFrame(resolve)),
     );
   });
-  await expect(page.locator(".workspace-picker")).toContainText("linked");
+  await expect(
+    page.locator(
+      ".project-session:not([hidden]) .project-tab-button[aria-selected=true]:visible",
+    ),
+  ).toContainText("linked");
 });
 
 test("standards peer window wipe marker must not be rolled back by a late session", async ({
@@ -4224,26 +4325,37 @@ test("History opens selected Commit diffs in closable tabs and preserves graph s
   await navigation.getByRole("tab", { name: "History", exact: true }).click();
   const graph = page.getByRole("listbox", { name: "提交列表与分支关系" });
   await graph.getByRole("option").first().click();
-  await expect(page.locator(".diff-tab-item")).toHaveCount(0);
+  await expect(
+    page.locator(".workspace-sidebar:visible .diff-tab-item"),
+  ).toHaveCount(0);
   await graph.getByRole("option").first().dblclick();
   const active = page.locator(".diff-tab-page:not([hidden])"),
     panel = active.getByRole("region", { name: "历史文件差异" });
   await expect(panel.locator(".diff-scroll")).toContainText("validateRequest");
   await expect(
-    active.getByRole("combobox", { name: "Diff 比较父提交" }),
+    (await openComparisonScope(active)).getByRole("combobox", {
+      name: "Diff 比较父提交",
+    }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "返回 History", exact: true }).click();
+  await returnToHistory(page);
   await graph
     .getByRole("option")
     .nth(2)
     .click({ modifiers: ["Meta"] });
-  await expect(page.locator(".diff-tab-item")).toHaveCount(2);
+  await expect(
+    page.locator(".workspace-sidebar:visible .diff-tab-item"),
+  ).toHaveCount(2);
   await expect(panel.locator(".diff-scroll")).toContainText("validateRequest");
   await panel.getByRole("button", { name: "并排视图", exact: true }).click();
   await expect(
     panel.getByRole("button", { name: /Stage|预览丢弃/ }),
   ).toHaveCount(0);
-  await panel.getByRole("button", { name: "交换比较方向" }).click();
+  await (
+    await openComparisonScope(panel)
+  )
+    .getByRole("button", { name: "交换比较方向" })
+    .click();
+  await closeComparisonScope(panel);
   await expect(panel.locator(".diff-scroll")).toContainText("validateRequest");
   const requests = await page.evaluate(() =>
     (window as any).fixture.actions.filter(
@@ -4252,7 +4364,7 @@ test("History opens selected Commit diffs in closable tabs and preserves graph s
   );
   expect(requests.at(-1).args.base).toBe(requests.at(-2).args.target);
   await page.screenshot({ path: ".artifacts/history-diff-tab-desktop.png" });
-  await page.getByRole("button", { name: "返回 History", exact: true }).click();
+  await returnToHistory(page);
   await expect(graph.getByRole("option", { selected: true })).toHaveCount(2);
   await expect(
     page.getByRole("region", { name: "Git 提交图" }).locator(".diff-scroll"),
@@ -4265,10 +4377,15 @@ test("History opens selected Commit diffs in closable tabs and preserves graph s
   await page
     .getByRole("button", { name: "在新 tab 中查看 Diff", exact: true })
     .click();
-  await expect(page.locator(".diff-tab-item")).toHaveCount(2);
   await expect(
-    active.getByRole("combobox", { name: "Diff 比较父提交" }),
+    page.locator(".workspace-sidebar:visible .diff-tab-item"),
+  ).toHaveCount(2);
+  await expect(
+    (await openComparisonScope(active)).getByRole("combobox", {
+      name: "Diff 比较父提交",
+    }),
   ).toHaveAttribute("data-value", "1");
+  await closeComparisonScope(active);
   await expect
     .poll(() =>
       page.evaluate(
@@ -4279,7 +4396,9 @@ test("History opens selected Commit diffs in closable tabs and preserves graph s
       ),
     )
     .toBe(1);
-  await page.locator(".diff-tab-item.active .diff-tab-close").click();
+  await page
+    .locator(".workspace-sidebar:visible .diff-tab-item.active .diff-tab-close")
+    .click();
   await expect(
     navigation.getByRole("tab", { name: "History", exact: true }),
   ).toHaveAttribute("aria-current", "page");
@@ -4310,17 +4429,25 @@ test("Diff tabs remain closable in a narrow window and return focus to History",
   for (let index = 0; index < 6; index++) {
     await history.click();
     await graph.getByRole("option").nth(index).dblclick();
-    const close = page.locator(".diff-tab-item.active .diff-tab-close");
+    const close = page.locator(
+      ".workspace-sidebar:visible .diff-tab-item.active .diff-tab-close",
+    );
     await expect(close).toBeInViewport({ ratio: 1 });
   }
-  await expect(page.locator(".diff-tab-item")).toHaveCount(6);
+  await expect(
+    page.locator(".workspace-sidebar:visible .diff-tab-item"),
+  ).toHaveCount(6);
   for (const width of [660, 1440, 1024]) {
     await page.setViewportSize({ width, height: 800 });
     await expect(
-      page.locator(".diff-tab-item.active .diff-tab-close"),
+      page.locator(
+        ".workspace-sidebar:visible .diff-tab-item.active .diff-tab-close",
+      ),
     ).toBeInViewport({ ratio: 1 });
   }
-  await page.locator(".diff-tab-item.active .diff-tab-close").click();
+  await page
+    .locator(".workspace-sidebar:visible .diff-tab-item.active .diff-tab-close")
+    .click();
   await expect(history).toHaveAttribute("aria-current", "page");
   await expect(history).toBeFocused();
   await expect(graph.getByRole("option").nth(5)).toHaveAttribute(
@@ -4328,6 +4455,160 @@ test("Diff tabs remain closable in a narrow window and return focus to History",
     "true",
   );
 });
+
+for (const language of ["zh-CN", "en"] as const) {
+  test(`repository chrome keeps Git actions in History and distinguishes panel toggles in ${language}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.addInitScript(
+      (language) => sessionStorage.setItem("proof-test-language", language),
+      language,
+    );
+    await openFixture(page, true, false, {
+      ...defaultPreferences,
+      theme: "dark",
+      language,
+    });
+    const chinese = language === "zh-CN";
+    const header = page.locator(".project-header:visible");
+    const navigation = page.locator(".workspace-sidebar:visible");
+    const filesToggle = header.locator("#files-toggle");
+    const contextToggle = header.locator("#context-toggle");
+    const files = page.locator("#files-panel");
+    const context = page.locator("#context-panel");
+    await expect
+      .poll(() => visibleSourcePosition(page.locator(".diff-scroll")))
+      .not.toBeNull();
+    const source = await visibleSourcePosition(page.locator(".diff-scroll"));
+    const sidebarState = await navigation.getAttribute("data-sidebar-state");
+
+    await expect(header.locator(".history-git-toolbar")).toHaveCount(0);
+    await expect(header.locator(".project-identity > strong")).toHaveText(
+      demoChanges.workspace.name,
+    );
+    await expect(header.locator(".branch-picker")).toHaveText("main");
+    await expect(header).not.toContainText("证据");
+    for (const toggle of [filesToggle, contextToggle]) {
+      await expect(toggle).toHaveClass(/\bpanel-toggle\b/);
+      await expect(toggle).toHaveText("");
+      await expect(toggle.locator("svg")).toHaveAttribute(
+        "aria-hidden",
+        "true",
+      );
+    }
+    await expect(filesToggle).toHaveAttribute(
+      "title",
+      chinese ? "文件栏 · ⌘/Ctrl P 搜索" : "File pane · ⌘/Ctrl P to search",
+    );
+    await expect(filesToggle).toHaveAttribute(
+      "aria-label",
+      chinese ? "收起文件栏" : "Hide file pane",
+    );
+    await expect(contextToggle).toHaveAttribute(
+      "aria-label",
+      chinese ? "显示上下文" : "Show context",
+    );
+    await expect(contextToggle).toHaveAttribute(
+      "title",
+      chinese ? "显示上下文" : "Show context",
+    );
+    await expect(contextToggle.locator("svg")).toHaveClass(
+      /\bpanel-toggle-right\b/,
+    );
+    await expect(filesToggle).toHaveAttribute("aria-controls", "files-panel");
+    await expect(contextToggle).toHaveAttribute(
+      "aria-controls",
+      "context-panel",
+    );
+    await expect(filesToggle).toHaveAttribute("aria-expanded", "true");
+    await expect(contextToggle).toHaveAttribute("aria-expanded", "false");
+
+    await filesToggle.click();
+    await expect(filesToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(filesToggle).toHaveAttribute(
+      "aria-label",
+      chinese ? "显示文件栏" : "Show file pane",
+    );
+    await expect(files).toBeHidden();
+    await expect(contextToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(navigation).toHaveAttribute(
+      "data-sidebar-state",
+      sidebarState!,
+    );
+    await filesToggle.click();
+    await expect(filesToggle).toHaveAttribute("aria-expanded", "true");
+    await expect(files).toBeVisible();
+
+    await contextToggle.click();
+    await expect(contextToggle).toHaveAttribute("aria-expanded", "true");
+    await expect(contextToggle).toHaveAttribute(
+      "title",
+      chinese ? "收起上下文" : "Hide context",
+    );
+    await expect(context).toBeVisible();
+    await expect(filesToggle).toHaveAttribute("aria-expanded", "true");
+    await expect(files).toBeVisible();
+    await expect(navigation).toHaveAttribute(
+      "data-sidebar-state",
+      sidebarState!,
+    );
+    await contextToggle.click();
+    await expect(context).toBeHidden();
+    await expect(contextToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(filesToggle).toHaveAttribute("aria-expanded", "true");
+    await expect
+      .poll(() => visibleSourcePosition(page.locator(".diff-scroll")))
+      .toEqual(source);
+
+    if (chinese) {
+      await mkdir(".artifacts/switch-refinement", { recursive: true });
+      for (const width of [1440, 1024]) {
+        await page.setViewportSize({
+          width,
+          height: width === 1440 ? 900 : 720,
+        });
+        await expect(filesToggle).toBeEnabled();
+        await page.mouse.move(width - 20, width === 1440 ? 880 : 700);
+        await page.screenshot({
+          path: `.artifacts/switch-refinement/repository-header-${width}-dark.png`,
+          animations: "disabled",
+        });
+      }
+      await page.setViewportSize({ width: 1440, height: 900 });
+    }
+
+    for (const action of ["Fetch", "Pull", "Push"]) {
+      await expect(
+        header.getByRole("button", { name: action, exact: true }),
+      ).toHaveCount(0);
+      await expect(
+        page.getByRole("button", { name: action, exact: true }),
+      ).toHaveCount(0);
+    }
+    await navigation.getByRole("tab", { name: "History", exact: true }).click();
+    const historyTools = page.locator(".commit-history:visible .graph-toolbar");
+    for (const action of ["Fetch", "Pull", "Push"])
+      await expect(
+        historyTools.getByRole("button", { name: action, exact: true }),
+      ).toBeEnabled();
+    await expect(header.locator(".history-git-toolbar")).toHaveCount(0);
+    await navigation.getByRole("tab", { name: /^Commit/ }).click();
+    for (const action of ["Fetch", "Pull", "Push"])
+      await expect(
+        page.getByRole("button", { name: action, exact: true }),
+      ).toHaveCount(0);
+    expect(
+      await page.evaluate(() =>
+        (window as any).fixture.actions.filter((action: any) =>
+          ["preview_history_action", "execute_history_action"].includes(
+            action.command,
+          ),
+        ),
+      ),
+    ).toEqual([]);
+  });
+}
 
 test("Desktop chrome reserves native controls and supports document tab shortcuts", async ({
   page,
@@ -4338,19 +4619,36 @@ test("Desktop chrome reserves native controls and supports document tab shortcut
   );
   await openFixture(page);
   const toolbar = page.locator(".desktop-toolbar");
+  const projectHeader = page.locator(".project-header");
   const navigation = page.getByRole("navigation", { name: "Worktree" });
   const toolbarBox = (await toolbar.boundingBox())!;
   const tabsBox = (await navigation.boundingBox())!;
-  expect(tabsBox.y).toBeGreaterThanOrEqual(toolbarBox.y);
-  expect(tabsBox.y + tabsBox.height).toBeLessThanOrEqual(
-    toolbarBox.y + toolbarBox.height,
+  const projectHeaderBox = (await projectHeader.boundingBox())!;
+  const projectTabsBox = (await page
+    .locator(".project-tabs-row:visible")
+    .boundingBox())!;
+  expect(projectHeaderBox.height).toBe(48);
+  expect(projectTabsBox.height).toBe(32);
+  expect(projectTabsBox.y).toBe(projectHeaderBox.y + projectHeaderBox.height);
+  expect(tabsBox.y).toBeGreaterThanOrEqual(
+    projectTabsBox.y + projectTabsBox.height,
+  );
+  expect(toolbarBox.y).toBeGreaterThanOrEqual(projectHeaderBox.y);
+  expect(toolbarBox.y + toolbarBox.height).toBeLessThanOrEqual(
+    projectHeaderBox.y + projectHeaderBox.height,
+  );
+  await expect(projectHeader.locator(".desktop-toolbar")).toHaveCount(1);
+  await expect(navigation.getByRole("tablist")).toHaveAttribute(
+    "aria-orientation",
+    "vertical",
   );
   expect(
-    (await toolbar.locator(".brand").boundingBox())!.x,
+    (await projectHeader.locator(".brand").boundingBox())!.x,
   ).toBeGreaterThanOrEqual(88);
   expect(
-    (await toolbar.locator(".window-drag-space").boundingBox())!.width,
-  ).toBeGreaterThanOrEqual(36);
+    (await projectHeader.locator(".project-drag-space").first().boundingBox())!
+      .width,
+  ).toBeGreaterThanOrEqual(32);
   await expect(toolbar.locator("button[data-tauri-drag-region]")).toHaveCount(
     0,
   );
@@ -4385,6 +4683,13 @@ test("Desktop chrome reserves native controls and supports document tab shortcut
   await expect(
     diff.getByRole("textbox", { name: "搜索变化文件" }),
   ).toBeFocused();
+  await expect
+    .poll(() => editorState(diff.locator(".diff-scroll")))
+    .not.toBeNull();
+  await page.screenshot({
+    path: ".artifacts/sidebar-diffs/desktop-sidebar-diff-dark.png",
+    animations: "disabled",
+  });
   await page.evaluate(() =>
     (window as any).fixture.emitNativeEvent("proof:close-active-view"),
   );
@@ -4392,10 +4697,14 @@ test("Desktop chrome reserves native controls and supports document tab shortcut
   await expect(history).toHaveAttribute("aria-current", "page");
   await graph.getByRole("option").first().dblclick();
   await page
-    .locator(".diff-tab-item.active .diff-tab-button")
+    .locator(
+      ".workspace-sidebar:visible .diff-tab-item.active .diff-tab-button",
+    )
     .click({ button: "middle" });
-  await expect(page.locator(".diff-tab-item")).toHaveCount(0);
-  await history.press("ArrowLeft");
+  await expect(
+    page.locator(".workspace-sidebar:visible .diff-tab-item"),
+  ).toHaveCount(0);
+  await history.press("ArrowUp");
   await expect(navigation.getByRole("tab", { name: /^Commit/ })).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(
@@ -4417,9 +4726,13 @@ test("Desktop chrome reserves native controls and supports document tab shortcut
   await page.evaluate(() =>
     (window as any).fixture.emitNativeEvent("proof:close-active-view"),
   );
-  await expect
-    .poll(() => page.evaluate(() => (window as any).fixture.windowCloses))
-    .toBe(1);
+  await expect(page.locator(".project-tab-button:visible")).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "打开仓库，开始工作", exact: true }),
+  ).toBeVisible();
+  expect(await page.evaluate(() => (window as any).fixture.windowCloses)).toBe(
+    0,
+  );
   expect(
     await page.evaluate(() =>
       (window as any).fixture.actions.filter((a: any) =>
@@ -4433,6 +4746,154 @@ test("Desktop chrome reserves native controls and supports document tab shortcut
       ),
     ),
   ).toEqual([]);
+});
+
+test("titlebar exposes a central native drag region with one, two and many projects", async ({
+  page,
+}) => {
+  await page.addInitScript(() =>
+    Object.defineProperty(navigator, "platform", { value: "MacIntel" }),
+  );
+  await openFixture(page);
+  // Simulated repository identities exercise the real project-opening UI and
+  // overflow layout; this test only checks hit targets, not native movement.
+  await page.evaluate(() => {
+    const w = window as any;
+    const original = w.__TAURI_INTERNALS__.invoke;
+    const projects = new Map<string, any>();
+    w.__TAURI_INTERNALS__.invoke = async (name: string, payload: any = {}) => {
+      const { command, args } = payload;
+      if (
+        command === "open_workspace" &&
+        args.path.startsWith("/fixture/project-")
+      ) {
+        const workspace = {
+          ...w.fixture.changes.workspace,
+          id: args.path,
+          repositoryId: args.path,
+          path: args.path,
+          name: args.path.split("/").at(-1),
+        };
+        projects.set(workspace.id, workspace);
+        return workspace;
+      }
+      const result = await original(name, payload);
+      const workspace = projects.get(args?.workspaceId);
+      if (command === "changes" && workspace) return { ...result, workspace };
+      if (command === "read_file_diff" && workspace && result.state === "ready")
+        return {
+          ...result,
+          diff: { ...result.diff, workspaceId: workspace.id },
+        };
+      return result;
+    };
+  });
+  const checkHeader = async (count: number) => {
+    const header = page.locator(".project-header:visible");
+    const projectRow = page.locator(".project-tabs-row:visible");
+    await expect(projectRow.locator(".project-tab-button")).toHaveCount(count);
+    for (const width of [1440, 1024]) {
+      await page.setViewportSize({ width, height: 900 });
+      const gaps = header.locator(".project-drag-space");
+      await expect(gaps).toHaveCount(2);
+      for (const gap of await gaps.all()) {
+        await expect(gap).toHaveAttribute("data-tauri-drag-region", "true");
+        const box = (await gap.boundingBox())!;
+        expect(box.width).toBeGreaterThanOrEqual(32);
+        expect(box.height).toBeGreaterThanOrEqual(36);
+        const hit = await page.evaluate(
+          ({ x, y }) => {
+            const target = document.elementFromPoint(x, y);
+            return {
+              draggable: target?.hasAttribute("data-tauri-drag-region"),
+              interactive: Boolean(
+                target?.closest("button, a, input, select, textarea"),
+              ),
+            };
+          },
+          { x: box.x + box.width / 2, y: box.y + box.height / 2 },
+        );
+        expect(hit).toEqual({ draggable: true, interactive: false });
+      }
+      const active = projectRow.locator(
+        '.project-tab-button[aria-selected="true"]',
+      );
+      await expect(active).toBeInViewport({ ratio: 1 });
+      const rowBox = (await projectRow.boundingBox())!;
+      expect(rowBox.height).toBe(32);
+      expect(rowBox.width).toBe(width);
+      await expect(
+        page.locator(
+          ".project-header:visible button[data-tauri-drag-region], .project-tabs-row:visible button[data-tauri-drag-region]",
+        ),
+      ).toHaveCount(0);
+      for (const control of [
+        active,
+        header.locator(".branch-picker"),
+        projectRow.locator(".project-tab-open"),
+      ]) {
+        const controlBox = (await control.boundingBox())!;
+        expect(
+          await page.evaluate(
+            ({ x, y }) => {
+              const target = document.elementFromPoint(x, y);
+              return target
+                ?.closest("button")
+                ?.hasAttribute("data-tauri-drag-region");
+            },
+            {
+              x: controlBox.x + controlBox.width / 2,
+              y: controlBox.y + controlBox.height / 2,
+            },
+          ),
+        ).toBe(false);
+      }
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth),
+      ).toBeLessThanOrEqual(width + 1);
+    }
+  };
+  await checkHeader(1);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page
+    .locator(".workspace-sidebar:visible")
+    .getByRole("button", {
+      name: "收起侧边栏",
+      exact: true,
+    })
+    .click();
+  for (let index = 2; index <= 6; index++) {
+    await page.getByRole("button", { name: "打开项目", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "打开仓库", exact: true });
+    await dialog
+      .getByLabel("本地目录", { exact: true })
+      .fill(`/fixture/project-${index}`);
+    await dialog.getByRole("button", { name: "打开仓库", exact: true }).click();
+    await expect(dialog).toBeHidden();
+    await expect(
+      page.locator(".project-tabs-row:visible .project-tab-button"),
+    ).toHaveCount(index);
+    await expect(page.locator(".workspace-sidebar:visible")).toHaveAttribute(
+      "data-sidebar-state",
+      "collapsed",
+    );
+    if (index === 2 || index === 6) await checkHeader(index);
+  }
+  await page
+    .locator(".workspace-sidebar:visible")
+    .getByRole("button", {
+      name: "展开侧边栏",
+      exact: true,
+    })
+    .click();
+  await page
+    .locator(".project-tabs-row:visible .project-tab-button")
+    .first()
+    .click();
+  await expect(page.locator(".workspace-sidebar:visible")).toHaveAttribute(
+    "data-sidebar-state",
+    "expanded",
+  );
 });
 
 test("Non-macOS document shortcut closes only the active Diff", async ({
@@ -4452,7 +4913,9 @@ test("Non-macOS document shortcut closes only the active Diff", async ({
     .first()
     .dblclick();
   await page.keyboard.press("Control+w");
-  await expect(page.locator(".diff-tab-item")).toHaveCount(0);
+  await expect(
+    page.locator(".workspace-sidebar:visible .diff-tab-item"),
+  ).toHaveCount(0);
   await expect(history).toBeFocused();
   expect(await page.evaluate(() => (window as any).fixture.windowCloses)).toBe(
     0,
@@ -4490,7 +4953,7 @@ test("Branch comparison opens a Diff tab and an older file response cannot repla
     .locator(".diff-tab-page:not([hidden])")
     .getByRole("region", { name: "历史文件差异" });
   await expect(panel.locator(".diff-loading")).toContainText("载入 Diff");
-  await page.getByRole("button", { name: "返回 History", exact: true }).click();
+  await returnToHistory(page);
   await graph
     .getByRole("option")
     .nth(2)
@@ -4498,7 +4961,7 @@ test("Branch comparison opens a Diff tab and an older file response cannot repla
   await expect(panel.locator(".compare-empty")).toContainText("没有文件差异");
   await page.waitForTimeout(1100);
   await expect(panel.locator(".compare-empty")).toContainText("没有文件差异");
-  await page.getByRole("button", { name: "返回 History", exact: true }).click();
+  await returnToHistory(page);
   const branch = page
     .locator('.repository-refs .repo-ref[title*="feature/"]')
     .first();
@@ -4506,7 +4969,13 @@ test("Branch comparison opens a Diff tab and an older file response cannot repla
   await page
     .getByRole("menuitem", { name: "与当前 Branch 比较", exact: true })
     .click();
-  await expect(panel.locator(".compare-capture")).toContainText("feature/");
+  await expect(
+    (await openComparisonScope(panel))
+      .locator(".history-endpoint")
+      .filter({ hasText: "feature/" })
+      .first(),
+  ).toBeVisible();
+  await closeComparisonScope(panel);
   await expect(panel.locator(".compare-empty")).toContainText("没有文件差异");
 });
 
@@ -5160,7 +5629,9 @@ test("Context: background updates cannot overwrite a note draft or its expected 
     (window as any).fixture.emitNativeEvent("proof:close-active-view"),
   );
   await expect(
-    page.locator(".workspace-tabs .view-tab").filter({ hasText: /^本地变更/ }),
+    page
+      .locator(".workspace-sidebar .view-tab")
+      .filter({ hasText: /^本地变更/ }),
   ).toHaveAttribute("aria-current", "page");
   await expect(dialog.getByLabel("本地备注", { exact: true })).toBeFocused();
   expect(await page.evaluate(() => (window as any).fixture.windowCloses)).toBe(
@@ -6124,11 +6595,12 @@ test("historical Diff exposes grouping, collapsible panes and a separate window"
     tab.getByRole("button", { name: "收起文件栏", exact: true }),
   ).toBeVisible();
   await expect(
-    tab.getByRole("button", {
+    (await openComparisonScope(tab)).getByRole("button", {
       name: "在独立窗口打开 Diff",
       exact: true,
     }),
   ).toBeEnabled();
+  await closeComparisonScope(tab);
 });
 
 test("historical groups stay scoped while panes collapse and window requests freeze the pair", async ({
@@ -6179,9 +6651,12 @@ test("historical groups stay scoped while panes collapse and window requests fre
   await expect(tab.locator(".comparison-ai")).toHaveCount(0);
   await tab.getByRole("button", { name: "显示文件栏", exact: true }).click();
   await expect(tab.locator(".group-toggle").first()).toContainText(groupTitle);
-  await tab
+  await (
+    await openComparisonScope(tab)
+  )
     .getByRole("button", { name: "在独立窗口打开 Diff", exact: true })
     .click();
+  await closeComparisonScope(tab);
   const opened = await page.evaluate(
     () => (window as any).fixture.windowSelection,
   );
@@ -7228,7 +7703,7 @@ test("Diff tabs separate click activation from drag and keyboard ordering", asyn
 }) => {
   await openFixture(page, true);
   const history = page.getByRole("tab", { name: "History", exact: true }),
-    tabs = page.locator(".diff-tab-button");
+    tabs = page.locator(".workspace-sidebar:visible .diff-tab-button");
   await history.click();
   await page
     .getByRole("listbox", { name: "提交列表与分支关系" })
@@ -7247,7 +7722,7 @@ test("Diff tabs separate click activation from drag and keyboard ordering", asyn
     to = (await tabs.first().boundingBox())!;
   await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
   await page.mouse.down();
-  await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, {
+  await page.mouse.move(from.x + from.width / 2, to.y + to.height / 2, {
     steps: 12,
   });
   await page.mouse.up();
@@ -7257,7 +7732,7 @@ test("Diff tabs separate click activation from drag and keyboard ordering", asyn
   await history.click();
   await tabs.first().click();
   await expect(tabs.first()).toHaveAttribute("aria-selected", "true");
-  await tabs.first().press("Meta+Shift+ArrowRight");
+  await tabs.first().press("Meta+Shift+ArrowDown");
   await expect.poll(() => tabs.allTextContents()).toEqual(before);
 });
 

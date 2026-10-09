@@ -7,13 +7,14 @@ export const isMacDesktop = isDesktop && /Mac/.test(navigator.platform);
 export function useWindowMenu(
   onClose: () => void,
   onError: (error: unknown) => void,
+  enabled = true,
 ) {
   const actions = useRef({ onClose, onError });
   useLayoutEffect(() => {
     actions.current = { onClose, onError };
   });
   useEffect(() => {
-    if (!isMacDesktop) return;
+    if (!isMacDesktop || !enabled) return;
     let disposed = false;
     let stop: (() => void) | undefined;
     void listen("proof:close-active-view", () => {
@@ -31,5 +32,5 @@ export function useWindowMenu(
       disposed = true;
       stop?.();
     };
-  }, []);
+  }, [enabled]);
 }

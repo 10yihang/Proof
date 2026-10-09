@@ -55,6 +55,8 @@ export function EditorView({
   active,
   changedFiles,
   onChanged,
+  onDirtyChange,
+  onSavingChange,
 }: {
   workspaceId: string;
   fontSize: number;
@@ -65,6 +67,10 @@ export function EditorView({
   changedFiles?: ChangedFile[];
   /** 保存成功后通知外层刷新 Changes。 */
   onChanged: () => void;
+  /** Unsaved text requires confirmation before closing the project. */
+  onDirtyChange?: (dirty: boolean) => void;
+  /** An in-flight save keeps the project mounted until the write completes. */
+  onSavingChange?: (saving: boolean) => void;
 }) {
   const request = useRequest();
   const [files, setFiles] = useState<string[] | null>(null);
@@ -76,6 +82,23 @@ export function EditorView({
   const [error, setError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const dirtyListener = useRef(onDirtyChange);
+  dirtyListener.current = onDirtyChange;
+  const savingListener = useRef(onSavingChange);
+  savingListener.current = onSavingChange;
+  useEffect(() => {
+    dirtyListener.current?.(dirty);
+  }, [dirty, onDirtyChange]);
+  useEffect(() => {
+    savingListener.current?.(saving);
+  }, [saving, onSavingChange]);
+  useEffect(
+    () => () => {
+      dirtyListener.current?.(false);
+      savingListener.current?.(false);
+    },
+    [],
+  );
   const [staleExternal, setStaleExternal] = useState(false);
   const [staleDialog, setStaleDialog] = useState(false);
   const [pendingRevision, setPendingRevision] = useState<string | null>(null);
@@ -505,12 +528,14 @@ export function EditorView({
 
   // 自动保存：每次编辑后 800ms 防抖；冲突弹窗或报错期间暂停，避免失败重试循环。
   useEffect(() => {
-    if (!autoSave || !dirty || saving || !editable || staleExternal) return;
+    if (!active || !autoSave || !dirty || saving || !editable || staleExternal)
+      return;
     if (staleDialog || error) return;
     const timer = setTimeout(() => void save(), 800);
     return () => clearTimeout(timer);
   }, [
     autoSave,
+    active,
     dirty,
     saving,
     editable,
@@ -536,7 +561,7 @@ export function EditorView({
 
   // 历史栏：打开且有选中文件时加载该文件的提交历史。
   useEffect(() => {
-    if (!historyOpen || !selected) return;
+    if (!active || !historyOpen || !selected) return;
     let cancelled = false;
     setHistoryEntries(null);
     setHistoryError(null);
@@ -550,7 +575,7 @@ export function EditorView({
     return () => {
       cancelled = true;
     };
-  }, [historyOpen, selected, request, workspaceId]);
+  }, [active, historyOpen, selected, request, workspaceId]);
 
   function toggleFolder(key: string) {
     setExpandedFolders((previous) => {
@@ -1022,7 +1047,7 @@ export function EditorView({
           </div>
         </CardSplit>
       </CardSplit>
-      {staleDialog && doc && (
+      {active && staleDialog && doc && (
         <Modal
           title={t("文件已在磁盘上更改。")}
           onClose={() => setStaleDialog(false)}
@@ -1050,7 +1075,7 @@ export function EditorView({
           </div>
         </Modal>
       )}
-      {pendingRevision && (
+      {active && pendingRevision && (
         <Modal
           title={t("未保存的更改")}
           onClose={() => setPendingRevision(null)}
@@ -1073,7 +1098,7 @@ export function EditorView({
           </div>
         </Modal>
       )}
-      {deleting && (
+      {active && deleting && (
         <Modal title={t("删除文件")} onClose={() => setDeleting(null)}>
           <p>{t("确定删除 {v0} 吗？", { v0: deleting })}</p>
           <p className="editor-modal-hint">

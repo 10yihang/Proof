@@ -8,7 +8,7 @@
 
 
 - Local changes 左侧 **AI Group Changes** 根据当前 Diff 生成逻辑分组。没有现有分组时应用结果；已有分组时显示 **Apply groups**。文件侧的选择框可移到其他组、新组或 Ungrouped，组标题旁提供 Rename / Ungroup，顶部支持 Ungroup all。
-- 右侧 **Context / AI Review** 切换。选择本机 Coding Agent 后点击 **Review Current Change** 或 **Review All Changes**。Current 对应选中文件所在组；未分组时只分析当前文件。
+- 右侧 **Context / AI Review** 切换。选择本机 Coding Agent 后点击 **Review Current Change** 或 **Review All Changes**。Current 的审查焦点对应选中文件所在组；未分组时聚焦当前文件。Current / All 限定需要评价和定位 Finding 的变化，均可只读调查整个仓库中的关联实现、未改动的调用方、测试、文档和配置（包括相关 ignored 文件）。
 - 独立 Diff tab 和窗口支持 AI 分组与 AI Review，分析该视图冻结的 base / target；分组独立保存，可手动调整。All 仅覆盖此比较；Current 仅覆盖当前文件。不会把历史比较替换成 Local changes。
 - 报告包含 Summary、Overall Risk、Findings、Behavior changes、Missing tests、Review priority。点击 Finding 定位并突出显示对应 Diff 行。AI 输出不触发 `mark_reviewed` / `mark_comparison_reviewed`。
 - 每次用户点击才调用 CLI。打开页面、检测安装、刷新 Git、切换文件和收到 Observer 事件都不运行模型。点击动作旁显示 CLI、范围和额度归属，不提供聊天框或 API Key 表单。
@@ -62,7 +62,7 @@ claude --print --safe-mode --output-format stream-json --verbose
 
 首个经过验证的执行平台为 macOS 原生 CLI。外层 sandbox-exec 禁止所有文件写入，仅允许本任务私有运行目录和 /dev/null；辅助范围证据位于另一个临时目录，CLI 与子进程都不能修改。原仓库、Git 元数据、其他 Agent 配置 / Session 同样禁止写入。允许 CLI self-exec、系统认证辅助程序和受控的 Shell、读取、搜索、Git 查询可执行文件；用户 Hooks / MCP / Plugins 等扩展仍禁用。取消只终止自有进程组。
 
-不再复制 base / index / workspace 项目视图；ignored 文件、关联文档和超过 4 MiB 的文件仍可由 Agent 按需读取。原项目快照的 256 MiB / 100,000 路径限制已移除。辅助 canonical patches 最多 128 MiB / 20,000 文件侧，现有单文件 Diff 读取保护保留。清单只限定审查对象，不限定项目上下文。历史版本通过固定 Git OID 查询；实时文件可变化，报告附带说明并保留原 Diff token 过期保护。临时范围证据和 CLI 运行目录在任务回收时删除。
+不再复制 base / index / workspace 项目视图；ignored 文件、关联文档和超过 4 MiB 的文件仍可由 Agent 按需读取。原项目快照的 256 MiB / 100,000 路径限制已移除。辅助 canonical patches 最多 128 MiB / 20,000 文件侧，现有单文件 Diff 读取保护保留。清单只限定审查对象，不限定项目上下文。Staged 的相关已跟踪上下文读取 Index 版本，Unstaged 区分 Index 与工作区；历史比较的相关已跟踪上下文（包括未出现在 Patch 中的文件）通过相同固定 base / target OID 查询。当前工作区和 ignored 配置只能作为当前背景，不能当作历史 target 的证据；缺少相应历史上下文必须说明。实时文件可变化，报告附带说明并保留原 Diff token 过期保护。临时范围证据和 CLI 运行目录在任务回收时删除。
 
 搜索固定安装位置 `/opt/homebrew/bin`、`/usr/local/bin` 以及用户 `.local/bin`、`.cargo/bin`、`.npm-global/bin`，不使用仓库内 PATH、shell alias 或 function。解析所有符号链接来源及最终程序目录，复用 `trusted_program_workspace` 检查；启动前和结果返回前核对信任、程序身份及 data epoch。程序身份检测不构成发布者认证。
 
@@ -163,3 +163,7 @@ FileDiff 的构建规则与 UI 共用，保留 token、base、kind、hunk 行范
 Git 在一个进程中查询多个目录的 `check-attr --all` 时，属性输出顺序可能受此前路径影响。为保持既有 UI snapshot / Review token，零或一个 attribute 的路径批量读取；多个 attributes 的路径单独读取原始顺序。前后两轮都执行这一规则，避免通过更改 hash 规则掩盖兼容问题。含多个 attributes 的项目会比普通夹具多一些 Git 查询。
 
 实测方法及进程计数见 [PERFORMANCE.md](PERFORMANCE.md)。回归覆盖普通 UI Diff 与批量 AI 证据的逐字段比较、混合两侧、rename / 重建来源、binary、文件类型和 symlink、特殊 UTF-8 路径、attributes 顺序、配置 / Index / HEAD / 文件变化和取消。自动测试仅准备输入，不运行真实 Agent 或使用模型额度。
+
+## Finding 当前位置
+
+本地审查结果支持定位当前 Worktree 代码和查看审查原位置。报告保存有按版本固定的只读代码锚点；代码变化时自动更新当前位置，无法证明唯一对应时明确标注待复核。旧本地记录没有锚点时只能查看当前文件及限制，不能猜测已变化的原行号。详见 [Finding 定位](FINDING-LOCATIONS.md)。

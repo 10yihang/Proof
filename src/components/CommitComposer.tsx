@@ -5,7 +5,7 @@ import type { AiController } from "../ai";
 import type { Changes } from "../types";
 import { AiTaskProgress } from "./AiTaskProgress";
 import { AiSessionLink } from "./AiSessionLink";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   CaretDown,
   GitCommit,
@@ -32,6 +32,8 @@ export function CommitComposer({
   changes,
   ai,
   onAgentSettings,
+  active = true,
+  onPendingChange,
 }: {
   message: string;
   onMessage: (message: string) => void;
@@ -50,9 +52,19 @@ export function CommitComposer({
   changes: Changes;
   ai: AiController;
   onAgentSettings: () => void;
+  active?: boolean;
+  onPendingChange?: (pending: boolean) => void;
 }) {
   const commitAi = useAiCommit(changes, ai.provider, amend, message, onMessage);
+  const pendingListener = useRef(onPendingChange);
+  pendingListener.current = onPendingChange;
+  const pending = !!commitAi.pending;
+  useEffect(() => {
+    pendingListener.current?.(pending);
+  }, [pending, onPendingChange]);
+  useEffect(() => () => pendingListener.current?.(false), []);
   const canGenerate =
+    active &&
     !disabled &&
     !demo &&
     !busy &&

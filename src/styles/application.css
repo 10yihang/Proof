@@ -9,3 +9,8 @@
 @import "./page-cards.css";
 @import "./card-resize.css";
 @import "./motion.css";
+
+@import "./project-tabs.css";
+@import "./workspace-navigation.css";
+
+@import "./density.css";

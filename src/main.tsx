@@ -4,7 +4,7 @@ import React from "react";
 import { useDiffEvents } from "./diff-events";
 import { clearSyntaxCache } from "./syntax";
 import ReactDOM from "react-dom/client";
-import App from "./App";
+import { ProjectWorkspace } from "./components/ProjectWorkspace";
 import { UIProvider } from "./components/ui/provider";
 import { DiffWindow } from "./components/DiffWindow";
 import "./styles/theme.css";
@@ -50,7 +50,7 @@ function AppShell() {
   if (new URLSearchParams(location.search).has("diffWindow"))
     return <DiffWindow key={session.key} />;
   return (
-    <App
+    <ProjectWorkspace
       key={session.key}
       initialWorkspaceId={session.restore}
       initialDataNotice={session.notice}

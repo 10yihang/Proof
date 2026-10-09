@@ -1,5 +1,12 @@
 import { PointerActivationConstraints } from "@dnd-kit/dom";
-import { useId, useLayoutEffect, useRef, type RefObject } from "react";
+import {
+  Fragment,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useSyncExternalStore,
+  type RefObject,
+} from "react";
 import { Tabs } from "@base-ui/react/tabs";
 import { DragDropProvider, DragOverlay, PointerSensor } from "@dnd-kit/react";
 import { useSortable, isSortable } from "@dnd-kit/react/sortable";
@@ -10,6 +17,7 @@ import {
   Files,
   GitCommit,
   GitDiff,
+  SidebarSimple,
   X,
 } from "@phosphor-icons/react";
 import { Button } from "./ui/controls";
@@ -22,6 +30,55 @@ const tabPointer = PointerSensor.configure({
     new PointerActivationConstraints.Distance({ value: 6 }),
   ],
 });
+const sidebarStorageKey = "proof.workspace-sidebar";
+const sidebarChangeEvent = "proof-workspace-sidebar-change";
+let fallbackSidebarState: "collapsed" | "expanded" | null = null;
+function getSidebarState() {
+  let preference = fallbackSidebarState;
+  try {
+    if (preference === null) {
+      const stored = localStorage.getItem(sidebarStorageKey);
+      if (stored === "collapsed" || stored === "expanded") preference = stored;
+    }
+  } catch {
+    // Keep the control usable when persistence is unavailable.
+  }
+  return (
+    preference ??
+    (window.matchMedia("(max-width: 1180px)").matches
+      ? "auto-collapsed"
+      : "auto-expanded")
+  );
+}
+function subscribeSidebarState(notify: () => void) {
+  const viewport = window.matchMedia("(max-width: 1180px)");
+  const onStorage = (event: StorageEvent) => {
+    if (event.key === sidebarStorageKey || event.key === null) {
+      fallbackSidebarState =
+        event.newValue === "collapsed" || event.newValue === "expanded"
+          ? event.newValue
+          : null;
+      notify();
+    }
+  };
+  window.addEventListener(sidebarChangeEvent, notify);
+  window.addEventListener("storage", onStorage);
+  viewport.addEventListener("change", notify);
+  return () => {
+    window.removeEventListener(sidebarChangeEvent, notify);
+    window.removeEventListener("storage", onStorage);
+    viewport.removeEventListener("change", notify);
+  };
+}
+function setSidebarState(state: "collapsed" | "expanded") {
+  fallbackSidebarState = state;
+  try {
+    localStorage.setItem(sidebarStorageKey, state);
+  } catch {
+    // The shared in-memory state still follows the user's choice.
+  }
+  window.dispatchEvent(new Event(sidebarChangeEvent));
+}
 export type WorkspaceView =
   "changes" | "commit" | "history" | "files" | `diff:${string}`;
 export interface ComparisonTab {
@@ -48,7 +105,17 @@ export function WorkspaceTabs({
   onReorder: (source: string, target: string) => void;
 }) {
   const group = useId();
+  const listId = useId();
   const root = useRef<HTMLElement>(null);
+  const sidebarState = useSyncExternalStore(
+    subscribeSidebarState,
+    getSidebarState,
+    () => "auto-expanded" as const,
+  );
+  const collapsed =
+    sidebarState === "collapsed" ||
+    (sidebarState === "auto-collapsed" && comparisons.length === 0);
+  const toggleLabel = t(collapsed ? "展开侧边栏" : "收起侧边栏");
   useLayoutEffect(() => {
     const nav = root.current;
     if (!nav) return;
@@ -69,6 +136,7 @@ export function WorkspaceTabs({
     {
       id: "changes",
       label: t("Local changes"),
+      shortLabel: t("Changes"),
       icon: Files,
       count: changesCount,
     },
@@ -90,7 +158,12 @@ export function WorkspaceTabs({
     />
   );
   return (
-    <nav ref={root} className="workspace-tabs" aria-label={t("Worktree")}>
+    <nav
+      ref={root}
+      className={`workspace-tabs workspace-sidebar ${collapsed ? "is-collapsed" : "is-expanded"}${comparisons.length ? " with-comparisons" : ""}`}
+      data-sidebar-state={collapsed ? "collapsed" : "expanded"}
+      aria-label={t("Worktree")}
+    >
       <LayoutGroup id={group}>
         <DragDropProvider
           sensors={[tabPointer]}
@@ -103,43 +176,95 @@ export function WorkspaceTabs({
           }}
         >
           <Tabs.List
+            id={listId}
             className="workspace-tab-list flex min-w-0 flex-1 items-stretch"
             activateOnFocus={false}
             aria-label={t("Worktree")}
+            aria-orientation="vertical"
+            onKeyDownCapture={(event) => {
+              if (
+                event.nativeEvent.isComposing ||
+                event.keyCode === 229 ||
+                event.metaKey ||
+                event.ctrlKey ||
+                event.altKey ||
+                !["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)
+              )
+                return;
+              event.preventDefault();
+              event.stopPropagation();
+              const tabs = Array.from(
+                event.currentTarget.querySelectorAll<HTMLButtonElement>(
+                  ".view-tab, .diff-tab-button",
+                ),
+              );
+              const origin = event.target as HTMLElement;
+              const current =
+                origin.closest<HTMLButtonElement>(
+                  ".view-tab, .diff-tab-button",
+                ) ??
+                origin
+                  .closest(".diff-tab-item")
+                  ?.querySelector<HTMLButtonElement>(".diff-tab-button");
+              const index = current ? tabs.indexOf(current) : -1;
+              const next =
+                event.key === "Home"
+                  ? 0
+                  : event.key === "End"
+                    ? tabs.length - 1
+                    : (index +
+                        (event.key === "ArrowDown" ? 1 : -1) +
+                        tabs.length) %
+                      tabs.length;
+              const target = tabs[next];
+              target?.focus({ preventScroll: true });
+              (target?.closest(".diff-tab-item") ?? target)?.scrollIntoView({
+                block: "nearest",
+                inline: "nearest",
+              });
+            }}
           >
             {views.map(({ id, label, icon: Icon, ...view }, index) => (
-              <Tabs.Tab
-                key={id}
-                value={id}
-                className={`view-tab ${active === id ? "active" : ""}`}
-                ref={id === "history" ? historyRef : undefined}
-                aria-current={active === id ? "page" : undefined}
-                title={`${label} · ⌘${index + 1}`}
-              >
-                <Icon size={15} aria-hidden="true" />
-                {label}
-                {"count" in view && (
-                  <span className="tab-count">{view.count}</span>
+              <Fragment key={id}>
+                <Tabs.Tab
+                  value={id}
+                  className={`view-tab ${active === id ? "active" : ""}`}
+                  ref={id === "history" ? historyRef : undefined}
+                  aria-current={active === id ? "page" : undefined}
+                  aria-label={
+                    "count" in view ? `${label} ${view.count}` : label
+                  }
+                  title={`${label} · ⌘${index + 1}`}
+                >
+                  <Icon size={15} aria-hidden="true" />
+                  <span className="view-tab-label">
+                    {"shortLabel" in view ? view.shortLabel : label}
+                  </span>
+                  {"count" in view && (
+                    <span className="tab-count">{view.count}</span>
+                  )}
+                  {active === id && indicator}
+                </Tabs.Tab>
+                {id === "history" && comparisons.length > 0 && (
+                  <div className="diff-tab-strip">
+                    {comparisons.map((item, index) => (
+                      <SortableDiffTab
+                        key={item.id}
+                        item={item}
+                        index={index}
+                        active={active === item.id}
+                        indicator={indicator}
+                        onClose={onClose}
+                        onMove={(direction) => {
+                          const target = comparisons[index + direction];
+                          if (target) onReorder(item.id, target.id);
+                        }}
+                      />
+                    ))}
+                  </div>
                 )}
-                {active === id && indicator}
-              </Tabs.Tab>
+              </Fragment>
             ))}
-            <span className="diff-tab-strip">
-              {comparisons.map((item, index) => (
-                <SortableDiffTab
-                  key={item.id}
-                  item={item}
-                  index={index}
-                  active={active === item.id}
-                  indicator={indicator}
-                  onClose={onClose}
-                  onMove={(direction) => {
-                    const target = comparisons[index + direction];
-                    if (target) onReorder(item.id, target.id);
-                  }}
-                />
-              ))}
-            </span>
           </Tabs.List>
           <DragOverlay dropAnimation={reduced ? null : { duration: 150 }}>
             {(source) => (
@@ -150,6 +275,17 @@ export function WorkspaceTabs({
           </DragOverlay>
         </DragDropProvider>
       </LayoutGroup>
+      <Button
+        className="workspace-sidebar-toggle"
+        aria-label={toggleLabel}
+        aria-expanded={!collapsed}
+        aria-controls={listId}
+        title={toggleLabel}
+        onClick={() => setSidebarState(collapsed ? "expanded" : "collapsed")}
+      >
+        <SidebarSimple size={15} aria-hidden="true" />
+        <span className="workspace-sidebar-toggle-label">{toggleLabel}</span>
+      </Button>
     </nav>
   );
 }
@@ -188,14 +324,19 @@ function SortableDiffTab({
           !event.nativeEvent.isComposing &&
           (event.metaKey || event.ctrlKey) &&
           event.shiftKey &&
-          ["ArrowLeft", "ArrowRight"].includes(event.key)
+          ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(
+            event.key,
+          )
         ) {
           event.preventDefault();
           event.stopPropagation();
-          onMove(event.key === "ArrowLeft" ? -1 : 1);
+          onMove(["ArrowUp", "ArrowLeft"].includes(event.key) ? -1 : 1);
         }
       }}
       className={`diff-tab-item ${active ? "active" : ""} ${isDragSource ? "is-dragging" : ""}`}
+      onMouseDown={(event) => {
+        if (event.button === 1) event.preventDefault();
+      }}
       onAuxClick={(event) => {
         if (event.button === 1) {
           event.preventDefault();
@@ -208,10 +349,10 @@ function SortableDiffTab({
         ref={handleRef}
         className="diff-tab-button"
         aria-current={active ? "page" : undefined}
+        aria-label={`${t("Diff")} ${label}`}
         title={`${label}\n${t("拖动排序，⌘/Ctrl Shift ←/→ 调整顺序")}`}
       >
         <GitDiff size={15} aria-hidden="true" />
-        {t("Diff")}{" "}
         <code>
           {item.selection.base
             ? `${item.selection.base.slice(0, 5)} ↔ ${item.selection.target.slice(0, 5)}`

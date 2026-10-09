@@ -11,6 +11,7 @@ mod editor;
 #[cfg(target_os = "macos")]
 mod editor_metadata;
 mod error;
+mod finding_location;
 mod git;
 mod graph;
 mod guarded_file;
@@ -47,6 +48,7 @@ pub use diagnostics::*;
 pub use diff_load::{DiffRead, DiffSummary};
 pub use editor::*;
 pub use error::{Error, Result};
+pub use finding_location::*;
 pub use history_actions::*;
 pub use history_fetch::HistoryFetch;
 pub use hook_registry::*;

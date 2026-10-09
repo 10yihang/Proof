@@ -36,6 +36,7 @@ mod diagnostics;
 mod diff_windows;
 #[cfg(unix)]
 mod observer;
+mod quit;
 mod read_requests;
 mod review_export;
 mod terminal;
@@ -196,6 +197,15 @@ async fn proof_command(
                 #[cfg(not(unix))]
                 dispatch_with_progress(&core, &command, args, &progress)
             };
+            if matches!(command.as_str(), "ui_language" | "set_ui_language") {
+                if let Ok(value) = &result {
+                    if let Ok(language) =
+                        serde_json::from_value::<proof_core::UiLanguage>(value.clone())
+                    {
+                        app.state::<quit::QuitState>().set_language(language);
+                    }
+                }
+            }
             #[cfg(target_os = "macos")]
             if result.is_ok() && matches!(command.as_str(), "set_ui_language" | "delete_local_data")
             {
@@ -367,6 +377,11 @@ fn dispatch_with_progress(
         "ai_review_report" => serde_json::to_value(
             proof.ai_review_report(string(&args, "workspaceId")?, string(&args, "reportId")?)?,
         ),
+        "resolve_finding_location" => serde_json::to_value(proof.resolve_finding_location(
+            string(&args, "workspaceId")?,
+            string(&args, "reportId")?,
+            serde_json::from_value(args["findingIndex"].clone())?,
+        )?),
         "set_ai_finding_decision" => serde_json::to_value(proof.set_ai_finding_decision(
             string(&args, "workspaceId")?,
             string(&args, "reportId")?,
@@ -682,7 +697,8 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .manage(updater::UpdateState::default());
+        .manage(updater::UpdateState::default())
+        .manage(quit::QuitState::default());
     #[cfg(target_os = "macos")]
     let builder = builder
         .menu(window_menu::create)
@@ -693,6 +709,12 @@ pub fn run() {
                 .map(std::path::PathBuf::from)
                 .unwrap_or(app.path().app_data_dir()?);
             let core = Proof::open(&data_dir).map(|proof| Arc::new(Mutex::new(proof)));
+            if let Ok(core) = &core {
+                if let Ok(proof) = core.lock() {
+                    app.state::<quit::QuitState>()
+                        .set_language(proof.ui_language().unwrap_or_default());
+                }
+            }
             app.manage(diagnostics::ApplicationDiagnosticState(Arc::new(
                 Mutex::new(proof_core::ApplicationDiagnostics::new(
                     data_dir.clone(),
@@ -724,9 +746,12 @@ pub fn run() {
                 String,
                 watcher::WorkspaceWatch,
             >::new()));
+            #[cfg(target_os = "macos")]
+            quit::install(app.handle())?;
             Ok(())
         })
         .on_window_event(|window, event| {
+            quit::on_window_event(window, event);
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 if let Some(reads) = window.try_state::<read_requests::ReadRequests>() {
                     reads.cancel_owner(window.label());
@@ -771,8 +796,9 @@ pub fn run() {
             terminal::terminal_resize,
             terminal::terminal_close
         ])
-        .run(tauri::generate_context!())
-        .expect("Proof could not start");
+        .build(tauri::generate_context!())
+        .expect("Proof could not start")
+        .run(quit::on_run_event);
 }
 
 #[cfg(all(test, unix))]

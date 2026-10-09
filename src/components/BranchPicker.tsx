@@ -26,12 +26,14 @@ export function BranchPicker({
   changes,
   demo,
   busy,
+  active = true,
   onSwitch,
   actions,
 }: {
   changes: Changes;
   demo: boolean;
   busy: boolean;
+  active?: boolean;
   actions: HistoryActions;
   onSwitch: (
     name: string,
@@ -64,6 +66,7 @@ export function BranchPicker({
   function openMenu(event: React.MouseEvent, branch: BranchEntry) {
     event.preventDefault();
     event.stopPropagation();
+    if (!active) return;
     const rect = event.currentTarget.getBoundingClientRect();
     setOpened(false);
     setMenu({
@@ -73,7 +76,13 @@ export function BranchPicker({
     });
   }
   useEffect(() => {
-    if (!opened) return;
+    if (!active) {
+      setOpened(false);
+      setMenu(null);
+    }
+  }, [active]);
+  useEffect(() => {
+    if (!active || !opened) return;
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -97,6 +106,7 @@ export function BranchPicker({
       cancelled = true;
     };
   }, [
+    active,
     opened,
     changes.workspace.id,
     changes.head,
@@ -105,7 +115,7 @@ export function BranchPicker({
     revision,
   ]);
   async function select(branch: BranchEntry) {
-    if (selecting.current || busy) return;
+    if (!active || selecting.current || busy) return;
     if (branch.current) {
       setOpened(false);
       return;
@@ -140,7 +150,7 @@ export function BranchPicker({
       <Combobox.Root<string>
         items={items}
         filter={null}
-        open={opened}
+        open={active && opened}
         value={
           branches.find((b) => b.current)
             ? branchRef(branches.find((b) => b.current)!)
@@ -149,6 +159,10 @@ export function BranchPicker({
         inputValue={search}
         onInputValueChange={setSearch}
         onOpenChange={(open, details) => {
+          if (open && !active) {
+            details.cancel();
+            return;
+          }
           if (details.reason === "item-press" || selecting.current) {
             details.cancel();
             return;
@@ -168,7 +182,7 @@ export function BranchPicker({
           render={
             <Button
               className="branch-picker"
-              disabled={busy}
+              disabled={busy || !active}
               onContextMenu={(event) => {
                 if (currentBranch) openMenu(event, currentBranch);
               }}
@@ -192,6 +206,7 @@ export function BranchPicker({
           >
             <Combobox.Popup
               initialFocus={input}
+              finalFocus={active ? undefined : false}
               aria-label={t("Switch branch")}
               className="proof-branch-popup w-80 origin-(--transform-origin) overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-xl outline-none duration-150 data-starting-style:scale-95 data-starting-style:opacity-0 data-ending-style:opacity-0"
             >
@@ -283,7 +298,11 @@ export function BranchPicker({
                   <Button
                     className="branch-option create-branch w-full border-t border-border px-3 py-2 text-[12px]"
                     disabled={
-                      busy || loading || demo || !changes.workspace.trusted
+                      !active ||
+                      busy ||
+                      loading ||
+                      demo ||
+                      !changes.workspace.trusted
                     }
                     onClick={() =>
                       void onSwitch(search.trim(), true).then((ok) => {
@@ -315,7 +334,7 @@ export function BranchPicker({
           onClick={(event) => openMenu(event, currentBranch)}
         />
       )}
-      {menu && (
+      {active && menu && (
         <GitContextMenu
           x={menu.x}
           y={menu.y}

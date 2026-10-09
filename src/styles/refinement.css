@@ -309,3 +309,27 @@
     padding-inline: 7px;
   }
 }
+
+.app .inspector-tabs {
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--radius-control);
+  background: var(--hover);
+}
+.app .inspector-tabs button {
+  min-height: 28px;
+  padding: 4px 10px;
+  background: transparent;
+}
+.app .inspector-tabs .proof-segment-indicator {
+  background: var(--bg);
+}
+.app .inspector-tabs button[aria-pressed="true"] {
+  color: var(--text);
+  font-weight: 600;
+  background: transparent;
+}
+.app .context-footer {
+  height: 30px;
+  font-size: 10px;
+}

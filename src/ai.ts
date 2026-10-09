@@ -156,6 +156,7 @@ export function useAi(
     targetOid: string;
     files: ChangedFile[];
   } | null,
+  active = true,
 ) {
   const request = useRequest(),
     reader = useReadRequest();
@@ -182,11 +183,15 @@ export function useAi(
   const generation = useRef(0),
     running = useRef(false),
     editing = useRef(false);
+  const initialGroupsLoaded = useRef(false);
+  const initialProvidersLoaded = useRef(false);
   const workspace = changes?.workspace.id;
-  const reviewState = useAiReports(workspace, groupScope, demo);
+  const reviewState = useAiReports(workspace, groupScope, demo, active);
   const { report } = reviewState;
+  // A hidden project keeps its AI work and selections. Only a new scope cancels
+  // explicit tasks; activity below controls background reads separately.
   useEffect(() => {
-    const n = ++generation.current;
+    ++generation.current;
     reader.cancel();
     running.current = false;
     editing.current = false;
@@ -194,29 +199,49 @@ export function useAi(
     setPending(null);
     setProgress(null);
     setSuggestion(null);
-    setGroups(emptyGroups());
+    const clearedGroups = emptyGroups();
+    setGroups(clearedGroups);
+    live.current.groups = clearedGroups;
     setGroupReady(false);
     setView("files");
     setError(null);
+    initialGroupsLoaded.current = false;
+    initialProvidersLoaded.current = false;
+    setProviders([]);
     if (!workspace || demo) {
-      setProviders([]);
       setGroupReady(true);
-      return;
     }
+    return () => {
+      ++generation.current;
+      reader.cancel();
+    };
+  }, [workspace, demo, reader, historical, groupScope]);
+  useEffect(() => {
+    if (!active || !workspace || demo) return;
+    const n = generation.current;
+    const revision = live.current.groups.revision;
+    let disposed = false;
+    const valid = () => !disposed && n === generation.current;
     void request<AgentProviderInfo[]>("agent_providers")
       .then((value) => {
-        if (n !== generation.current) return;
+        if (!valid()) return;
         setProviders(value);
-        setProvider(
+        const defaultProvider =
           value.find((p) => p.available && p.isDefault)?.id ??
-            value.find((p) => p.available)?.id ??
-            "codex",
+          value.find((p) => p.available)?.id ??
+          "codex";
+        const firstLoad = !initialProvidersLoaded.current;
+        initialProvidersLoaded.current = true;
+        setProvider((selected) =>
+          firstLoad || !value.some((p) => p.id === selected && p.available)
+            ? defaultProvider
+            : selected,
         );
       })
       .catch((e) => {
-        if (n === generation.current) setError(asError(e));
+        if (valid()) setError(asError(e));
       });
-    if (!historical || comparison)
+    if ((!historical || comparison) && !editing.current)
       void request<ChangeGroups>(
         historical ? "comparison_change_groups" : "change_groups",
         {
@@ -227,27 +252,34 @@ export function useAi(
         },
       )
         .then((value) => {
-          if (n === generation.current) {
+          if (
+            valid() &&
+            !editing.current &&
+            live.current.groups.revision === revision
+          ) {
+            const firstLoad = !initialGroupsLoaded.current;
+            initialGroupsLoaded.current = true;
             setGroups(value);
+            live.current.groups = value;
             setGroupReady(true);
-            if (value.groups.length) setView("groups");
+            if (firstLoad && value.groups.length) setView("groups");
           }
         })
         .catch((e) => {
-          if (n === generation.current) setError(asError(e));
+          if (valid()) setError(asError(e));
         });
     return () => {
-      ++generation.current;
-      reader.cancel();
+      disposed = true;
     };
-  }, [workspace, demo, request, reader, historical, groupScope]);
+  }, [workspace, demo, request, historical, groupScope, active]);
   useEffect(() => {
+    if (!active || demo || !workspace) return;
+    let disposed = false;
     const refresh = () => {
-      if (demo || !workspace) return;
       const n = generation.current;
       void request<AgentProviderInfo[]>("agent_providers")
         .then((value) => {
-          if (n !== generation.current) return;
+          if (disposed || n !== generation.current) return;
           setProviders(value);
           setProvider(
             value.find((p) => p.isDefault && p.available)?.id ??
@@ -256,14 +288,18 @@ export function useAi(
           );
         })
         .catch((e) => {
-          if (n === generation.current) setError(asError(e));
+          if (!disposed && n === generation.current) setError(asError(e));
         });
     };
     window.addEventListener("proof:agent-settings-changed", refresh);
-    return () =>
+    return () => {
+      disposed = true;
       window.removeEventListener("proof:agent-settings-changed", refresh);
-  }, [workspace, demo, request]);
+    };
+  }, [workspace, demo, request, active]);
   useEffect(() => {
+    if (!active || !workspace || demo || (historical && !comparison)) return;
+    let disposed = false;
     const reload = (event: Event) => {
       if (!workspace || demo || (historical && !comparison) || editing.current)
         return;
@@ -295,6 +331,7 @@ export function useAi(
         .then((value) => {
           if (
             n === generation.current &&
+            !disposed &&
             !editing.current &&
             live.current.groups.revision === revision
           ) {
@@ -303,16 +340,17 @@ export function useAi(
           }
         })
         .catch((error) => {
-          if (n === generation.current) setError(asError(error));
+          if (!disposed && n === generation.current) setError(asError(error));
         });
     };
     window.addEventListener("proof:groups-updated", reload);
     window.addEventListener("focus", reload);
     return () => {
+      disposed = true;
       window.removeEventListener("proof:groups-updated", reload);
       window.removeEventListener("focus", reload);
     };
-  }, [workspace, demo, groupScope, historical, request]);
+  }, [workspace, demo, groupScope, historical, request, active]);
   async function save(
     next: AiGroup[],
     revision = live.current.groups.revision,

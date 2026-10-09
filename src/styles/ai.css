@@ -40,22 +40,24 @@
   background: var(--accent-soft);
 }
 .ai-review-panel {
-  padding: 14px;
+  padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 20px;
   min-width: 0;
   font-size: 12px;
-  line-height: 1.55;
+  line-height: 1.65;
   overflow-wrap: anywhere;
 }
 .ai-provider {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
+  font-size: 14px;
 }
 .ai-provider > svg {
   color: var(--accent);
+  flex-shrink: 0;
 }
 .ai-provider select {
   min-width: 0;
@@ -69,10 +71,11 @@
 .ai-review-actions {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 .ai-review-actions button {
   width: 100%;
+  min-height: 34px;
   font-size: 12px;
   justify-content: center;
 }
@@ -100,10 +103,9 @@
   padding-top: 12px;
 }
 .ai-review-panel section h3 {
-  font-size: 11px;
-  color: var(--muted);
-  letter-spacing: 0.045em;
-  margin: 0 0 9px;
+  font-size: 12px;
+  color: var(--text);
+  margin: 0 0 10px;
   font-weight: 600;
 }
 .ai-review-panel section h3 span {
@@ -146,8 +148,8 @@
   background: var(--del-bg);
 }
 .ai-risk.medium {
-  color: var(--lane-2);
-  border-color: color-mix(in srgb, var(--lane-2) 35%, transparent);
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 35%, transparent);
 }
 .ai-risk.low {
   color: var(--add);
@@ -155,26 +157,27 @@
 }
 .ai-finding {
   border: 1px solid var(--border);
-  border-radius: 7px;
-  padding: 10px;
-  margin-bottom: 8px;
+  border-radius: var(--radius-card);
+  padding: 14px;
+  margin-bottom: 12px;
   background: var(--bg);
 }
 .ai-finding-link {
   display: flex;
   width: 100%;
   text-align: left;
-  gap: 6px;
+  gap: 10px;
   align-items: baseline;
   border: 0;
   background: transparent;
   color: var(--text);
-  padding: 6px 0;
+  padding: 8px 0;
   line-height: 1.5;
 }
 .ai-finding-link strong {
   flex: 1;
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 600;
 }
 .ai-finding-link:hover:not(:disabled) {
   color: var(--accent);
@@ -184,14 +187,14 @@
 }
 .ai-location {
   display: block;
-  font-size: 10px;
-  word-break: break-all;
+  font: 11px/1.6 var(--font-mono);
+  overflow-wrap: anywhere;
   color: var(--muted);
-  margin-bottom: 8px;
+  margin-bottom: 12px;
 }
 .ai-suggestion {
-  border-left: 2px solid var(--accent);
-  padding-left: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
   color: var(--muted);
 }
 .ai-progress,
@@ -219,7 +222,7 @@
   margin-top: 4px;
 }
 .ai-stale {
-  color: var(--lane-2);
+  color: var(--warning);
   border: 1px solid var(--border);
 }
 .ai-pulse {
@@ -685,7 +688,7 @@
 }
 .ai-inline-review {
   border: 1px solid var(--border);
-  border-left: 3px solid var(--accent);
+  border-left: 1px solid var(--accent);
   border-radius: 7px;
   background: var(--surface);
   font-family: var(--font-sans, inherit);
@@ -913,4 +916,74 @@
   background: var(--surface);
   border-radius: 4px;
   user-select: all;
+}
+
+/* Review hierarchy: actions, conclusions, then supporting evidence. */
+.ai-review-launch {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: -16px -16px 0;
+  padding: 16px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.ai-provider > strong {
+  flex: 1;
+  font-weight: 600;
+}
+.ai-scope > strong {
+  font: 12px/1.6 var(--font-mono);
+}
+.ai-review-guide,
+.ai-review-request {
+  font-size: 11px;
+  color: var(--muted);
+}
+.ai-review-panel details > summary {
+  cursor: pointer;
+  border-radius: 4px;
+}
+.ai-review-panel details > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.ai-review-guide .ai-help {
+  margin-top: 8px;
+}
+.ai-review-request textarea {
+  margin: 10px 0;
+}
+.ai-review-extra,
+.ai-timeline-disclosure {
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.ai-review-extra > summary,
+.ai-timeline-disclosure > summary {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+}
+.ai-review-extra > summary > span,
+.ai-timeline-disclosure > summary > span {
+  margin-left: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.ai-review-extra > :not(summary),
+.ai-timeline-disclosure > :not(summary) {
+  margin-top: 12px;
+}
+.ai-review-panel .ai-finding p:last-child {
+  margin-bottom: 0;
+}
+.ai-review-panel .ai-report-meta {
+  margin-bottom: 12px;
+}
+.ai-review-panel .ai-risk {
+  padding: 2px 6px;
+  font-weight: 500;
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { t } from "../i18n";
+import { findingModelRange, type FindingLineRange } from "../finding-location";
 import type { MutableRefObject } from "react";
 
 /** 文本编辑器实例的句柄（父组件读取当前内容/聚焦/重置脏基线）。 */
@@ -37,6 +38,8 @@ export function MonacoTextSurface({
   readOnly,
   fontSize,
   handleRef,
+  range,
+  lineNumberStart = 1,
   onDirtyChange,
   onCursorChange,
   onSave,
@@ -49,6 +52,9 @@ export function MonacoTextSurface({
   readOnly: boolean;
   fontSize: number;
   handleRef: MutableRefObject<TextSurfaceHandle | null>;
+  /** Absolute source lines in a read-only finding location view. */
+  range?: FindingLineRange | null;
+  lineNumberStart?: number;
   onDirtyChange?: (dirty: boolean) => void;
   onCursorChange?: (cursor: EditorCursor) => void;
   onSave?: (content: string) => void;
@@ -57,8 +63,24 @@ export function MonacoTextSurface({
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
   // 回调随渲染更新，编辑器实例始终调最新版本（避免闭包陈旧）。
-  const latest = useRef({ onDirtyChange, onCursorChange, onSave });
-  latest.current = { onDirtyChange, onCursorChange, onSave };
+  const latest = useRef({
+    onDirtyChange,
+    onCursorChange,
+    onSave,
+    range,
+    lineNumberStart,
+  });
+  latest.current = {
+    onDirtyChange,
+    onCursorChange,
+    onSave,
+    range,
+    lineNumberStart,
+  };
+  const highlight = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    highlight.current?.();
+  }, [range?.line, range?.endLine, lineNumberStart]);
   useEffect(() => {
     const hostEl = host.current;
     if (!hostEl) return;
@@ -107,6 +129,8 @@ export function MonacoTextSurface({
           scrollBeyondLastLine: false,
           hideCursorInOverviewRuler: true,
           fontSize,
+          lineNumbers: (line) =>
+            String(line + latest.current.lineNumberStart - 1),
           lineHeight: fontSize + 13,
           fontFamily: "SFMono-Regular, Menlo, Consolas, monospace",
           fontLigatures: false,
@@ -124,6 +148,45 @@ export function MonacoTextSurface({
           },
           ariaLabel: readOnly ? t("文件内容，只读") : t("编辑文件内容"),
         });
+        const decorations = editor.createDecorationsCollection();
+        highlight.current = () => {
+          const mapped = readOnly
+            ? findingModelRange(
+                latest.current.range,
+                latest.current.lineNumberStart,
+                model.getLineCount(),
+              )
+            : null;
+          decorations.set(
+            mapped
+              ? [
+                  {
+                    range: new api.Range(
+                      mapped.line,
+                      1,
+                      mapped.endLine,
+                      model.getLineMaxColumn(mapped.endLine),
+                    ),
+                    options: {
+                      isWholeLine: true,
+                      className: "finding-location-line-highlight",
+                      linesDecorationsClassName: "finding-location-line-mark",
+                    },
+                  },
+                ]
+              : [],
+          );
+          if (mapped) {
+            editor.setPosition({ lineNumber: mapped.line, column: 1 });
+            editor.revealLinesInCenter(
+              mapped.line,
+              mapped.endLine,
+              api.editor.ScrollType.Immediate,
+            );
+          }
+          editor.render();
+        };
+        highlight.current();
         // 用 Monaco 的版本号追踪脏状态：undo 回到保存点时自动消除 dirty。
         let savedVersion = model.getAlternativeVersionId();
         const reportCursor = () => {
@@ -131,7 +194,7 @@ export function MonacoTextSurface({
           const selection = editor.getSelection();
           if (!position) return;
           latest.current.onCursorChange?.({
-            line: position.lineNumber,
+            line: position.lineNumber + latest.current.lineNumberStart - 1,
             column: position.column,
             selected:
               selection && !selection.isEmpty()
@@ -199,6 +262,8 @@ export function MonacoTextSurface({
           for (const disposable of disposables) disposable.dispose();
           observer.disconnect();
           themeObserver.disconnect();
+          highlight.current = null;
+          decorations.clear();
           editor.dispose();
           model.dispose();
           tokens.dispose();

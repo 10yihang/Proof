@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Button } from "./ui/controls";
 import { t } from "../i18n";
 import { Code, ArrowRight, ArrowClockwise } from "@phosphor-icons/react";
@@ -9,12 +10,14 @@ export function DeferredDiff({
   onLoad,
   onStage,
   comparison,
+  comparisonControls,
 }: {
   summary: DiffSummary;
   pending: boolean;
   onLoad: () => void;
   onStage?: () => void;
   comparison?: { base: string; target: string };
+  comparisonControls?: ReactNode;
 }) {
   const limited = !summary.canLoad;
   return (
@@ -35,12 +38,14 @@ export function DeferredDiff({
             </div>
           </div>
         </header>
-        <span className="comparison">
-          {comparison?.base ?? (summary.side === "staged" ? "HEAD" : "Index")}
-          <ArrowRight size={12} />
-          {comparison?.target ??
-            (summary.side === "staged" ? "Index" : "Worktree")}
-        </span>
+        {comparisonControls ?? (
+          <span className="comparison">
+            {comparison?.base ?? (summary.side === "staged" ? "HEAD" : "Index")}
+            <ArrowRight size={12} />
+            {comparison?.target ??
+              (summary.side === "staged" ? "Index" : "Worktree")}
+          </span>
+        )}
       </div>
       <div className="deferred-diff-body">
         <Code size={28} />

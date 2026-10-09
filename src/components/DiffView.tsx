@@ -4,6 +4,7 @@ import MonacoDiffSurface, {
   type ReviewWidget,
 } from "./MonacoDiffSurface";
 import { canUseMonaco } from "../monaco-document";
+import { idleReaderBytes, idleReaders } from "../idle-readers";
 import { type ReadingRow } from "../diff-reading";
 import { useHotkeys } from "react-hotkeys-hook";
 import { Button, Input } from "./ui/controls";
@@ -23,6 +24,7 @@ import {
   useRef,
   useState,
   type MutableRefObject,
+  type ReactNode,
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
@@ -68,6 +70,8 @@ import {
   type TextRange,
 } from "../diff-reading";
 
+const emptyReviewWidgets = new Map<number, ReviewWidget[]>();
+
 export type DiffPosition = {
   contextRange?: DiffContextRange;
   contextLines?: number;
@@ -96,6 +100,7 @@ export function DiffView({
   onEditor,
   openingEditor,
   comparison,
+  comparisonControls,
   focused,
   positionRef,
   jumpTo,
@@ -121,6 +126,7 @@ export function DiffView({
   onEditor: () => void;
   openingEditor: boolean;
   comparison?: { base: string; target: string };
+  comparisonControls?: ReactNode;
   focused?: boolean;
   positionRef?: MutableRefObject<DiffPosition | null>;
 }) {
@@ -152,6 +158,7 @@ export function DiffView({
   const localAnchor = useRef<DiffPosition | null>(null);
   const anchor = positionRef ?? localAnchor;
   const reader = useRef({});
+  const [idleEvicted, setIdleEvicted] = useState(false);
   const restoringPosition = useRef(false);
   const restoreGeneration = useRef(0);
   const readingMenu = useRef<HTMLButtonElement>(null);
@@ -229,6 +236,9 @@ export function DiffView({
       ),
     [diff, split, preferences.ignoreWhitespace, searchOpen, displayedContext],
   );
+  const retainedTextBytes = useMemo(() => idleReaderBytes(rows), [rows]);
+  const retainWhenHidden =
+    !raw && !idleEvicted && retainedTextBytes <= idleReaders.maxReaderBytes;
   const annotations = useMemo(
     () => annotationsForDiff(ai?.report ?? null, diff, ai?.stale ?? true),
     [ai?.report, ai?.stale, diff],
@@ -651,23 +661,42 @@ export function DiffView({
       anchor.current.contextLines = lastContextLines.current;
     }
   }
-  // Release full text in hidden tabs. Returning reloads the chosen range and
-  // restores the source-line bookmark without retaining every large reader.
+  // Small recently hidden readers stay warm within one shared idle budget.
+  // Evicted and oversized readers reload the chosen range from their bookmark.
   useEffect(() => {
+    const key = reader.current;
+    const releaseText = () => {
+      if (desiredContext.current === "file") suspendedContext.current = true;
+      setContext((value) => (value?.fullFile ? null : value));
+    };
     if (!paneVisible || raw) {
       ++contextSequence.current;
       onCancelContext();
       setContextBusy(false);
-      if (desiredContext.current === "file") suspendedContext.current = true;
-      setContext((value) => (value?.fullFile ? null : value));
+      if (retainWhenHidden) {
+        idleReaders.retain(key, retainedTextBytes, () => {
+          setIdleEvicted(true);
+          releaseText();
+        });
+      } else releaseText();
     } else {
+      idleReaders.release(key);
+      setIdleEvicted(false);
       const loaded: DiffContextRange = displayedContext?.fullFile
         ? "file"
         : (displayedContext?.contextLines ?? 3);
       if (desiredContext.current !== loaded)
         void expandContext(desiredContext.current, true);
     }
-  }, [paneVisible, raw, diff.id, onCancelContext]);
+    return () => idleReaders.release(key);
+  }, [
+    paneVisible,
+    raw,
+    diff.id,
+    onCancelContext,
+    retainWhenHidden,
+    retainedTextBytes,
+  ]);
   function waitingForContext() {
     const loaded: DiffContextRange = displayedContext?.fullFile
       ? "file"
@@ -842,8 +871,8 @@ export function DiffView({
     return <div className="proof-eof-note">{row.left?.content}</div>;
   }
   const widgets = useMemo(() => {
+    if (!ai?.report) return emptyReviewWidgets;
     const result = new Map<number, ReviewWidget[]>();
-    if (!ai?.report) return result;
     commentsByRow.forEach((findings, row) =>
       result.set(
         row,
@@ -886,7 +915,11 @@ export function DiffView({
             <Code size={20} />
             <div>
               <strong title={diff.path}>{diff.path.split("/").pop()}</strong>
-              <span>
+              <span
+                title={
+                  diff.oldPath ? `${diff.oldPath} → ${diff.path}` : diff.path
+                }
+              >
                 {diff.oldPath ? `${diff.oldPath} → ` : ""}
                 {diff.path}
               </span>
@@ -912,16 +945,19 @@ export function DiffView({
               {t("Split")}
             </Button>
           </div>
-          <span className="comparison">
-            <span>
-              {comparison?.base ?? (diff.side === "staged" ? "HEAD" : "Index")}
+          {comparisonControls ?? (
+            <span className="comparison">
+              <span>
+                {comparison?.base ??
+                  (diff.side === "staged" ? "HEAD" : "Index")}
+              </span>
+              <span aria-hidden="true">→</span>
+              <span>
+                {comparison?.target ??
+                  (diff.side === "staged" ? "Index" : "Worktree")}
+              </span>
             </span>
-            <span aria-hidden="true">→</span>
-            <span>
-              {comparison?.target ??
-                (diff.side === "staged" ? "Index" : "Worktree")}
-            </span>
-          </span>
+          )}
           <div className="toolbar-spacer" />
           {!comparison && (
             <Button
@@ -974,7 +1010,7 @@ export function DiffView({
                   aria-haspopup="dialog"
                 >
                   <SlidersHorizontal size={15} />
-                  {t("阅读工具")}
+                  <span className="reading-tools-label">{t("阅读工具")}</span>
                 </Button>
               }
             />
@@ -1405,6 +1441,7 @@ export function DiffView({
                 path={diff.path}
                 preferences={preferences}
                 visible={paneVisible}
+                retainWhenHidden={retainWhenHidden}
                 search={search}
                 searchRow={searchIndex}
                 finding={findingRange}

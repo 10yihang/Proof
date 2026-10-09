@@ -1,0 +1,217 @@
+.finding-location-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg);
+  font-size: 12px;
+}
+.finding-location-header {
+  flex-shrink: 0;
+  padding: 10px 14px 9px;
+  background: var(--surface-sidebar);
+  border-bottom: 1px solid var(--border);
+}
+.finding-location-topbar,
+.finding-location-path,
+.finding-location-toolbar,
+.finding-location-versions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.finding-location-topbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 9px;
+  min-width: 0;
+}
+.finding-location-path {
+  flex: 1 1 160px;
+  gap: 8px;
+}
+.finding-location-path code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font: 12px/1.5 var(--font-mono);
+  color: var(--text);
+}
+.finding-location-path .tag,
+.finding-location-back {
+  flex-shrink: 0;
+}
+.finding-location-back {
+  margin-left: auto;
+}
+.finding-location-toolbar {
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+}
+.finding-location-versions {
+  flex-wrap: wrap;
+  margin-right: auto;
+  padding: 2px;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+.finding-location-versions .button {
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+  padding: 4px 8px;
+}
+.finding-location-versions .button:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--hover);
+}
+.finding-location-versions .button[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--bg);
+  border-color: transparent;
+}
+.finding-location-candidates .button[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.finding-location-title {
+  display: block;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.55;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.finding-location-pending-title {
+  margin-top: 9px;
+}
+.finding-location-annotation {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 5px 12px;
+  min-width: 0;
+}
+.finding-location-annotation .finding-location-title {
+  flex: 1 1 200px;
+}
+.finding-location-status-label {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 500;
+}
+.finding-location-status,
+.finding-location-candidates,
+.finding-location-error {
+  flex-shrink: 0;
+  padding: 9px 14px 7px;
+  line-height: 1.6;
+}
+.finding-location-candidates,
+.finding-location-error {
+  border-bottom: 1px solid var(--border);
+}
+.finding-location-status p,
+.finding-location-error p,
+.finding-location-candidates p {
+  margin: 3px 0 0;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.finding-location-status.exact,
+.finding-location-status.shifted {
+  color: var(--muted);
+}
+.finding-location-status.modified,
+.finding-location-status.deleted,
+.finding-location-status.ambiguous {
+  color: var(--warning);
+}
+.finding-location-status.unavailable {
+  color: var(--muted);
+}
+.finding-location-error {
+  color: var(--del);
+  background: var(--del-bg);
+}
+.finding-location-candidates {
+  max-height: 150px;
+  overflow: auto;
+}
+.finding-location-candidates > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.finding-location-document-meta {
+  display: flex;
+  flex-shrink: 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 14px 7px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.finding-location-document-meta > span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.finding-location-document-meta > span:last-child {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.finding-location-code {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.finding-location-code .editor-surface {
+  flex: 1;
+  min-height: 0;
+}
+.finding-location-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  padding: 24px;
+  line-height: 1.6;
+}
+.finding-location-note {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 6px 14px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11px;
+}
+.finding-location-line-highlight {
+  background: var(--accent-soft);
+}
+.finding-location-line-mark {
+  border-left: 1px solid var(--accent);
+}
+.finding-location-pane[data-status="modified"] .finding-location-line-highlight,
+.finding-location-pane[data-status="deleted"] .finding-location-line-highlight {
+  background: color-mix(in srgb, var(--lane-2) 13%, transparent);
+}
+.finding-location-pane[data-status="modified"] .finding-location-line-mark,
+.finding-location-pane[data-status="deleted"] .finding-location-line-mark {
+  border-left-color: var(--warning);
+}

@@ -1236,7 +1236,147 @@ fn historical_root_commit_and_unselected_context_are_available_without_checkout(
     assert!(fs::read_to_string(repo.join("auth.rs"))
         .unwrap()
         .contains("allow(true)"));
+    assert!(git(&job.input.project, &["show", &format!("{head}:pool.rs")]).contains("close()"));
+    assert!(!fs::read_to_string(repo.join("pool.rs"))
+        .unwrap()
+        .contains("close()"));
+    assert_eq!(manifest["files"].as_array().unwrap().len(), 1);
+    assert_eq!(manifest["files"][0]["path"], "auth.rs");
     assert_eq!(git(repo, &["rev-parse", "HEAD"]), head);
+    assert!(job.prompt().unwrap().contains(
+        "same exact base/target OIDs in the manifest, including unchanged files absent from the patches"
+    ));
+    assert!(manifest["instructions"].as_str().unwrap().contains(
+        "Current working files and ignored configuration are current context, not evidence of the historical version"
+    ));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn selected_review_findings_depend_on_unchanged_callers_and_ignored_configuration() {
+    let (temp, mut proof, workspace) = fixture();
+    let repo = Path::new(&workspace.path);
+    fs::write(repo.join(".git/info/exclude"), "runtime.cfg\n").unwrap();
+    let source = temp.path().join("context-cli.c");
+    let binary = temp.path().join("context-cli");
+    let mut finding = review();
+    finding["findings"][0]["description"] = json!(
+        "The unchanged caller.rs and ignored runtime.cfg require authentication; this change bypasses that contract."
+    );
+    let mut clear = review();
+    clear["summary"] = json!("The caller or current configuration does not require this check.");
+    clear["findings"] = json!([]);
+    clear["overallRisk"] = json!("unknown");
+    let event = |value: serde_json::Value| {
+        serde_json::to_string(
+            &json!({"type":"item.completed","item":{
+                "type":"agent_message","text":value.to_string()
+            }})
+            .to_string(),
+        )
+        .unwrap()
+    };
+    let code = r#"
+#include <stdio.h>
+#include <string.h>
+static int read_file(const char *path, char *buffer, size_t size) {
+    FILE *file = fopen(path, "r"); if (!file) return 0;
+    size_t length = fread(buffer, 1, size - 1, file); buffer[length] = 0;
+    fclose(file); return 1;
+}
+int main(int argc, char **argv) {
+    for (int i=1; i<argc; i++) if (!strcmp(argv[i], "--help")) {
+        puts("--ignore-user-config --ignore-rules --ephemeral --output-schema"); return 0;
+    }
+    char prompt[16384] = {0}; fread(prompt, 1, sizeof(prompt)-1, stdin);
+    char *start = strstr(prompt, "Task scope: read "); if (!start) return 10;
+    start += strlen("Task scope: read ");
+    char *end = strstr(start, " for the selected"); if (!end) return 11;
+    *end = 0;
+    char manifest[16384], caller[4096], configuration[4096];
+    if (!read_file(start, manifest, sizeof(manifest))) return 12;
+    // The focus contains auth.rs only. Context paths are not promoted into it.
+    if (!strstr(manifest, "auth.rs") || strstr(manifest, "caller.rs") || strstr(manifest, "runtime.cfg")) return 13;
+    if (!read_file("caller.rs", caller, sizeof(caller)) || !read_file("runtime.cfg", configuration, sizeof(configuration))) return 14;
+    for (int i=0; i<2; i++) {
+        FILE *write = fopen(i ? ".git/index" : "auth.rs", "w");
+        if (write) { fclose(write); return 15; }
+    }
+    if (strstr(caller, "authentication_required") && strstr(configuration, "require_authentication=true")) {
+        puts(FINDING_EVENT);
+    } else {
+        puts(CLEAR_EVENT);
+    }
+    puts("{\"type\":\"turn.completed\"}"); return 0;
+}
+"#
+    .replace("FINDING_EVENT", &event(finding))
+    .replace("CLEAR_EVENT", &event(clear));
+    fs::write(&source, code).unwrap();
+    assert!(Command::new("/usr/bin/cc")
+        .arg(&source)
+        .args(["-o"])
+        .arg(&binary)
+        .status()
+        .unwrap()
+        .success());
+    proof
+        .set_agent_settings(AgentSettingsUpdate {
+            expected_revision: 0,
+            default_provider: AgentKind::Codex,
+            codex: AgentOptions {
+                executable_path: Some(binary.to_str().unwrap().into()),
+                model: None,
+            },
+            claude_code: Default::default(),
+            codewiz: None,
+            ocr: None,
+            prompts: None,
+        })
+        .unwrap();
+    for (caller, configuration, expected_findings) in [
+        ("authentication_required", "require_authentication=true", 1),
+        ("authentication_required", "require_authentication=false", 0),
+        ("authentication_optional", "require_authentication=true", 0),
+    ] {
+        fs::write(
+            repo.join("caller.rs"),
+            format!("fn serve() {{ {caller}(auth()); }}\n"),
+        )
+        .unwrap();
+        git(repo, &["add", "caller.rs"]);
+        git(repo, &["commit", "--allow-empty", "-m", "caller contract"]);
+        fs::write(repo.join("runtime.cfg"), configuration).unwrap();
+        let source_before = fs::read(repo.join("auth.rs")).unwrap();
+        let index_before = fs::read(repo.join(".git/index")).unwrap();
+        let mut input = request(&proof, &workspace, AiTask::Review);
+        let AiScope::Local { files, .. } = &mut input.scope else {
+            unreachable!()
+        };
+        *files = Some(vec![AiFileSelection {
+            path: "auth.rs".into(),
+            side: Side::Unstaged,
+            snapshot_token: None,
+        }]);
+        let job = proof.prepare_ai_task(input).unwrap();
+        assert_eq!(job.selected, vec![("auth.rs".into(), Side::Unstaged)]);
+        let prompt = job.prompt().unwrap();
+        assert!(prompt.contains("finding anchors, not a read allowlist"));
+        assert!(prompt
+            .contains("For staged changes, inspect relevant tracked context with git show :path"));
+        let report = job.finish(&proof, job.run().unwrap()).unwrap();
+        assert_eq!(report.review.unwrap().findings.len(), expected_findings);
+        assert_eq!(report.files.len(), 1);
+        assert_eq!(report.files[0].path, "auth.rs");
+        assert_eq!(fs::read(repo.join("auth.rs")).unwrap(), source_before);
+        assert_eq!(fs::read(repo.join(".git/index")).unwrap(), index_before);
+        assert!(proof
+            .file_diff(&workspace.id, "auth.rs", Side::Unstaged)
+            .unwrap()
+            .hunks
+            .iter()
+            .all(|hunk| hunk.review_state != "reviewed"));
+    }
 }
 
 #[test]

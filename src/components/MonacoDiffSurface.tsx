@@ -74,6 +74,7 @@ interface Props {
   path: string;
   preferences: Preferences;
   visible: boolean;
+  retainWhenHidden?: boolean;
   search: string;
   searchRow: number | null;
   finding: DiffJump | null;
@@ -111,6 +112,10 @@ export default function MonacoDiffSurface(props: Props) {
   const container = useRef<HTMLDivElement>(null);
   const hosts = useRef<(HTMLDivElement | null)[]>([]);
   const runtime = useRef<Runtime | null>(null);
+  const observers = useRef<{
+    resize: ResizeObserver;
+    theme: MutationObserver;
+  } | null>(null);
   const panes = useRef<Pane[]>([]);
   const ready = useRef(false);
   const modelKey = useRef<string | null>(null);
@@ -257,7 +262,7 @@ export default function MonacoDiffSurface(props: Props) {
   }));
 
   function scheduleAlign() {
-    if (scheduled.current) return;
+    if (!latest.current.visible || scheduled.current) return;
     scheduled.current = requestAnimationFrame(() => {
       scheduled.current = 0;
       align();
@@ -265,6 +270,7 @@ export default function MonacoDiffSurface(props: Props) {
   }
   function align() {
     if (
+      !latest.current.visible ||
       modelKey.current !== latest.current.contentKey ||
       aligning.current ||
       !panes.current.length ||
@@ -445,6 +451,7 @@ export default function MonacoDiffSurface(props: Props) {
     else updateVisible();
   }
   function decorate() {
+    if (!latest.current.visible) return;
     const state = latest.current,
       api = runtime.current?.monaco;
     if (!api) return;
@@ -525,8 +532,42 @@ export default function MonacoDiffSurface(props: Props) {
     }
   }
 
+  const surfaceMounted =
+    props.visible || (!!props.retainWhenHidden && ready.current);
+  function layoutSurface() {
+    if (
+      !latest.current.visible ||
+      !container.current?.clientWidth ||
+      !container.current.clientHeight
+    )
+      return;
+    panes.current.forEach((pane, index) => {
+      const host = hosts.current[index];
+      if (!host?.clientWidth || !host.clientHeight) return;
+      const previous = pane.editor.getLayoutInfo();
+      if (
+        previous.width !== host.clientWidth ||
+        previous.height !== host.clientHeight
+      )
+        pane.editor.layout({
+          width: host.clientWidth,
+          height: host.clientHeight,
+        });
+    });
+    scheduleAlign();
+  }
+  function observeSurface() {
+    const value = observers.current;
+    if (!value || !latest.current.visible) return;
+    if (container.current) value.resize.observe(container.current);
+    for (const host of hosts.current) if (host) value.resize.observe(host);
+    value.theme.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
+  }
   useEffect(() => {
-    if (!props.visible) return;
+    if (!surfaceMounted) return;
     const generation = ++sequence.current;
     ready.current = false;
     setLoading(true);
@@ -717,13 +758,7 @@ export default function MonacoDiffSurface(props: Props) {
           );
           panes.current.push(pane);
         });
-        const layout = () => {
-          for (const pane of panes.current) pane.editor.layout();
-          scheduleAlign();
-        };
-        observer = new ResizeObserver(layout);
-        if (container.current) observer.observe(container.current);
-        for (const host of hosts.current) if (host) observer.observe(host);
+        observer = new ResizeObserver(layoutSurface);
         themeObserver = new MutationObserver(() =>
           api.editor.setTheme(
             document.documentElement.dataset.theme === "dark"
@@ -731,10 +766,8 @@ export default function MonacoDiffSurface(props: Props) {
               : "proof-light",
           ),
         );
-        themeObserver.observe(document.documentElement, {
-          attributes: true,
-          attributeFilter: ["data-theme"],
-        });
+        observers.current = { resize: observer, theme: themeObserver };
+        observeSurface();
         applied.current = {
           rows: props.rows,
           sourceId: props.sourceId,
@@ -744,7 +777,7 @@ export default function MonacoDiffSurface(props: Props) {
         lastSizes.current = "";
         heights.current = [];
         comments.current.clear();
-        layout();
+        layoutSurface();
         decorate();
         align();
         ready.current = true;
@@ -760,6 +793,7 @@ export default function MonacoDiffSurface(props: Props) {
       modelKey.current = null;
       observer?.disconnect();
       themeObserver?.disconnect();
+      observers.current = null;
       cancelAnimationFrame(scheduled.current);
       scheduled.current = 0;
       for (const pane of panes.current) {
@@ -771,7 +805,27 @@ export default function MonacoDiffSurface(props: Props) {
       applied.current = null;
       setTargets([]);
     };
-  }, [props.contentKey, props.visible, split]);
+  }, [props.contentKey, surfaceMounted, split]);
+  useEffect(() => {
+    if (!props.visible) {
+      observers.current?.resize.disconnect();
+      observers.current?.theme.disconnect();
+      cancelAnimationFrame(scheduled.current);
+      scheduled.current = 0;
+      setMenu(null);
+      return;
+    }
+    const api = runtime.current?.monaco;
+    if (api)
+      api.editor.setTheme(
+        document.documentElement.dataset.theme === "dark"
+          ? "proof-dark"
+          : "proof-light",
+      );
+    observeSurface();
+    layoutSurface();
+    if (ready.current) decorate();
+  }, [props.visible, props.contentKey, surfaceMounted, split]);
   useLayoutEffect(() => {
     for (const pane of panes.current)
       pane.editor.updateOptions({

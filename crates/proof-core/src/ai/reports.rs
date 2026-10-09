@@ -42,6 +42,21 @@ impl PreparedAiTask {
             }
             if report.task == AiTask::Review {
                 tx.execute("INSERT INTO ai_review_reports(id,workspace_id,scope_key,captured_at,revision,value) VALUES(?1,?2,?3,?4,?5,?6)", params![report.id,report.scope.workspace_id(),scope_key(&report.scope),report.captured_at,report.revision,serde_json::to_string(&report)?])?;
+                let current_changes = if matches!(report.scope, AiScope::Local { .. }) { Some(proof.changes(report.scope.workspace_id())?) } else { None };
+                let files = match &report.scope {
+                    AiScope::Local { .. } => current_changes.as_ref().unwrap().files.clone(),
+                    AiScope::Comparison { base, target, .. } => proof.frozen_comparison(report.scope.workspace_id(), base, target)?.files,
+                };
+                let findings = &report.review.as_ref().ok_or_else(|| super::invalid("Missing review"))?.findings;
+                let mut anchors = proof.capture_finding_anchors(report.scope.workspace_id(), &report.scope, findings, &files)?;
+                if let AiScope::Local { expected_token, .. } = &report.scope {
+                    let before = &current_changes.as_ref().unwrap().token;
+                    if before != expected_token || proof.changes(report.scope.workspace_id())?.token != *before {
+                        anchors.files.clear();
+                        anchors.entries = findings.iter().map(|_| crate::FindingAnchorEntry { file:None, reason:Some("ORIGINAL_VERSION_CHANGED".into()) }).collect();
+                    }
+                }
+                proof.save_finding_anchors(&report.id, &anchors)?;
             }
             tx.commit()?;
             Ok(report)
