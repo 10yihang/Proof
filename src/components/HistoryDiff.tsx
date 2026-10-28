@@ -297,6 +297,7 @@ export function HistoryDiff({
         setLoading(false);
       }
       if (
+        loadingFile ||
         reconcilingReview.current ||
         (diff && diffReadBytes({ state: "ready", diff }) > 8 * 1024 * 1024)
       )
@@ -335,7 +336,7 @@ export function HistoryDiff({
       cached = cache.current.get(key);
     const usable = cached && (!loadLarge || cached.state === "ready");
     reconcilingReview.current = preserveCurrent && !usable;
-    if (!preserveCurrent || cached) showReading(cached ?? null);
+    if (cached) showReading(cached);
     setLoadingFile(!usable);
     if (usable) return;
     if (loadLarge) {
@@ -711,7 +712,7 @@ export function HistoryDiff({
                   <AiReviewPanel
                     onSettings={onAgentSettings}
                     ai={ai}
-                    hasDiff={!!diff && !!result}
+                    hasDiff={!!diff && !!result && !loadingFile}
                     demo={demo}
                     onFinding={(finding, index, contextId) => {
                       if (!demo) {

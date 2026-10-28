@@ -1552,8 +1552,10 @@ test("Commit preview labels unread coverage and permits an ordinary Commit", asy
 test("a regular historical Diff preserves its reading position across tabs", async ({
   page,
 }) => {
-  await page.setViewportSize({ width: 1440, height: 580 });
   await openFixture(page);
+  // Shrink the reader after opening the workspace; this tests scroll retention,
+  // not the welcome page below the desktop application's minimum height.
+  await page.setViewportSize({ width: 1440, height: 580 });
   const navigation = page.getByRole("navigation", { name: "Worktree" });
   await navigation.getByRole("tab", { name: "History", exact: true }).click();
   await page
@@ -6739,6 +6741,251 @@ test("Local changes opens the selected file and side in a Diff window", async ({
     ),
   ).toHaveLength(0);
 });
+
+for (const historical of [false, true]) {
+  for (const diffMode of ["unified", "split"] as const) {
+    test(`uncached ${historical ? "History" : "Local"} ${diffMode} file switches keep code visible on every frame`, async ({
+      page,
+    }, testInfo) => {
+      await openFixture(page, true, false, { ...defaultPreferences, diffMode });
+      if (historical) {
+        await page.getByRole("tab", { name: "History", exact: true }).click();
+        await page
+          .getByRole("listbox", { name: "提交列表与分支关系" })
+          .getByRole("option")
+          .first()
+          .dblclick();
+      }
+      const panel = historical
+        ? page.locator(".diff-tab-page:not([hidden])")
+        : page.locator(".workspace-page:not([hidden])");
+      const center = panel.locator(".center-panel").first();
+      await expect(center.locator(".view-lines").last()).toContainText(
+        "validateRequest",
+      );
+      await page.evaluate(() => {
+        const w = window as any,
+          original = w.__TAURI_INTERNALS__.invoke;
+        w.fileSwitch = {
+          frames: 0,
+          blankFrames: 0,
+          coveredFrames: 0,
+          stop: false,
+          release: null,
+        };
+        w.__TAURI_INTERNALS__.invoke = async (name: string, payload: any) => {
+          if (
+            ["read_file_diff", "read_compare_file"].includes(
+              payload?.command,
+            ) &&
+            payload.args.path.endsWith("response.ts")
+          )
+            await new Promise<void>((resolve) => {
+              w.fileSwitch.release = resolve;
+            });
+          return original(name, payload);
+        };
+      });
+      await center.evaluate(
+        (node, panes) => {
+          const state = (window as any).fileSwitch;
+          const sample = () => {
+            if (state.stop) return;
+            ++state.frames;
+            const lines = [
+              ...node.querySelectorAll<HTMLElement>(".view-lines"),
+            ];
+            if (
+              lines.length !== panes ||
+              !lines.every(
+                (lines) =>
+                  lines.offsetHeight > 0 && !!lines.textContent?.trim(),
+              )
+            )
+              ++state.blankFrames;
+            if (
+              node.querySelector(
+                ".diff-loading-placeholder, .proof-monaco-surface > [role=status]",
+              )
+            )
+              ++state.coveredFrames;
+            requestAnimationFrame(sample);
+          };
+          requestAnimationFrame(sample);
+        },
+        diffMode === "split" ? 2 : 1,
+      );
+      await panel
+        .locator(".tree-file")
+        .filter({ hasText: "response.ts" })
+        .first()
+        .click();
+      await expect
+        .poll(() => page.evaluate(() => !!(window as any).fileSwitch.release))
+        .toBe(true);
+      await expect(center.locator(".diff-file-header")).toContainText(
+        "requests.ts",
+      );
+      await expect(center.locator(".diff-loading")).toContainText(
+        "response.ts",
+      );
+      await expect(center.locator(".hunk-review").first()).toBeDisabled();
+      if (!historical)
+        await expect(center.locator(".hunk-stage").first()).toBeDisabled();
+      await center.screenshot({
+        path: `.artifacts/file-switch-flicker/${historical ? "history" : "local"}-${diffMode}-loading.png`,
+      });
+      await page.evaluate(async () => {
+        for (let i = 0; i < 5; i++) await new Promise(requestAnimationFrame);
+        (window as any).fileSwitch.release();
+      });
+      await expect(center.locator(".diff-file-header")).toContainText(
+        "response.ts",
+      );
+      await expect(center.locator(".view-lines").last()).toContainText(
+        "createResponse",
+      );
+      // Returning to an already loaded file must also finish before the next paint.
+      await panel
+        .locator(".tree-file")
+        .filter({ hasText: "requests.ts" })
+        .first()
+        .click();
+      await expect(center.locator(".view-lines").last()).toContainText(
+        "validateRequest",
+      );
+      const frames = await page.evaluate(() => {
+        const state = (window as any).fileSwitch;
+        state.stop = true;
+        return {
+          frames: state.frames,
+          blankFrames: state.blankFrames,
+          coveredFrames: state.coveredFrames,
+        };
+      });
+      await testInfo.attach("file-switch-frames", {
+        body: JSON.stringify(frames),
+        contentType: "application/json",
+      });
+      expect(frames.frames).toBeGreaterThan(5);
+      expect(frames.blankFrames, JSON.stringify(frames)).toBe(0);
+      expect(frames.coveredFrames, JSON.stringify(frames)).toBe(0);
+    });
+  }
+}
+
+for (const historical of [false, true]) {
+  test(`${historical ? "History" : "Local"} file switches reject cancelled and superseded replies`, async ({
+    page,
+  }) => {
+    await openFixture(page, true);
+    if (historical) {
+      await page.getByRole("tab", { name: "History", exact: true }).click();
+      await page
+        .getByRole("listbox", { name: "提交列表与分支关系" })
+        .getByRole("option")
+        .first()
+        .dblclick();
+    }
+    const panel = historical
+      ? page.locator(".diff-tab-page:not([hidden])")
+      : page.locator(".workspace-page:not([hidden])");
+    const center = panel.locator(".center-panel").first();
+    await expect(center.locator(".view-lines")).toContainText(
+      "validateRequest",
+    );
+    await page.evaluate(() => {
+      const w = window as any,
+        original = w.__TAURI_INTERNALS__.invoke;
+      w.holdFileSwitch = true;
+      w.__TAURI_INTERNALS__.invoke = async (name: string, payload: any) => {
+        const result = await original(name, payload);
+        if (
+          w.holdFileSwitch &&
+          ["read_file_diff", "read_compare_file"].includes(payload?.command) &&
+          payload.args.path.endsWith("response.ts")
+        )
+          await new Promise<void>((resolve) => {
+            w.releaseFileSwitch = resolve;
+          });
+        return result;
+      };
+    });
+    for (const cancel of [true, false]) {
+      await panel
+        .locator(".tree-file")
+        .filter({ hasText: "response.ts" })
+        .first()
+        .click();
+      await expect
+        .poll(() => page.evaluate(() => !!(window as any).releaseFileSwitch))
+        .toBe(true);
+      if (cancel) {
+        await center
+          .getByRole("button", { name: "取消读取", exact: true })
+          .click();
+        await expect(center.locator(".diff-file-header")).toHaveCount(0);
+      } else {
+        await panel
+          .locator(".tree-file")
+          .filter({ hasText: "requests.ts" })
+          .first()
+          .click();
+        await expect(center.locator(".diff-file-header")).toContainText(
+          "requests.ts",
+        );
+      }
+      await expect(center.locator(".diff-loading")).toHaveCount(0);
+      await page.evaluate(async () => {
+        const w = window as any;
+        w.releaseFileSwitch();
+        w.releaseFileSwitch = null;
+        for (let i = 0; i < 5; i++) await new Promise(requestAnimationFrame);
+      });
+      if (cancel) {
+        await expect(center.locator(".diff-file-header")).toHaveCount(0);
+        await panel
+          .locator(".tree-file")
+          .filter({ hasText: "requests.ts" })
+          .first()
+          .click();
+      }
+      await expect(center.locator(".diff-file-header")).toContainText(
+        "requests.ts",
+      );
+      await expect(center.locator(".view-lines")).toContainText(
+        "validateRequest",
+      );
+      await expect(center.locator(".hunk-review").first()).toBeEnabled();
+    }
+    if (historical) {
+      await panel
+        .locator(".tree-file")
+        .filter({ hasText: "response.ts" })
+        .first()
+        .click();
+      await expect
+        .poll(() => page.evaluate(() => !!(window as any).releaseFileSwitch))
+        .toBe(true);
+      await page.getByRole("tab", { name: "History", exact: true }).click();
+      await page.evaluate(() => {
+        const w = window as any;
+        w.holdFileSwitch = false;
+        w.releaseFileSwitch();
+      });
+      await page
+        .locator(".workspace-sidebar:visible .diff-tab-button")
+        .last()
+        .click();
+      await expect(center.locator(".diff-file-header")).toContainText(
+        "response.ts",
+      );
+      await expect(center.locator(".view-lines")).toContainText(
+        "createResponse",
+      );
+    }
+  });
+}
 
 test("Diff file loading preserves workbench geometry", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });

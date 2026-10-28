@@ -1112,7 +1112,7 @@ export function DiffView({
                     className="button compact reading-tool-action"
                     title={t("Open in editor · 当前 Worktree 文件")}
                     aria-label={t("在外部编辑器打开")}
-                    disabled={openingEditor}
+                    disabled={openingEditor || pending}
                     onClick={() => {
                       setOptionsOpen(false);
                       onEditor();

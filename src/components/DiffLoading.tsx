@@ -27,7 +27,12 @@ export function DiffLoading({
       )}
       <div className="diff-loading" role="status">
         <ArrowClockwise size={14} className="spinning" />
-        {updating ? t("更新 Diff…") : t("载入 Diff…")}
+        {t("载入 Diff…")}
+        {updating && path && (
+          <span className="diff-loading-path" title={path}>
+            {path}
+          </span>
+        )}
         <Button className="text-button" onClick={onCancel}>
           {t("取消读取")}
         </Button>

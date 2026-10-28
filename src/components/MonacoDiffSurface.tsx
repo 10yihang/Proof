@@ -35,6 +35,8 @@ import type { GitSyntax } from "../monaco-document";
 import { t } from "../i18n";
 
 type Runtime = typeof import("../monaco-runtime");
+// Reuse the loaded module so subsequent file mounts can finish before paint.
+let loadedRuntime: Runtime | undefined;
 export interface EditorBookmark {
   position: ReadingAnchor;
   row: number;
@@ -566,227 +568,236 @@ export default function MonacoDiffSurface(props: Props) {
       attributeFilter: ["data-theme"],
     });
   }
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!surfaceMounted) return;
     const generation = ++sequence.current;
     ready.current = false;
     setLoading(true);
     let observer: ResizeObserver | undefined,
       themeObserver: MutationObserver | undefined;
-    void import("../monaco-runtime")
-      .then((module) => {
-        if (generation !== sequence.current || !latest.current.visible) return;
-        runtime.current = module;
-        const api = module.monaco;
+    const mount = (module: Runtime) => {
+      if (generation !== sequence.current || !latest.current.visible) return;
+      runtime.current = module;
+      const api = module.monaco;
+      api.editor.setTheme(
+        document.documentElement.dataset.theme === "dark"
+          ? "proof-dark"
+          : "proof-light",
+      );
+      panes.current = [];
+      applied.current = null;
+      starts.current = [];
+      modelKey.current = props.contentKey;
+      docs.forEach((doc, index) => {
+        const host = hosts.current[index];
+        if (!host) throw new Error("Missing editor surface");
+        ++modelSequence.current;
+        const tokens = module.registerGitTokens(doc, props.path);
+        const language = tokens.id;
+        let model: M.editor.ITextModel;
+        try {
+          model = api.editor.createModel(
+            doc.text,
+            language,
+            api.Uri.from({
+              scheme: "proof",
+              path: `/${instance}/${modelSequence.current}/${doc.side}/${props.path}`,
+            }),
+          );
+        } catch (error) {
+          tokens.dispose();
+          throw error;
+        }
+        if (model.getLineCount() !== Math.max(1, doc.lines.length)) {
+          model.dispose();
+          tokens.dispose();
+          throw new Error(
+            "Git line mapping cannot be represented by this editor",
+          );
+        }
+        let editor: M.editor.IStandaloneCodeEditor;
+        try {
+          editor = api.editor.create(host, {
+            model,
+            readOnly: true,
+            domReadOnly: true,
+            automaticLayout: false,
+            contextmenu: false,
+            minimap: { enabled: false },
+            glyphMargin: true,
+            folding: false,
+            links: false,
+            occurrencesHighlight: "off",
+            codeLens: false,
+            wordBasedSuggestions: "off",
+            quickSuggestions: {
+              other: "off",
+              comments: "off",
+              strings: "off",
+            },
+            parameterHints: { enabled: false },
+            hover: { enabled: "off" },
+            renderLineHighlight: "none",
+            scrollBeyondLastLine: false,
+            overviewRulerLanes: 0,
+            hideCursorInOverviewRuler: true,
+            lineNumbers: (n) => sourceLineLabel(doc, n),
+            lineNumbersMinChars:
+              doc.side === "unified" ? doc.digits * 2 + 2 : doc.digits + 1,
+            fontSize: props.preferences.fontSize,
+            lineHeight: props.preferences.fontSize + 13,
+            fontFamily: "SFMono-Regular, Menlo, Consolas, monospace",
+            fontLigatures: false,
+            wordWrap: props.preferences.wrapLines ? "on" : "off",
+            renderWhitespace: props.preferences.showWhitespace ? "all" : "none",
+            stickyScroll: { enabled: false },
+            guides: { indentation: false },
+            padding: { top: 0, bottom: 0 },
+            scrollbar: {
+              vertical: "visible",
+              horizontal: "visible",
+              verticalScrollbarSize: 8,
+              horizontalScrollbarSize: 8,
+              useShadows: false,
+              alwaysConsumeMouseWheel: false,
+            },
+            ariaLabel: t(
+              doc.side === "old"
+                ? "修改前代码，只读"
+                : doc.side === "new"
+                  ? "修改后代码，只读"
+                  : "Git Diff，只读",
+            ),
+          });
+        } catch (error) {
+          model.dispose();
+          tokens.dispose();
+          throw error;
+        }
+        // Monaco hides generic view zones from accessibility by default. These
+        // zones contain real Hunk actions and Review comments.
+        host.querySelector(".view-zones")?.removeAttribute("aria-hidden");
+        const pane: Pane = {
+          side: doc.side,
+          doc,
+          editor,
+          model,
+          zones: new Map(),
+          decorations: editor.createDecorationsCollection(),
+          disposables: [tokens],
+        };
+        pane.disposables.push(
+          editor.onDidScrollChange((event) => {
+            if (event.scrollLeftChanged)
+              host.style.setProperty("--editor-left", `${event.scrollLeft}px`);
+            if (
+              !syncing.current &&
+              !aligning.current &&
+              (event.scrollTopChanged || event.scrollLeftChanged)
+            ) {
+              syncing.current = true;
+              if (event.scrollTopChanged)
+                for (const other of panes.current)
+                  if (other !== pane)
+                    other.editor.setScrollTop(event.scrollTop);
+              syncing.current = false;
+              updateVisible();
+              latest.current.onScroll();
+            }
+          }),
+          editor.onDidContentSizeChange(() => {
+            if (!aligning.current) scheduleAlign();
+          }),
+          editor.onDidLayoutChange(() => {
+            if (!aligning.current) scheduleAlign();
+          }),
+          editor.onMouseDown(() => latest.current.onUserScroll()),
+          editor.onKeyDown(() => latest.current.onUserScroll()),
+        );
+        for (const [name, key, direction] of [
+          ["next", api.KeyCode.DownArrow, 1],
+          ["previous", api.KeyCode.UpArrow, -1],
+        ] as const)
+          pane.disposables.push(
+            editor.addAction({
+              id: `proof.hunk.${name}`,
+              label: name,
+              keybindings: [api.KeyMod.Alt | key],
+              run: () => latest.current.onHunk(direction),
+            }),
+          );
+        pane.disposables.push(
+          editor.addAction({
+            id: "proof.code-menu",
+            label: t("代码操作"),
+            keybindings: [api.KeyMod.Shift | api.KeyCode.F10],
+            run: () => {
+              const at = editor.getPosition(),
+                rect = host.getBoundingClientRect(),
+                point = at && editor.getScrolledVisiblePosition(at);
+              setMenu({
+                x: rect.x + (point?.left ?? 20),
+                y: rect.y + (point?.top ?? 20) + 20,
+                side: doc.side,
+                contentKey: latest.current.contentKey,
+              });
+            },
+          }),
+        );
+        pane.disposables.push(
+          editor.addAction({
+            id: "proof.find",
+            label: t("搜索当前 Diff"),
+            keybindings: [api.KeyMod.CtrlCmd | api.KeyCode.KeyF],
+            run: () => latest.current.onFind(),
+          }),
+        );
+        panes.current.push(pane);
+      });
+      observer = new ResizeObserver(layoutSurface);
+      themeObserver = new MutationObserver(() =>
         api.editor.setTheme(
           document.documentElement.dataset.theme === "dark"
             ? "proof-dark"
             : "proof-light",
-        );
-        panes.current = [];
-        applied.current = null;
-        starts.current = [];
-        modelKey.current = props.contentKey;
-        docs.forEach((doc, index) => {
-          const host = hosts.current[index];
-          if (!host) throw new Error("Missing editor surface");
-          ++modelSequence.current;
-          const tokens = module.registerGitTokens(doc, props.path);
-          const language = tokens.id;
-          let model: M.editor.ITextModel;
-          try {
-            model = api.editor.createModel(
-              doc.text,
-              language,
-              api.Uri.from({
-                scheme: "proof",
-                path: `/${instance}/${modelSequence.current}/${doc.side}/${props.path}`,
-              }),
-            );
-          } catch (error) {
-            tokens.dispose();
-            throw error;
-          }
-          if (model.getLineCount() !== Math.max(1, doc.lines.length)) {
-            model.dispose();
-            tokens.dispose();
-            throw new Error(
-              "Git line mapping cannot be represented by this editor",
-            );
-          }
-          let editor: M.editor.IStandaloneCodeEditor;
-          try {
-            editor = api.editor.create(host, {
-              model,
-              readOnly: true,
-              domReadOnly: true,
-              automaticLayout: false,
-              contextmenu: false,
-              minimap: { enabled: false },
-              glyphMargin: true,
-              folding: false,
-              links: false,
-              occurrencesHighlight: "off",
-              codeLens: false,
-              wordBasedSuggestions: "off",
-              quickSuggestions: {
-                other: "off",
-                comments: "off",
-                strings: "off",
-              },
-              parameterHints: { enabled: false },
-              hover: { enabled: "off" },
-              renderLineHighlight: "none",
-              scrollBeyondLastLine: false,
-              overviewRulerLanes: 0,
-              hideCursorInOverviewRuler: true,
-              lineNumbers: (n) => sourceLineLabel(doc, n),
-              lineNumbersMinChars:
-                doc.side === "unified" ? doc.digits * 2 + 2 : doc.digits + 1,
-              fontSize: props.preferences.fontSize,
-              lineHeight: props.preferences.fontSize + 13,
-              fontFamily: "SFMono-Regular, Menlo, Consolas, monospace",
-              fontLigatures: false,
-              wordWrap: props.preferences.wrapLines ? "on" : "off",
-              renderWhitespace: props.preferences.showWhitespace
-                ? "all"
-                : "none",
-              stickyScroll: { enabled: false },
-              guides: { indentation: false },
-              padding: { top: 0, bottom: 0 },
-              scrollbar: {
-                vertical: "visible",
-                horizontal: "visible",
-                verticalScrollbarSize: 8,
-                horizontalScrollbarSize: 8,
-                useShadows: false,
-                alwaysConsumeMouseWheel: false,
-              },
-              ariaLabel: t(
-                doc.side === "old"
-                  ? "修改前代码，只读"
-                  : doc.side === "new"
-                    ? "修改后代码，只读"
-                    : "Git Diff，只读",
-              ),
-            });
-          } catch (error) {
-            model.dispose();
-            tokens.dispose();
-            throw error;
-          }
-          // Monaco hides generic view zones from accessibility by default. These
-          // zones contain real Hunk actions and Review comments.
-          host.querySelector(".view-zones")?.removeAttribute("aria-hidden");
-          const pane: Pane = {
-            side: doc.side,
-            doc,
-            editor,
-            model,
-            zones: new Map(),
-            decorations: editor.createDecorationsCollection(),
-            disposables: [tokens],
-          };
-          pane.disposables.push(
-            editor.onDidScrollChange((event) => {
-              if (event.scrollLeftChanged)
-                host.style.setProperty(
-                  "--editor-left",
-                  `${event.scrollLeft}px`,
-                );
-              if (
-                !syncing.current &&
-                !aligning.current &&
-                (event.scrollTopChanged || event.scrollLeftChanged)
-              ) {
-                syncing.current = true;
-                if (event.scrollTopChanged)
-                  for (const other of panes.current)
-                    if (other !== pane)
-                      other.editor.setScrollTop(event.scrollTop);
-                syncing.current = false;
-                updateVisible();
-                latest.current.onScroll();
-              }
-            }),
-            editor.onDidContentSizeChange(() => {
-              if (!aligning.current) scheduleAlign();
-            }),
-            editor.onDidLayoutChange(() => {
-              if (!aligning.current) scheduleAlign();
-            }),
-            editor.onMouseDown(() => latest.current.onUserScroll()),
-            editor.onKeyDown(() => latest.current.onUserScroll()),
-          );
-          for (const [name, key, direction] of [
-            ["next", api.KeyCode.DownArrow, 1],
-            ["previous", api.KeyCode.UpArrow, -1],
-          ] as const)
-            pane.disposables.push(
-              editor.addAction({
-                id: `proof.hunk.${name}`,
-                label: name,
-                keybindings: [api.KeyMod.Alt | key],
-                run: () => latest.current.onHunk(direction),
-              }),
-            );
-          pane.disposables.push(
-            editor.addAction({
-              id: "proof.code-menu",
-              label: t("代码操作"),
-              keybindings: [api.KeyMod.Shift | api.KeyCode.F10],
-              run: () => {
-                const at = editor.getPosition(),
-                  rect = host.getBoundingClientRect(),
-                  point = at && editor.getScrolledVisiblePosition(at);
-                setMenu({
-                  x: rect.x + (point?.left ?? 20),
-                  y: rect.y + (point?.top ?? 20) + 20,
-                  side: doc.side,
-                  contentKey: latest.current.contentKey,
-                });
-              },
-            }),
-          );
-          pane.disposables.push(
-            editor.addAction({
-              id: "proof.find",
-              label: t("搜索当前 Diff"),
-              keybindings: [api.KeyMod.CtrlCmd | api.KeyCode.KeyF],
-              run: () => latest.current.onFind(),
-            }),
-          );
-          panes.current.push(pane);
-        });
-        observer = new ResizeObserver(layoutSurface);
-        themeObserver = new MutationObserver(() =>
-          api.editor.setTheme(
-            document.documentElement.dataset.theme === "dark"
-              ? "proof-dark"
-              : "proof-light",
-          ),
-        );
-        observers.current = { resize: observer, theme: themeObserver };
-        observeSurface();
-        applied.current = {
-          rows: props.rows,
-          sourceId: props.sourceId,
-          contentKey: props.contentKey,
-          layout: props.layoutKey,
-        };
-        lastSizes.current = "";
-        heights.current = [];
-        comments.current.clear();
-        layoutSurface();
-        decorate();
-        align();
-        ready.current = true;
-        setLoading(false);
-        latest.current.onReady();
-      })
-      .catch((error) => {
-        if (generation === sequence.current) latest.current.onError(error);
-      });
+        ),
+      );
+      observers.current = { resize: observer, theme: themeObserver };
+      observeSurface();
+      applied.current = {
+        rows: props.rows,
+        sourceId: props.sourceId,
+        contentKey: props.contentKey,
+        layout: props.layoutKey,
+      };
+      lastSizes.current = "";
+      heights.current = [];
+      comments.current.clear();
+      layoutSurface();
+      decorate();
+      align();
+      for (const pane of panes.current) pane.editor.render(true);
+      ready.current = true;
+      setLoading(false);
+      latest.current.onReady();
+    };
+    const failed = (error: unknown) => {
+      if (generation === sequence.current) latest.current.onError(error);
+    };
+    if (loadedRuntime) {
+      try {
+        mount(loadedRuntime);
+      } catch (error) {
+        failed(error);
+      }
+    } else {
+      void import("../monaco-runtime")
+        .then((module) => {
+          loadedRuntime = module;
+          mount(module);
+        })
+        .catch(failed);
+    }
     return () => {
       ++sequence.current;
       ready.current = false;

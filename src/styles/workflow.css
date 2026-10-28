@@ -524,6 +524,7 @@
   background: var(--surface);
   padding: 8px 12px;
   border-radius: 6px;
+  max-width: calc(100% - 24px);
 }
 .updating .diff-loading {
   top: 112px;
@@ -533,6 +534,16 @@
 }
 .diff-loading button {
   pointer-events: auto;
+}
+.diff-loading > svg,
+.diff-loading > button {
+  flex-shrink: 0;
+}
+.diff-loading-path {
+  min-width: 0;
+  max-width: 32ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .live-status {
   display: inline-flex;

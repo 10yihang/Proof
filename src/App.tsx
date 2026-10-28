@@ -809,14 +809,10 @@ export default function App({
       return true;
     }
     pendingRead.current = { intent, quiet };
-    // Keep the same file readable within this Git base during a refresh.
-    // A different file or Branch must wait for its own capture.
-    setDiff((d) =>
-      d && fileKey(d) === fileKey(file) && matchesGitBase(active, d) ? d : null,
-    );
-    setSummary((s) =>
-      s && fileKey(s) === fileKey(file) && matchesGitBase(active, s) ? s : null,
-    );
+    // Keep the current capture visible until its replacement arrives. Pending
+    // disables its write actions; a different Git base still clears the view.
+    setDiff((d) => (d && matchesGitBase(active, d) ? d : null));
+    setSummary((s) => (s && matchesGitBase(active, s) ? s : null));
     setLoadingDiff(true);
     try {
       const next = await cache.current.read(
@@ -2613,7 +2609,7 @@ export default function App({
                           <AiReviewPanel
                             onSettings={() => openSettings("agents")}
                             ai={ai}
-                            hasDiff={!!diff}
+                            hasDiff={!!diff && !loadingDiff}
                             demo={demo}
                             onFinding={(finding, index, contextId) => {
                               if (!demo) {
@@ -2830,6 +2826,12 @@ export default function App({
                           ++sequence.current;
                           fileReader.cancel();
                           cache.current.cancelPending();
+                          if (
+                            (diff && fileKey(diff) !== selectedRef.current) ||
+                            (summary &&
+                              fileKey(summary) !== selectedRef.current)
+                          )
+                            showReading(null);
                           setLoadingDiff(false);
                           setNotification(
                             t("读取已取消，选择文件可重新读取。"),
