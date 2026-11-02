@@ -63,6 +63,7 @@ jobs:
               print(path, width, height, len(data))
           PYVERIFY
       - uses: actions/upload-artifact@v4
+        if: ${{ always() && hashFiles('native/macos/build/screenshots/*.png') != '' }}
         with:
           name: Proof-Native-Screenshots-${{ github.sha }}
           path: native/macos/build/screenshots/*.png

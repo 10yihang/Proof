@@ -73,11 +73,29 @@ enum ScreenshotPreview {
         return model
     }
 
-    static func capture(window: NSWindow) async {
+    static func capture(window sourceWindow: NSWindow) async {
         guard let directory = outputDirectory else { return }
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            window.setFrame(NSRect(x: 80, y: 80, width: 1440, height: 900), display: true)
+            // CI's virtual screen can be only 768 points tall. Preserve the actual
+            // production content and toolbar, but remove screen-size clamping for
+            // this offscreen-capable render window. Nothing is raster-scaled.
+            let window = PreviewRenderWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 1440, height: 900),
+                styleMask: sourceWindow.styleMask, backing: .buffered, defer: false
+            )
+            window.title = sourceWindow.title
+            window.titleVisibility = sourceWindow.titleVisibility
+            window.titlebarAppearsTransparent = sourceWindow.titlebarAppearsTransparent
+            window.toolbarStyle = sourceWindow.toolbarStyle
+            let toolbar = sourceWindow.toolbar
+            sourceWindow.toolbar = nil
+            let content = sourceWindow.contentView
+            sourceWindow.contentView = nil
+            window.contentView = content
+            window.toolbar = toolbar
+            sourceWindow.orderOut(nil)
+            window.setFrame(NSRect(x: 0, y: 0, width: 1440, height: 900), display: true)
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", NSAppearance.Name.darkAqua)] {
@@ -100,4 +118,12 @@ enum ScreenshotPreview {
         }
     }
     private enum CaptureError: Error { case noView, noBitmap }
+}
+
+/// Only screenshot mode uses this window; normal app sizing remains native.
+@MainActor
+private final class PreviewRenderWindow: NSWindow {
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        frameRect
+    }
 }

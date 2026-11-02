@@ -101,11 +101,12 @@ trust rejection, stage/unstage, review migration, multiline commit, history and
 commit diff, stale stage/review/commit rejection, and closed dispatch whitelist.
 No user repository is modified by the tests.
 
-**Native validation limitation:** implementation was authored in a Linux cloud
-workspace without Swift/Xcode/AppKit. Swift compilation, app launch, screenshots,
-VoiceOver, keyboard focus, light/dark contrast, window-close behavior and actual
-macOS Git-hook behavior must be checked on a Mac before calling this releasable.
-This is source plus a reproducible build path, not a verified macOS binary.
+**Native validation:** the preview branch has passed Swift release compilation,
+macOS bridge tests, ad-hoc bundle signature verification and protocol smoke on
+GitHub's macOS 15 runner. Native screenshot capture is CI-only fixture rendering.
+Interactive workflow acceptance, VoiceOver, keyboard focus, window-close behavior
+and real macOS Git-hook behavior are still unverified. This is not a notarized or
+release-ready distribution. See VALIDATION.md for exact run evidence.
 
 ### Mac acceptance checklist
 

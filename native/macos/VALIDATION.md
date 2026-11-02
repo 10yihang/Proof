@@ -45,3 +45,15 @@ red-close/Cmd-W/Cmd-Q guards, SwiftUI lifecycle, file-picker focus, and system
 find-bar behavior on Mac. Follow the checklist in README.md before release.
 
 No macOS binary, signed distribution package or publication was produced.
+
+## Native redesign verification — 2026-11-02
+
+Commit `ef4e2e85ffe2a23d6d42dde563d5e76cefe51a5a`,
+[macOS run 41385923344](https://github.com/10yihang/Proof/actions/runs/41385923344):
+Swift release compilation, 4 Rust bridge tests, ad-hoc bundle signature and bridge
+protocol smoke passed on macOS 15.8.2 arm64. Capture produced light/dark native
+images, but the runner screen constrained them to 1440×708; the size assertion
+correctly failed. These are not accepted visual evidence.
+
+Linux bridge tests rerun after redesign: 4 passed. Rust core and bridge source
+were not modified by the visual redesign. No interactive acceptance is claimed.
