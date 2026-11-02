@@ -100,10 +100,6 @@ enum ScreenshotPreview {
             let window = sourceWindow
             window.appearance = NSAppearance(named: themeAppearance)
             NSApp.setActivationPolicy(.regular)
-            // Use the runner's real usable screen rather than an offscreen clone.
-            let visible = window.screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-            let height = min(900, visible.height)
-            window.setFrame(NSRect(x: visible.minX, y: visible.minY, width: 1440, height: height), display: true)
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             for (name, appearance) in [(themeName, themeAppearance)] {
@@ -120,6 +116,7 @@ enum ScreenshotPreview {
                 guard let capturedWindow = content.windows.first(where: { $0.windowID == CGWindowID(window.windowNumber) }) else {
                     throw CaptureError.noWindow
                 }
+                print("Shareable window frame: \(capturedWindow.frame)")
                 let filter = SCContentFilter(desktopIndependentWindow: capturedWindow)
                 let configuration = SCStreamConfiguration()
                 configuration.width = Int(window.frame.width)
@@ -131,7 +128,13 @@ enum ScreenshotPreview {
                 let capturedImage = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
                 let bitmap = NSBitmapImageRep(cgImage: capturedImage)
                 guard let png = bitmap.representation(using: .png, properties: [:]) else { throw CaptureError.noBitmap }
-                try png.write(to: directory.appendingPathComponent("changes-\(name).png"))
+                try png.write(to: directory.appendingPathComponent("sck-\(name).png"))
+                let screenshot = Process()
+                screenshot.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+                screenshot.arguments = ["-x", "-o", "-l", String(window.windowNumber), directory.appendingPathComponent("changes-\(name).png").path]
+                try screenshot.run()
+                screenshot.waitUntilExit()
+                guard screenshot.terminationStatus == 0 else { throw CaptureError.noBitmap }
                 print("WindowServer ScreenCaptureKit: changes-\(name).png (\(bitmap.pixelsWide) × \(bitmap.pixelsHigh)); \(ProcessInfo.processInfo.operatingSystemVersionString)")
 
             }
