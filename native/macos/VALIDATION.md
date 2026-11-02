@@ -57,3 +57,26 @@ correctly failed. These are not accepted visual evidence.
 
 Linux bridge tests rerun after redesign: 4 passed. Rust core and bridge source
 were not modified by the visual redesign. No interactive acceptance is claimed.
+
+### Confirmed visual preview
+
+Commit `a2bcf427fd4193de74ab34f1e61f4e6b3a8e6cb3`,
+[macOS run 41386931187](https://github.com/10yihang/Proof/actions/runs/41386931187),
+passed every step: Swift 6.1.2 release build, 4 real-Git bridge tests, bundle
+signature, protocol smoke, native light/dark capture and artifact packaging.
+Both PNGs are 1440×900 actual AppKit window renders with labeled illustrative
+data. They are not HTML/image-generation mockups or interactive testing.
+
+One independent visual pass found blank gutter, mixed dark surfaces and an
+over-wide file pane. One batched fix and confirmation pass resolved those three
+findings. The reviewer approved the Changes-screen visual preview at this scope.
+No other screens were expanded and no broader usability/accessibility claim is made.
+
+Artifacts for that exact commit:
+- Screenshots: `13115563110`
+- Ad-hoc signed macOS build: `13115299607` (not notarized, not a release)
+- Light PNG SHA-256: `1fba9527b0f137eb13987d50429492d1addd8e088e439f0c5af03eedd9a19c63`
+- Dark PNG SHA-256: `08e72e15df9db1e71bdcb47ab6e6ea3d4972945a8e9b700c50148651b0b14ac2`
+
+Keyboard/focus, scrolling, resizing, interactive Git flows, VoiceOver, hooks and
+close/cancel acceptance remain outstanding. Rust write guards were unchanged.

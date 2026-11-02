@@ -145,7 +145,10 @@ yet production-ready. SwiftUI and AppKit remain the only UI frameworks.
 The macOS CI build renders the actual app window in light and dark appearances:
 
 ```sh
-"native/macos/build/Proof Native.app/Contents/MacOS/ProofNative" --capture-preview /tmp/proof-captures
+for theme in light dark; do
+  "native/macos/build/Proof Native.app/Contents/MacOS/ProofNative" \
+    --capture-preview /tmp/proof-captures --preview-theme "$theme"
+done
 ```
 
 This explicit mode uses illustrative data labeled Preview, starts no bridge, and
