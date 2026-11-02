@@ -28,9 +28,9 @@ func dumpNativeLayout(_ window: NSWindow) {
     guard let root = window.contentView else { return }
     func visit(_ view: NSView, depth: Int) {
         let kind = String(describing: type(of: view))
-        if view is LayoutProbeView || kind.contains("Hosting") || kind.contains("Split") || depth < 2 {
+        if view is NSScrollView || view is NSClipView || view is LayoutProbeView || kind.contains("Hosting") || kind.contains("Split") || depth < 2 {
             let label = (view as? LayoutProbeView)?.name ?? kind
-            print("Native \(label): frame=\(view.frame) bounds=\(view.bounds) windowRect=\(view.convert(view.bounds, to: root)) safe=\(view.safeAreaInsets) fitting=\(view.fittingSize)")
+            print("Native \(label): frame=\(view.frame) bounds=\(view.bounds) windowRect=\(view.convert(view.bounds, to: root)) safe=\(view.safeAreaInsets) fitting=\(view.fittingSize) intrinsic=\(view.intrinsicContentSize)")
         }
         if depth < 20 { view.subviews.forEach { visit($0, depth: depth + 1) } }
     }
