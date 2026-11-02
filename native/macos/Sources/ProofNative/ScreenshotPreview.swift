@@ -12,6 +12,10 @@ enum ScreenshotPreview {
         return URL(fileURLWithPath: args[index + 1], isDirectory: true)
     }
 
+    static var sizeName: String {
+        ProcessInfo.processInfo.arguments.contains("--preview-wide") ? "wide" : "compact"
+    }
+
     static var themeName: String {
         let args = ProcessInfo.processInfo.arguments
         guard let index = args.firstIndex(of: "--preview-theme"), args.indices.contains(index + 1) else { return "light" }
@@ -100,10 +104,14 @@ enum ScreenshotPreview {
             // breaks SwiftUI validation and loses the system's glass integration.
             let window = sourceWindow
             window.appearance = NSAppearance(named: themeAppearance)
+            // One capture-only request. Never change display configuration or normal app sizing.
+            let requested = sizeName == "wide" ? NSSize(width: 1440, height: 900) : NSSize(width: 1024, height: 674)
+            window.setFrame(NSRect(origin: window.frame.origin, size: requested), display: true)
+            print("Requested preview size: \(requested); actual frame: \(window.frame)")
             NSApp.setActivationPolicy(.regular)
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
-            for (name, appearance) in [(themeName, themeAppearance)] {
+            for (name, appearance) in [(themeName + "-" + sizeName, themeAppearance)] {
                 window.appearance = NSAppearance(named: appearance)
                 try await Task.sleep(nanoseconds: 600_000_000)
                 window.makeFirstResponder(nil)

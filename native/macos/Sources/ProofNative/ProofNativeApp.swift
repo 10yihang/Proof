@@ -24,7 +24,7 @@ struct ProofNativeApp: App {
                     model.start()
                 }
         }
-        .defaultSize(width: 1440, height: 680)
+        .defaultSize(width: 1440, height: 900)
         .windowToolbarStyle(.unified)
         .commands {
             CommandGroup(replacing: .newItem) {

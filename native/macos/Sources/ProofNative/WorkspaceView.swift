@@ -9,41 +9,54 @@ struct WorkspaceView: View {
     @State private var scope = "all"
     @State private var tree = true
     @State private var collapsed: Set<String> = []
+    @State private var showsContext = true
+    @State private var contextPopover = false
+    @State private var availableWidth: CGFloat = 1000
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            GeometryReader { column in
+        GeometryReader { viewport in
             VStack(spacing: 0) {
-                repositoryIdentity.captureLayout("repository-header")
-                Picker("Workspace section", selection: $model.mode) {
-                    Text("Changes").tag("changes")
-                    Text("Commit").tag("commit")
-                    Text("History").tag("history")
-                }
-                .pickerStyle(.segmented).labelsHidden()
-                .disabled(model.writing).padding(.horizontal, 10).padding(.bottom, 10)
-                if model.workspace != nil { fileList }
-                else { Spacer(minLength: 0) }
-                sidebarStatus.captureLayout("sidebar-footer")
+                repositoryTabs
+                NavigationSplitView(columnVisibility: $columnVisibility) {
+                    GeometryReader { column in
+                        HStack(spacing: 0) {
+                            navigationRail
+                            VStack(spacing: 0) {
+                                HStack {
+                                    Text(model.mode == "history" ? "History" : model.mode == "commit" ? "Commit files" : "Changed files")
+                                        .font(.system(size: 12, weight: .semibold))
+                                    Spacer()
+                                }.padding(.horizontal, 12).frame(height: 36)
+                                if model.workspace != nil { fileList }
+                                else { Spacer(minLength: 0) }
+                                sidebarStatus.captureLayout("sidebar-footer")
+                            }
+                        }.frame(width: column.size.width, height: column.size.height, alignment: .topLeading)
+                            .captureLayout("sidebar-column")
+                    }
+                    .navigationSplitViewColumnWidth(min: 294, ideal: 324, max: 384)
+                } detail: {
+                    HStack(spacing: 0) {
+                        Group {
+                            if model.workspace == nil { welcome }
+                            else if model.mode == "commit" { commitEditor }
+                            else { detail }
+                        }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .captureLayout("detail-column")
+                            .background(Color(nsColor: .textBackgroundColor))
+                        if viewport.size.width >= 1200 && showsContext && model.mode == "changes" {
+                            Divider()
+                            ProofContextInspector(model: model).frame(width: 260)
+                        }
+                    }
+                }.navigationSplitViewStyle(.balanced)
             }
-            .frame(width: column.size.width, height: column.size.height, alignment: .topLeading)
-            .captureLayout("sidebar-column")
-            }
-            .navigationSplitViewColumnWidth(min: 250, ideal: 280, max: 360)
-        } detail: {
-            Group {
-                if model.workspace == nil { welcome }
-                else if model.mode == "commit" { commitEditor }
-                else { detail }
-            }
-            .captureLayout("detail-column")
-            .background(Color(nsColor: .textBackgroundColor))
-            .navigationTitle(documentTitle)
-            .toolbar { documentToolbar }
+            .onAppear { availableWidth = viewport.size.width }
+            .onChange(of: viewport.size.width) { availableWidth = $0 }
         }
-        .navigationSplitViewStyle(.balanced)
-        .tint(.blue)
+        .navigationTitle(model.workspace?.name ?? "Proof")
+        .toolbar { documentToolbar }
         .alert("Repository needs your trust", isPresented: $trustConfirmation) {
             Button("Cancel", role: .cancel) {}
             Button("Trust Repository") { model.trust() }
@@ -84,42 +97,70 @@ struct WorkspaceView: View {
             }
         }.frame(maxWidth: 540, alignment: .leading).padding(40).frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-    private var documentTitle: String {
-        if model.mode == "commit" { return "Commit" }
-        if model.mode == "history" { return "History" }
-        return model.diff.map { ($0.path as NSString).lastPathComponent } ?? "Changes"
+    private var repositoryTabs: some View {
+        HStack(spacing: 0) {
+            if let workspace = model.workspace {
+                HStack(spacing: 8) {
+                    Image(systemName: "folder")
+                    Text(workspace.name).lineLimit(1)
+                    Spacer(minLength: 12)
+                    Button { model.closeRepository() } label: { Image(systemName: "xmark").font(.system(size: 9)) }
+                        .buttonStyle(.plain).disabled(model.writing)
+                        .help("Close repository").accessibilityLabel("Close repository")
+                }.font(.system(size: 11, weight: .medium)).padding(.horizontal, 12)
+                    .frame(width: 220, height: 32)
+                    .background(Color.blue.opacity(0.07))
+                    .overlay(alignment: .bottom) { Rectangle().fill(Color.blue.opacity(0.65)).frame(height: 1) }
+                    .help(workspace.path)
+            }
+            Spacer(minLength: 0)
+            Button(action: requestOpen) { Image(systemName: "plus") }
+                .buttonStyle(.plain).frame(width: 36, height: 32).disabled(model.writing)
+                .help("Open repository (replaces the current repository)").accessibilityLabel("Open repository")
+        }.frame(height: 32).background(Color(nsColor: .windowBackgroundColor))
+    }
+    private var navigationRail: some View {
+        VStack(spacing: 8) {
+            railButton("Changes", icon: "doc.on.doc", mode: "changes", key: "1")
+            railButton("Commit", icon: "checkmark.rectangle", mode: "commit", key: "2")
+            railButton("History", icon: "clock.arrow.circlepath", mode: "history", key: "3")
+            Spacer(minLength: 0)
+        }.padding(.top, 8).frame(width: 44)
+    }
+    private func railButton(_ title: String, icon: String, mode: String, key: KeyEquivalent) -> some View {
+        Button { model.mode = mode } label: {
+            Image(systemName: icon).font(.system(size: 15)).frame(width: 34, height: 34)
+                .foregroundStyle(model.mode == mode ? Color.blue : Color.secondary)
+                .background(model.mode == mode ? Color.blue.opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+        }.buttonStyle(.plain).disabled(model.writing).keyboardShortcut(key)
+            .help(title).accessibilityLabel(title)
+            .accessibilityAddTraits(model.mode == mode ? .isSelected : [])
     }
     private var repositoryIdentity: some View {
         HStack(spacing: 8) {
             ProofMark().frame(width: 24, height: 24)
             VStack(alignment: .leading, spacing: 2) {
-                Text(model.workspace?.name ?? "Proof").font(.system(size: 13, weight: .semibold))
+                Text(model.workspace?.name ?? "Proof").font(.system(size: 12, weight: .semibold))
                 if let changes = model.changes {
                     Label(changes.branch ?? "Detached HEAD", systemImage: "arrow.triangle.branch")
                         .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
                         .help(changes.branch ?? "Detached HEAD")
                 }
             }
-            Spacer(minLength: 4)
-            Menu {
-                Button("Open Repository…", action: requestOpen).disabled(model.writing)
-                Button("Refresh") { model.refresh() }.disabled(model.workspace == nil || model.busy)
-            } label: { Image(systemName: "ellipsis") }
-            .menuStyle(.borderlessButton).fixedSize().help("Repository actions")
-        }.padding(.horizontal, 12).padding(.vertical, 10)
+        }.frame(maxWidth: 300)
     }
     @ToolbarContentBuilder private var documentToolbar: some ToolbarContent {
+        ToolbarItem(placement: .principal) { repositoryIdentity }
         ToolbarItemGroup(placement: .primaryAction) {
-            if let diff = model.diff, model.mode == "changes" {
-                Menu {
-                    Toggle("Show Raw Patch", isOn: $rawPatch)
-                } label: { Image(systemName: "text.alignleft") }
-                .help("Reading options").accessibilityLabel("Reading options")
-                Button { model.review() } label: {
-                    Label(diff.reviewed ? "Reviewed" : "Mark Reviewed", systemImage: diff.reviewed ? "checkmark.circle.fill" : "checkmark.circle")
-                }.labelStyle(.titleAndIcon).foregroundStyle(.blue).nativeGlassControl().disabled(model.busy).help("Human review of this content; separate from staging")
-                Button(diff.side == "staged" ? "Unstage…" : "Stage…") { stageConfirmation = true }
-                    .nativeGlassControl().disabled(model.busy || !diff.canStage)
+            if model.mode == "changes" {
+            Button {
+                if availableWidth >= 1200 { showsContext.toggle() }
+                else { contextPopover.toggle() }
+            } label: { Image(systemName: "sidebar.right") }
+                .help("Change context").accessibilityLabel("Change context")
+                .popover(isPresented: $contextPopover) {
+                    ProofContextInspector(model: model).frame(width: 300, height: 470)
+                }
             }
             Button { model.refresh() } label: { Image(systemName: "arrow.clockwise") }
                 .help("Refresh repository (⌘R)").accessibilityLabel("Refresh repository")
@@ -188,11 +229,17 @@ struct WorkspaceView: View {
                     Text("Staged").tag("staged")
                 }.pickerStyle(.segmented).labelsHidden().controlSize(.small)
                     .padding(.horizontal, 10).padding(.bottom, 6)
-                List(selection: $model.selectedFile) {
+                List(selection: Binding<String?>(get: { model.selectedFile }, set: { selection in
+                    // Only a user's deselection cancels the active file read;
+                    // programmatic refresh/mode resets must not cancel their own work.
+                    if selection == nil, model.selectedFile != nil { model.cancelRead() }
+                    model.selectedFile = selection
+                })) {
                     ForEach(changesTreeRows(files: model.changes?.files ?? [], scope: scope,
                                             search: model.search, tree: tree, collapsed: collapsed)) { row in
                         if let file = row.file {
                             changedFileRow(file, depth: row.depth).tag(file.id)
+                                .listRowBackground(model.selectedFile == file.id ? Color.blue.opacity(0.14) : Color.clear)
                                 .listRowInsets(EdgeInsets(top: 0, leading: 6, bottom: 0, trailing: 6))
                         } else {
                             Button {
@@ -229,6 +276,7 @@ struct WorkspaceView: View {
                 .font(.system(size: 12)).foregroundStyle(.secondary).frame(width: 15)
             Text(tree ? (file.path as NSString).lastPathComponent : file.path)
                 .font(.system(size: 12)).lineLimit(1).truncationMode(.middle)
+                .foregroundStyle(model.selectedFile == file.id ? Color.blue : Color.primary)
             Spacer(minLength: 2)
             if model.loadedDiffs[file.id]?.reviewed == true {
                 Image(systemName: "checkmark").font(.system(size: 10, weight: .semibold)).foregroundStyle(.blue)
@@ -279,16 +327,7 @@ struct WorkspaceView: View {
             }
         } else if let diff = model.diff, model.mode == "changes" {
             VStack(spacing: 0) {
-                HStack(spacing: 8) {
-                    Text((diff.path as NSString).deletingLastPathComponent)
-                        .lineLimit(1).truncationMode(.middle).help(diff.path)
-                    Image(systemName: "chevron.right").font(.system(size: 8))
-                    Text(diff.side == "staged" ? "Index" : "Working tree")
-                    Spacer(minLength: 12)
-                    Text("+\(diff.additions)").foregroundStyle(Color(nsColor: .systemGreen))
-                    Text("−\(diff.deletions)").foregroundStyle(Color(nsColor: .systemRed))
-                }.font(.system(size: 11)).foregroundStyle(.secondary)
-                .padding(.horizontal, 20).frame(height: 40)
+                fileHeader(diff)
                 if let notice = diff.notice {
                     Text(notice).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading).padding(10)
@@ -303,6 +342,33 @@ struct WorkspaceView: View {
                 Text("Real Git content. Human decisions.").foregroundStyle(.secondary)
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+    private func fileHeader(_ diff: FileDiff) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "chevron.left.forwardslash.chevron.right").foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 3) {
+                Text((diff.path as NSString).lastPathComponent).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                Text(diff.path).font(.system(size: 10)).foregroundStyle(.secondary)
+                    .lineLimit(1).truncationMode(.middle)
+            }.frame(maxWidth: .infinity, alignment: .leading).help(diff.path)
+            HStack(spacing: 5) {
+                Text("+\(diff.additions)").foregroundStyle(Color(nsColor: .systemGreen))
+                Text("−\(diff.deletions)").foregroundStyle(Color(nsColor: .systemRed))
+            }.font(.system(size: 10)).fixedSize()
+            Button { model.review() } label: {
+                Label(diff.reviewed ? "Reviewed" : "Review", systemImage: diff.reviewed ? "checkmark.circle.fill" : "checkmark.circle")
+            }.foregroundStyle(.blue).disabled(model.busy)
+                .accessibilityLabel(diff.reviewed ? "Mark file unread" : "Mark file reviewed")
+                .help("Toggle manual review for this exact file content; separate from staging")
+            Button(diff.side == "staged" ? "Unstage…" : "Stage…") { stageConfirmation = true }
+                .disabled(model.busy || !diff.canStage)
+            Menu {
+                Toggle("Show Raw Patch", isOn: $rawPatch)
+            } label: { Image(systemName: "text.alignleft") }
+                .menuStyle(.borderlessButton).fixedSize().help("Reading tools").accessibilityLabel("Reading tools")
+        }.buttonStyle(.bordered).controlSize(.small)
+            .padding(.horizontal, 12).frame(height: 56)
+            .background(Color(nsColor: .windowBackgroundColor))
     }
     private var commitEditor: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -334,17 +400,6 @@ struct WorkspaceView: View {
         }.padding(24).frame(width: 560)
     }
 }
-
-private extension View {
-    @ViewBuilder func nativeGlassControl() -> some View {
-        if #available(macOS 26.0, *) {
-            self.buttonStyle(.glass)
-        } else {
-            self.buttonStyle(.bordered)
-        }
-    }
-}
-
 
 /// The existing assets/proof.svg mark, drawn as native vector geometry.
 private struct ProofMark: View {

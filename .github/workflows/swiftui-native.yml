@@ -39,6 +39,8 @@ jobs:
         run: |
           swiftc native/macos/Sources/ProofNative/Models.swift native/macos/Sources/ProofNative/ChangesTree.swift native/macos/Tests/ChangesTreeCheck.swift -o /tmp/proof-tree-check
           /tmp/proof-tree-check
+          swiftc native/macos/Sources/ProofNative/Models.swift native/macos/Sources/ProofNative/Bridge.swift native/macos/Sources/ProofNative/WorkspaceModel.swift native/macos/Tests/ReviewNavigationCheck.swift -o /tmp/proof-review-check
+          /tmp/proof-review-check
       - name: Build native app
         run: ./native/macos/build.sh
       - name: Verify local bundle signature and bridge protocol
@@ -60,12 +62,16 @@ jobs:
         timeout-minutes: 2
         run: |
           for theme in light dark; do
-            "native/macos/build/Proof Native.app/Contents/MacOS/ProofNative" --capture-preview "$PWD/native/macos/build/screenshots" --preview-theme "$theme"
+            for size in compact wide; do
+              args=()
+              if [[ "$size" == wide ]]; then args+=(--preview-wide); fi
+              "native/macos/build/Proof Native.app/Contents/MacOS/ProofNative" --capture-preview "$PWD/native/macos/build/screenshots" --preview-theme "$theme" "${args[@]}"
+            done
           done
           python3 - <<'PYVERIFY'
           import pathlib, struct
-          for theme in ('light', 'dark'):
-              path = pathlib.Path(f'native/macos/build/screenshots/changes-{theme}.png')
+          for name in ('light-compact', 'dark-compact', 'light-wide', 'dark-wide'):
+              path = pathlib.Path(f'native/macos/build/screenshots/changes-{name}.png')
               data = path.read_bytes()
               assert data[:8] == b'\x89PNG\r\n\x1a\n', path
               width, height = struct.unpack('>II', data[16:24])

@@ -70,6 +70,21 @@ final class WorkspaceModel: ObservableObject {
         panel.allowsMultipleSelection = false; panel.prompt = "Open Repository"
         if panel.runModal() == .OK, let url = panel.url { open(url.path) }
     }
+    func closeRepository() {
+        guard !writing else { return }
+        if !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let alert = NSAlert()
+            alert.messageText = "Discard the commit message draft and close this repository?"
+            alert.addButton(withTitle: "Keep Working")
+            alert.addButton(withTitle: "Close Repository")
+            guard alert.runModal() == .alertSecondButtonReturn else { return }
+        }
+        cancelRead()
+        workspace = nil; changes = nil; diff = nil; loadedDiffs = [:]
+        selectedFile = nil; selectedCommit = nil; commitPatch = nil
+        commits = []; preview = nil; message = ""; search = ""; status = ""
+        mode = "changes"
+    }
     func open(_ path: String) {
         guard !writing else { return }
         // Draft is per selected repository; preserve it on a failed open.
@@ -124,10 +139,7 @@ final class WorkspaceModel: ObservableObject {
     func loadFile() {
         guard !writing else { return }
         diff = nil
-        guard let workspace, let file = changes?.files.first(where: { $0.id == selectedFile }) else {
-            if mode == "changes" { cancelRead() }
-            return
-        }
+        guard let workspace, let file = changes?.files.first(where: { $0.id == selectedFile }) else { return }
         loadedDiffs.removeValue(forKey: file.id)
         run("Reading \(file.path)") {
             let diff: FileDiff = try await self.bridge.call("diff", ["workspace": workspace.id, "path": file.path, "side": file.side])
