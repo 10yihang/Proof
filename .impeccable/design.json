@@ -17,7 +17,7 @@
         "sidebarIdeal": 290,
         "sidebarMax": 340,
         "minimumContentWidth": 1000,
-        "minimumContentHeight": 680,
+        "minimumContentHeight": 560,
         "pathScopeRowHeight": 40,
         "pathScopeHorizontalInset": 20,
         "repositoryFontSize": 18,
@@ -33,7 +33,7 @@
         "deletionBackgroundAlpha": 0.09,
         "hunkBackgroundAlpha": 0.45
       },
-      "navigation": "NavigationSplitView, balanced; sidebar List; segmented section picker",
+      "navigation": "NavigationSplitView, balanced; sidebar-local GeometryReader bounds content to actual column viewport; sidebar List retains native selection; segmented section picker",
       "windowToolbar": "System unified toolbar with navigationTitle(documentTitle); height and control geometry are system-managed, not fixed at 52pt",
       "surfaces": {
         "document": "NSColor.textBackgroundColor, opaque",
@@ -53,9 +53,18 @@
       },
       "motion": "No added decorative entrance motion; retain system behavior and Reduce Motion",
       "validation": {
-        "status": "Implementation documented; final native light/dark screenshot review and user approval not asserted",
-        "required": "Actual target-system app-window light/dark captures; record OS/SDK, capture method and illustrative Preview provenance",
-        "buildIsNotVisualApproval": true
+        "status": "Native active-window light/dark layout captured; user aesthetic approval and interactive acceptance not asserted",
+        "sourceCommit": "13853cb0d8933770170a987f941bc1a6e80d23e0",
+        "run": "https://github.com/10yihang/Proof/actions/runs/41394469046",
+        "os": "macOS 27.0.1",
+        "sdk": "27.0",
+        "capture": "Native screencapture window, cross-checked with ScreenCaptureKit",
+        "pixels": [
+          1024,
+          674
+        ],
+        "fixture": "Preview · illustrative repository · no Git operations",
+        "olderSystemRuntimeTested": false
       }
     }
   },
