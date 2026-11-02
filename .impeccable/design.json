@@ -1,190 +1,187 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-11-02T07:36:45Z",
-  "title": "Proof Native — Reference workbench skeleton, native window chrome",
+  "generatedAt": "2026-11-02T10:19:00Z",
+  "title": "Proof Native — Fork layout / Linear visual workbench",
   "surface": "native/macos/Changes",
   "mode": "operate",
   "extensions": {
     "nativeImplementation": {
       "sources": [
         "native/macos/Sources/ProofNative/WorkspaceView.swift",
+        "native/macos/Sources/ProofNative/WorkbenchPalette.swift",
         "native/macos/Sources/ProofNative/DiffView.swift",
         "native/macos/Sources/ProofNative/ProofNativeApp.swift",
         "native/macos/Sources/ProofNative/ChangesTree.swift",
         "native/macos/Sources/ProofNative/WorkspaceModel.swift",
-        "native/macos/Sources/ProofNative/ContextInspector.swift"
+        "native/macos/Sources/ProofNative/ContextInspector.swift",
+        "native/macos/Sources/ProofNative/LayoutDiagnostics.swift"
       ],
       "units": "pt",
       "tokens": {
-        "sidebarMin": 294,
-        "sidebarIdeal": 324,
-        "sidebarMax": 384,
-        "minimumContentWidth": 1000,
-        "minimumContentHeight": 560,
-        "repositoryFontSize": 12,
-        "fileNameFontSize": 12,
-        "secondaryFontSize": 11,
-        "codeFontSize": 13,
-        "codeLineHeight": 22,
-        "lineNumberFontSize": 11,
-        "gutterWidth": 105,
-        "codeInsetX": 14,
-        "codeInsetY": 14,
-        "additionBackgroundAlpha": 0.1,
-        "deletionBackgroundAlpha": 0.09,
-        "hunkBackgroundAlpha": 0.45,
-        "branchFontSize": 10,
-        "proofMarkSize": 24,
-        "fileRowHeight": 32,
-        "minimumListRowHeight": 32,
-        "folderGroupContentHeight": 30,
-        "treeIndentPerDepth": 12,
-        "fileLeadingInset": 10,
-        "listRowHorizontalInset": 6,
-        "sidebarFooterPadding": 10,
-        "filePaneIdeal": 280,
-        "navigationRailWidth": 44,
-        "navigationButtonSize": 34,
-        "navigationButtonRadius": 6,
-        "repositoryTabHeight": 32,
-        "activeRepositoryTabWidth": 220,
-        "filePaneTitleHeight": 36,
-        "fileHeaderHeight": 56,
-        "fileHeaderHorizontalInset": 12,
-        "contextWidth": 260,
-        "contextBreakpoint": 1200,
+        "navigationMin": 168,
+        "navigationIdeal": 208,
+        "navigationMax": 240,
+        "filesWide": 310,
+        "filesCompact": 250,
+        "filesBreakpointDetailWidth": 1000,
+        "branchBarHeight": 42,
+        "filesTitleHeight": 44,
+        "fileHeaderHeight": 50,
+        "comparisonHeight": 34,
+        "statusHeight": 24,
+        "commitTextHeight": 54,
         "contextPopoverWidth": 300,
         "contextPopoverHeight": 470,
-        "defaultContentWidth": 1440,
-        "defaultContentHeight": 900,
-        "repositoryToolbarWidth": 260
+        "fileRowHeight": 34,
+        "selectedFileRowHeight": 46,
+        "groupHeight": 34,
+        "folderHeight": 28,
+        "minimumListRowHeight": 32,
+        "treeIndent": 10,
+        "codeFontSize": 13,
+        "codeLineHeight": 22,
+        "gutterWidth": 105,
+        "controlRadius": 5,
+        "separatorWidth": 1
       },
-      "navigation": "User-approved reference skeleton: repository tab strip made from actual32pt row segments inside each native column; no overlay or root safeAreaInset; combined 44pt Changes/Commit/History rail and ideal280pt file pane; central Diff and responsive Context inspector; sidebar-local GeometryReader bounds retained",
-      "windowToolbar": "Native unified toolbar; fixed260pt repository identity with explicit titleAndIcon branch; automatic title removed on15+ and retained NSWindow title hidden for fallback; Context/refresh only; small bordered actions in56pt file header",
-      "surfaces": {
-        "document": "NSColor.textBackgroundColor, opaque",
-        "text": "NSColor.textColor",
-        "secondaryText": "NSColor.secondaryLabelColor",
-        "separator": "NSColor.separatorColor",
-        "addition": "NSColor.systemGreen",
-        "deletion": "NSColor.systemRed",
-        "hunk": "NSColor.unemphasizedSelectedContentBackgroundColor",
-        "selectionAndManualReview": "SwiftUI Color.blue; review remains distinct from staging",
-        "proofMark": "Original Proof blue, RGB 49/91/206 (#315BCE), with white review stroke and brackets"
-      },
-      "fonts": "SF system / AppKit monospaced system font",
-      "icons": "SF Symbols plus the original assets/proof.svg mark reproduced as native vector geometry",
-      "materialPolicy": {
-        "macOS26And27": "System-native window/navigation materials where supported; file-header actions use small bordered controls, not explicit glass pills; no fabricated blur",
-        "macOS13To15": "Native compatibility appearance, not Liquid Glass; minimum deployment remains macOS13; runtime on older systems untested",
-        "code": "Solid document background; no simulated blur or glass"
-      },
-      "motion": "No added decorative entrance motion; retain system behavior and Reduce Motion",
-      "validation": {
-        "status": "SHIP: four native Changes preview layouts pass geometry assertions and visual inspection; not full interaction, old-OS runtime, feature parity or user aesthetic acceptance",
-        "reference": "User-provided original screenshot inspected for structure only; private identifiers/content excluded from documentation",
-        "required": "Final actual app-window captures inspected in light/dark at compact1024x674 and wide1440x677",
-        "pixelIdenticalClaim": false,
-        "fixture": "Preview · illustrative repository · no Git operations",
-        "olderSystemRuntimeTested": false,
-        "capturePlan": "Completed four actual captures. Requested wide1440x900 constrained to1440x677; no display/security changes or scaled proxies.",
-        "sourceSHA": "eb19c7e3ba3efa94ed873f99d582871cbbb83b08",
-        "ciRun": "https://github.com/10yihang/Proof/actions/runs/41406785901",
-        "runtime": "macOS27.0.1 / Xcode27.1 / SDK27.0",
-        "deploymentEvidence": {
-          "Swift": "13.0",
-          "Rust": "11.0",
-          "Info.plist": "13.0",
-          "SDK": "27.0"
+      "colors": {
+        "canvas": {
+          "light": "#FFFFFF",
+          "dark": "#1B1B1E"
+        },
+        "navigation": {
+          "light": "#F4F4F6",
+          "dark": "#19191C"
+        },
+        "panel": {
+          "light": "#F8F8FA",
+          "dark": "#202023"
+        },
+        "raised": {
+          "light": "#EEEEF1",
+          "dark": "#29292E"
+        },
+        "selection": {
+          "light": "#E3E1EA",
+          "dark": "#34323B"
+        },
+        "border": {
+          "light": "#DDDDE3",
+          "dark": "#303036"
+        },
+        "text": {
+          "light": "#292830",
+          "dark": "#D3D1DB"
+        },
+        "secondary": {
+          "light": "#65626F",
+          "dark": "#A6A3B0"
+        },
+        "accent": {
+          "light": "#655779",
+          "dark": "#D8D2EC"
+        },
+        "addition": {
+          "light": "#E8F1EB",
+          "dark": "#21342B"
+        },
+        "deletion": {
+          "light": "#F6E9EC",
+          "dark": "#38282D"
+        },
+        "hunk": {
+          "light": "#EFECF5",
+          "dark": "#27232F"
+        },
+        "additionInk": {
+          "light": "#3A6C4C",
+          "dark": "#A4CBB0"
+        },
+        "deletionInk": {
+          "light": "#985662",
+          "dark": "#D5A5AF"
         }
       },
-      "identityReferences": [
-        "assets/proof.svg",
-        "src/components/FileTree.tsx",
-        "src/components/WorkspaceTabs.tsx",
-        "src/styles/density.css",
-        "docs/DESIGN.md"
-      ],
+      "navigation": "Native root NavigationSplitView; repository navigation plus detail-owned files/Diff/inline checked commit. Both native columns use local viewport size boundaries. No root inset overlay or guessed titlebar padding.",
+      "windowToolbar": "unifiedCompact; single real active repository tab in navigation placement, open in primaryAction; no principal title badge. Native toolbar uses panel color preference. macOS26+ tab item shared background hidden; automatic title removal availability guarded.",
+      "fonts": "SF system / Chinese system fallback; AppKit monospaced code13pt,22pt lines; offline",
+      "icons": "SF Symbols",
+      "language": "Chinese app-owned UI; source code, repository metadata and backend diagnostics retain original values.",
       "treeBehavior": {
-        "default": "Compressed single-folder chains; stops at files or branches",
-        "scope": [
-          "all",
-          "unstaged",
-          "staged"
-        ],
-        "identity": "side + path; staged and unstaged versions remain separate",
-        "search": "Filters by path and expands matching groups/folders",
-        "collapse": "Local group/folder state, overridden by active search",
-        "flatList": "Full path in a single line",
-        "rowMetadata": "Status letter, loaded-content manual-review checkmark, full-path and rename-source tooltip",
-        "originalComparison": "Original FileTree estimates file rows at 32px and group rows at 36px; native file content is 32pt, group/folder content 30pt with 32pt minimum List rows. Identity restoration is not a pixel-identical port."
+        "scope": "Both staged and unstaged groups; compressed folders, search and collapse",
+        "identity": "side + path",
+        "selection": "Soft neutral-purple row; not a review approval",
+        "metadata": "Status letter, manual review check for loaded content, known selected snapshot additions/deletions"
       },
       "reviewCoverage": {
-        "source": "Only Rust bridge-returned loadedDiffs snapshots in production; Preview is synthetic and separately labeled",
-        "display": "Reviewed / total hunks in loaded snapshots, plus loaded / total files",
-        "unknown": "Unloaded files are unknown, not reviewed",
-        "nextFile": "Includes unloaded and loaded-but-unreviewed files",
-        "invalidation": "Cache cleared on open, reload/refresh and view change; selected entry removed before reloading; no continuous background-validity guarantee",
-        "safety": "Manual review remains content-bound and separate from explicit Stage/Unstage confirmations, trust, stale-write checks and cancellation"
+        "source": "Bridge-returned loaded snapshots; explicit synthetic fixture only in preview",
+        "display": "Reviewed loaded files / loaded files",
+        "unknown": "Unloaded content remains unknown",
+        "nextFile": "Includes unknown and unreviewed files",
+        "safety": "Content-bound review remains independent of staging and checked commit"
       },
-      "scope": {
-        "included": "Restore approved screenshot layout with a real single-active repository tab, navigation rail, compact file pane, central Diff and truthful read-only Context; existing Commit/History retained",
-        "unchanged": "Original Web/Tauri implementation and guidance; Rust backend",
-        "notImplemented": [
-          "Multi-repository tabs and per-repository state",
-          "Files editor",
-          "Full History graph and comparison tabs",
-          "AI/session context and reported validation results",
-          "Split diff",
-          "Hunk navigation and expanded context"
-        ]
-      },
-      "repositoryTabBehavior": "Single active tab only; real close guards unsaved commit draft and clears repository state; open replaces current repository. Not multi-repository support.",
+      "repositoryTabBehavior": "One active repository, not multi-repo support. Closing/replacing protects unsaved commit message; failed open preserves draft.",
       "contextInspector": {
-        "responsive": "260pt column in Changes at window width >=1200pt when visible; toolbar toggles column, or opens 300x470pt popover below threshold",
+        "presentation": "300x470 read-only popover",
         "fields": [
-          "Loaded diff path",
-          "Comparison direction",
+          "Loaded path",
+          "Actual comparison",
           "HEAD when available",
-          "Opaque snapshot ID, not Git commit hash",
-          "Loaded snapshot human-review hunk counts",
+          "Opaque snapshot ID",
+          "Human review counts",
           "Repository trust"
         ],
-        "validation": "Not reported by this frontend.",
-        "limits": "Read-only loaded snapshot; refresh required for latest content. No invented AI findings, validation success, sessions or real-time update claims."
+        "validation": "Not reported by this frontend; no fabricated AI/session/test evidence"
+      },
+      "inlineCommit": "Real staged count and shared canPrepareCommit guard; preview/confirmation remains mandatory; no implicit push or amend.",
+      "scope": {
+        "included": "Approved Fork-layout/Linear-visual native Changes and history reading; inline checked local commit",
+        "unchanged": "Original Web/Tauri guidance and Rust backend",
+        "notImplemented": [
+          "Multi-repository tabs/state",
+          "Fetch/pull/push",
+          "Branch switching, stash, tags and remotes navigation",
+          "Files editor",
+          "Full History graph/comparison tabs",
+          "AI/session context or reported validation",
+          "Split diff",
+          "Hunk staging/navigation and expanded context",
+          "Amend"
+        ]
+      },
+      "validation": {
+        "status": "Current revision build and actual captures pending; no visual acceptance claim",
+        "reference": "User-approved full synthetic Fork-layout/Linear-visual concept; supersedes CodeEdit and B-topbar",
+        "required": "Native actual light/dark compact and wide; geometry assertions and state tests",
+        "olderSystemRuntimeTested": false,
+        "deploymentTarget": "macOS13; current package minos/plist verification pending",
+        "fixture": "演示数据 · 不执行 Git 操作",
+        "pixelIdenticalClaim": false
       }
     }
   },
   "narrative": {
-    "northStar": "Restore Proof’s approved workbench skeleton; native materials support, not replace, its structure.",
-    "overview": "The user-approved reference restores repository tabs, a compact navigation rail, files, central Diff and responsive Context. Current implementation truthfully supports one active repository and loaded-snapshot context only. This supersedes the earlier no-rail composition while leaving original Web/Tauri untouched; final Changes layout captures pass; broader acceptance remains separate.",
+    "northStar": "Fork’s repository/files/diff workflow, Linear’s quiet gray hierarchy; preserve real Proof safety.",
+    "overview": "Full approved concept supersedes prior native directions, not original Web/Tauri. Compact repository tab chrome, navigation, partitioned files, solid code and inline checked commit. Unavailable concept features are omitted honestly.",
     "keyCharacteristics": [
-      "32pt single-active repository tab strip",
-      "44pt rail and ideal280pt file pane",
-      "56pt neutral file-actions header",
-      "Solid13pt code on22pt lines",
-      "260pt truthful Context at1200pt+; narrow popover",
-      "Native unified toolbar limited to repository identity/context/refresh"
-    ],
-    "rules": [
-      {
-        "name": "Navigation material stops at code",
-        "body": "System glass belongs to navigation and controls, never the code document.",
-        "section": "elevation"
-      }
+      "Native compact single-repository tab",
+      "Ideal208pt repository navigation",
+      "310/250pt files and flexible Diff",
+      "Muted adaptive gray/purple palette",
+      "Chinese app-owned UI",
+      "Inline checked commit and independent human review"
     ],
     "dos": [
-      "Follow the approved reference structure without copying its private content.",
-      "Keep single-repository and loaded-snapshot limits explicit.",
-      "Preserve native keyboard, copy/find, trust, draft and stale-write protections.",
-      "Use fresh native captures for this revision; distinguish directional approval from render acceptance."
+      "Follow current approved full concept hierarchy.",
+      "Use actual repository metadata and loaded snapshot coverage.",
+      "Keep trust/draft/stale-write/confirmation guards.",
+      "Verify new native captures rather than reusing prior acceptance."
     ],
     "donts": [
-      "Do not claim multiple repository tabs work concurrently.",
-      "Do not fake validation, AI results, sessions or automatic freshness.",
-      "Do not move file actions back into large global glass pills.",
-      "Do not fake glass or make code translucent.",
-      "Do not treat previous screenshots or successful builds as current visual approval."
+      "Do not fake unavailable Git controls.",
+      "Do not imply unknown content was reviewed.",
+      "Do not reintroduce large empty titlebar or title capsule.",
+      "Do not treat concept approval as runtime or aesthetic acceptance."
     ]
   }
 }

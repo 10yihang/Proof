@@ -28,14 +28,14 @@ struct ProofNativeApp: App {
                 }
         }
         .defaultSize(width: 1440, height: 900)
-        .windowToolbarStyle(.unified)
+        .windowToolbarStyle(.unifiedCompact)
         .commands {
             CommandGroup(replacing: .newItem) {
-                Button("Open Repository…") { model.pickRepository() }.keyboardShortcut("o")
+                Button("打开仓库…") { model.pickRepository() }.keyboardShortcut("o")
                     .disabled(model.writing)
             }
             CommandGroup(after: .toolbar) {
-                Button("Refresh Repository") { model.refresh() }.keyboardShortcut("r")
+                Button("刷新仓库") { model.refresh() }.keyboardShortcut("r")
                     .disabled(model.workspace == nil || model.busy)
             }
         }
@@ -55,15 +55,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if approvedClose { return .terminateNow }
         if model?.writing == true {
             let alert = NSAlert()
-            alert.messageText = "A Git or review operation is still running"
-            alert.informativeText = "Wait for it to finish before quitting. Do not interrupt a Git write."
+            alert.messageText = "Git 或评审操作仍在运行"
+            alert.informativeText = "请等待操作完成后退出，不要中断 Git 写操作。"
             alert.runModal()
             return .terminateCancel
         }
         if let model, !model.message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let alert = NSAlert()
-            alert.messageText = "Discard the commit message draft?"
-            alert.addButton(withTitle: "Keep Working"); alert.addButton(withTitle: "Quit")
+            alert.messageText = "放弃提交信息草稿？"
+            alert.addButton(withTitle: "继续编辑"); alert.addButton(withTitle: "退出")
             guard alert.runModal() == .alertSecondButtonReturn else { return .terminateCancel }
         }
         model?.cancelRead(); model?.bridge.stop()
@@ -71,3 +71,4 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 }
+

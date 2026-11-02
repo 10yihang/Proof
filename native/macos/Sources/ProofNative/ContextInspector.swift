@@ -9,7 +9,7 @@ struct ProofContextInspector: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Context").font(.system(size: 12, weight: .semibold))
+                Text("上下文").font(.system(size: 12, weight: .semibold))
                 Spacer()
             }.padding(.horizontal, 16).frame(height: 40).captureLayout("context-header")
             Divider()
@@ -23,9 +23,9 @@ struct ProofContextInspector: View {
                         validation
                     } else {
                         VStack(alignment: .leading, spacing: 8) {
-                            Label("Current Diff snapshot", systemImage: "clock.arrow.circlepath")
+                            Label("当前 Diff 快照", systemImage: "clock.arrow.circlepath")
                                 .font(.system(size: 12, weight: .medium))
-                            Text(model.busy ? "Reading selected content…" : "Select a changed file to inspect its snapshot.")
+                            Text(model.busy ? "正在读取选中内容…" : "选择一个更改文件以查看快照。")
                                 .foregroundStyle(.secondary)
                         }.padding(16)
                     }
@@ -33,7 +33,7 @@ struct ProofContextInspector: View {
             }
             if let workspace = model.workspace {
                 Divider()
-                Label(workspace.trusted ? "Local repository · trusted" : "Local repository · read-only",
+                Label(workspace.trusted ? "本地仓库 · 已信任" : "本地仓库 · 只读",
                       systemImage: workspace.trusted ? "checkmark.shield" : "lock")
                     .font(.system(size: 10)).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -42,32 +42,32 @@ struct ProofContextInspector: View {
         }
         .font(.system(size: 11))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(Color(nsColor: WorkbenchPalette.panel))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Diff context")
+        .accessibilityLabel("Diff 上下文")
     }
 
     private func snapshot(_ diff: FileDiff) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            Label("Current Diff snapshot", systemImage: "clock.arrow.circlepath")
+            Label("当前 Diff 快照", systemImage: "clock.arrow.circlepath")
                 .font(.system(size: 12, weight: .medium))
             Text(diff.path)
                 .font(.system(size: 11, design: .monospaced))
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
             VStack(spacing: 10) {
-                field("Comparison", diff.side == "staged" ? "HEAD → Index" : "Index → Worktree")
+                field("比较范围", diff.side == "staged" ? "HEAD → 暂存区" : "暂存区 → 工作区")
                 if let head = model.changes?.head {
                     field("HEAD", String(head.prefix(12)), help: head)
                 }
             }
             VStack(alignment: .leading, spacing: 4) {
-                Text("Snapshot ID").foregroundStyle(.secondary)
+                Text("快照 ID").foregroundStyle(.secondary)
                 Text(diff.id).font(.system(size: 10, design: .monospaced))
                     .textSelection(.enabled).lineLimit(2).truncationMode(.middle)
                     .help(diff.id)
-            }.help("An opaque identifier for this loaded snapshot, not a Git commit hash.")
-            Text("Refresh to read the latest repository content.")
+            }.help("当前快照的不透明标识，不是 Git 提交哈希。")
+            Text("刷新以读取最新仓库内容。")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }.padding(16)
@@ -76,15 +76,15 @@ struct ProofContextInspector: View {
     private func review(_ diff: FileDiff) -> some View {
         let reviewed = diff.hunks.filter { $0.reviewState == "reviewed" }.count
         return VStack(alignment: .leading, spacing: 10) {
-            Label("Human review", systemImage: "checkmark.circle")
+            Label("人工评审", systemImage: "checkmark.circle")
                 .font(.system(size: 12, weight: .medium))
             if diff.hunks.isEmpty {
-                Text("No reviewable hunks in this snapshot.").foregroundStyle(.secondary)
+                Text("此快照没有可评审的区块。").foregroundStyle(.secondary)
             } else {
-                Text("\(reviewed) of \(diff.hunks.count) hunks reviewed")
-                    .foregroundStyle(.blue).monospacedDigit()
+                Text("\(reviewed) / \(diff.hunks.count) 个区块已评审")
+                    .foregroundStyle(Color(nsColor: WorkbenchPalette.accent)).monospacedDigit()
             }
-            Text("Applies to this loaded content. Review is separate from staging and does not guarantee correctness.")
+            Text("仅适用于已加载内容。评审与暂存独立，不保证代码正确。")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }.padding(16)
@@ -92,9 +92,9 @@ struct ProofContextInspector: View {
 
     private var validation: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("Validation", systemImage: "checkmark.shield")
+            Label("验证", systemImage: "checkmark.shield")
                 .font(.system(size: 12, weight: .medium))
-            Text("Not reported by this frontend.")
+            Text("此前端未报告验证结果。")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }.padding(16)
@@ -110,3 +110,4 @@ struct ProofContextInspector: View {
         }
     }
 }
+

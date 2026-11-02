@@ -47,12 +47,20 @@ func validatePreviewChrome(_ window: NSWindow) throws {
         view.subviews.forEach(visit)
     }
     visit(root)
-    guard let tab = frames["repository-tab-trailing"], let file = frames["file-header"],
-          file.minY >= tab.maxY - 0.5,
-          frames["context-header"].map({ $0.minY >= tab.maxY - 0.5 }) ?? true,
+    guard let branch = frames["branch-header"], let file = frames["file-header"],
+          let diff = frames["diff-viewport"], let commit = frames["commit-editor"],
+          let status = frames["status-bar"], let files = frames["files-column"],
+          branch.minY >= root.safeAreaInsets.top - 0.5,
+          file.minY >= branch.maxY - 0.5,
+          files.minY >= branch.maxY - 0.5,
+          diff.minY >= file.maxY - 0.5,
+          diff.height >= 120, file.width >= 340,
+          commit.minY >= diff.maxY - 0.5,
+          commit.maxY <= status.minY + 0.5,
+          status.maxY <= root.bounds.height + 0.5,
           frames["sidebar-footer"].map({ $0.maxY <= root.bounds.height + 0.5 }) ?? false else {
         throw NSError(domain: "ProofPreviewLayout", code: 1,
-                      userInfo: [NSLocalizedDescriptionKey: "Repository tabs overlap headers or sidebar footer exceeds viewport: \(frames)"])
+                      userInfo: [NSLocalizedDescriptionKey: "Workbench chrome overlaps or usable diff/commit viewport is clipped: \(frames)"])
     }
-    print("Preview chrome verified: tab bottom=\(tab.maxY), file header top=\(file.minY), context top=\(frames["context-header"]?.minY.description ?? "collapsed")")
+    print("Preview workbench verified: branch bottom=\(branch.maxY), file top=\(file.minY), diff height=\(diff.height), commit=\(commit), status=\(status)")
 }

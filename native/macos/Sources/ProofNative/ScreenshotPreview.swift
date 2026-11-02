@@ -32,7 +32,7 @@ enum ScreenshotPreview {
         // One process per appearance: establish AppKit appearance before SwiftUI
         // creates any toolbar, text view or semantic-color-backed native surface.
         NSApplication.shared.appearance = NSAppearance(named: themeAppearance)
-        let workspace = Workspace(id: "preview-only", name: "Proof", path: "/Preview/Proof", trusted: true)
+        let workspace = Workspace(id: "preview-only", name: "atlas-demo", path: "/Preview/atlas-demo", trusted: true)
         let files = [
             ChangedFile(path: "native/macos/Sources/ProofNative/WorkspaceModel.swift", oldPath: nil, status: "M", side: "unstaged", conflicted: false),
             ChangedFile(path: "native/macos/Sources/ProofNative/WorkspaceView.swift", oldPath: nil, status: "M", side: "unstaged", conflicted: false),
@@ -89,7 +89,8 @@ enum ScreenshotPreview {
         }.joined(separator: "\n")
         model.diff = FileDiff(id: "preview-snapshot", path: files[0].path, side: "unstaged", base: "HEAD", patch: patch, hunks: hunks, additions: 12, deletions: 3, kind: "text", notice: nil, canStage: true)
         model.loadedDiffs[files[0].id] = model.diff
-        model.status = "Preview · illustrative repository · no Git operations"
+        model.status = "演示数据 · 不执行 Git 操作"
+        model.message = "fix: preserve content-bound review snapshots"
         return model
     }
 
@@ -158,4 +159,5 @@ enum ScreenshotPreview {
     }
     private enum CaptureError: Error { case noView, noBitmap, noWindow, requiresScreenCaptureKit }
 }
+
 

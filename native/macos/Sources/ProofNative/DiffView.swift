@@ -5,7 +5,7 @@ struct NativeDiffView: View {
     let diff: FileDiff
     var body: some View {
         CodeTextView(identity: diff.id, rows: diff.hunks.flatMap { hunk in
-            [CodeRow(text: hunk.header + "   ·   " + hunk.reviewState, kind: "header")] + hunk.lines.map {
+            [CodeRow(text: hunk.header + "   ·   " + (hunk.reviewState == "reviewed" ? "已评阅" : "待评阅"), kind: "header")] + hunk.lines.map {
                 CodeRow(text: $0.content.replacingOccurrences(of: "\r", with: "␍"), kind: $0.kind,
                         oldLine: $0.oldLine, newLine: $0.newLine)
             }
@@ -32,9 +32,9 @@ struct CodeRow: Equatable {
 
     var background: NSColor? {
         switch kind {
-        case "add": return NSColor.systemGreen.withAlphaComponent(0.10)
-        case "delete": return NSColor.systemRed.withAlphaComponent(0.09)
-        case "header": return NSColor.unemphasizedSelectedContentBackgroundColor.withAlphaComponent(0.45)
+        case "add": return WorkbenchPalette.addition
+        case "delete": return WorkbenchPalette.deletion
+        case "header": return WorkbenchPalette.hunk
         default: return nil
         }
     }
@@ -59,7 +59,7 @@ struct CodeTextView: NSViewRepresentable {
         scroll.autohidesScrollers = true
         scroll.borderType = .noBorder
         scroll.drawsBackground = true
-        scroll.backgroundColor = .textBackgroundColor
+        scroll.backgroundColor = WorkbenchPalette.canvas
         let text = DiffTextView(frame: .zero)
         text.isEditable = false
         text.isSelectable = true
@@ -75,8 +75,9 @@ struct CodeTextView: NSViewRepresentable {
         text.textContainer?.widthTracksTextView = false
         text.textContainerInset = NSSize(width: 14, height: 14)
         text.textContainer?.lineFragmentPadding = 0
-        text.backgroundColor = .textBackgroundColor
-        text.setAccessibilityLabel("Read-only Git diff. Use Command F to find text. Line numbers are in the adjacent gutter.")
+        text.backgroundColor = WorkbenchPalette.canvas
+        text.selectedTextAttributes = [.backgroundColor: WorkbenchPalette.selection, .foregroundColor: WorkbenchPalette.text]
+        text.setAccessibilityLabel("只读 Git 差异。按 Command F 查找文本，左侧显示行号。")
         scroll.documentView = text
         if numbered {
             scroll.hasVerticalRuler = true
@@ -117,7 +118,7 @@ struct CodeTextView: NSViewRepresentable {
         paragraph.defaultTabInterval = 31.2
         let result = NSMutableAttributedString(string: row.text + "\n", attributes: [
             .font: NSFont.monospacedSystemFont(ofSize: 13, weight: .regular),
-            .foregroundColor: row.kind == "header" ? NSColor.secondaryLabelColor : NSColor.textColor,
+            .foregroundColor: row.kind == "header" ? WorkbenchPalette.secondary : WorkbenchPalette.text,
             .paragraphStyle: paragraph
         ])
         guard row.kind != "header" else { return result }
@@ -126,7 +127,7 @@ struct CodeTextView: NSViewRepresentable {
             (#"\b(import|from|export|default|const|let|var|func|fn|pub|struct|enum|class|impl|return|if|else|guard|throw|throws|try|await|async|for|in|match|case|switch|self|Self|true|false|nil|null|None|Some|mut|use|where|private|static)\b"#, DiffPalette.keyword),
             (#"\b[0-9]+(?:\.[0-9]+)?\b"#, DiffPalette.number),
             (#"\"(?:\\.|[^\"\\])*\""#, DiffPalette.string),
-            (#"//.*$"#, .secondaryLabelColor)
+            (#"//.*$"#, WorkbenchPalette.secondary)
         ]
         let range = NSRange(location: 0, length: (row.text as NSString).length)
         for (pattern, color) in rules {
@@ -166,7 +167,7 @@ final class DiffRuler: NSRulerView {
         super.init(scrollView: scrollView, orientation: orientation)
         ruleThickness = 105
         clientView = scrollView?.documentView
-        setAccessibilityLabel("Original and changed line numbers")
+        setAccessibilityLabel("原始与修改后的行号")
         scrollView?.contentView.postsBoundsChangedNotifications = true
         if let clip = scrollView?.contentView {
             NotificationCenter.default.addObserver(self, selector: #selector(viewportDidChange(_:)),
@@ -178,14 +179,14 @@ final class DiffRuler: NSRulerView {
     @objc private func viewportDidChange(_ notification: Notification) { needsDisplay = true }
 
     override func drawHashMarksAndLabels(in rect: NSRect) {
-        NSColor.textBackgroundColor.setFill()
+        WorkbenchPalette.canvas.setFill()
         bounds.fill()
         guard let text = scrollView?.documentView as? DiffTextView else { return }
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = .right
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
-            .foregroundColor: NSColor.secondaryLabelColor,
+            .foregroundColor: WorkbenchPalette.secondary,
             .paragraphStyle: paragraph
         ]
         for row in text.rows {
@@ -203,19 +204,19 @@ final class DiffRuler: NSRulerView {
             (row.newLine.map(String.init) ?? "").draw(in: NSRect(x: 43, y: y, width: 34, height: 18), withAttributes: attrs)
             let sign = row.kind == "add" ? "+" : row.kind == "delete" ? "−" : ""
             var signAttrs = attrs
-            signAttrs[.foregroundColor] = row.kind == "add" ? NSColor.systemGreen : NSColor.systemRed
+            signAttrs[.foregroundColor] = row.kind == "add" ? WorkbenchPalette.additionInk : WorkbenchPalette.deletionInk
             sign.draw(in: NSRect(x: 82, y: y, width: 13, height: 18), withAttributes: signAttrs)
         }
-        NSColor.separatorColor.setFill()
+        WorkbenchPalette.border.setFill()
         NSRect(x: bounds.maxX - 1, y: bounds.minY, width: 1, height: bounds.height).fill()
     }
 }
 
 /// Quiet, readable lexical ink in both appearances; diff backgrounds own red/green state.
 private enum DiffPalette {
-    static let keyword = adaptive(light: (0.43, 0.25, 0.57), dark: (0.77, 0.61, 0.89))
-    static let number = adaptive(light: (0.52, 0.32, 0.13), dark: (0.85, 0.70, 0.47))
-    static let string = adaptive(light: (0.58, 0.25, 0.18), dark: (0.88, 0.65, 0.53))
+    static let keyword = adaptive(light: (0.43, 0.25, 0.57), dark: (0.74, 0.65, 0.85))
+    static let number = adaptive(light: (0.52, 0.32, 0.13), dark: (0.71, 0.78, 0.86))
+    static let string = adaptive(light: (0.58, 0.25, 0.18), dark: (0.86, 0.83, 0.68))
 
     private static func adaptive(light: (CGFloat, CGFloat, CGFloat), dark: (CGFloat, CGFloat, CGFloat)) -> NSColor {
         NSColor(name: nil) { appearance in
@@ -224,3 +225,4 @@ private enum DiffPalette {
         }
     }
 }
+

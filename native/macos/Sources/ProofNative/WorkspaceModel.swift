@@ -27,12 +27,18 @@ final class WorkspaceModel: ObservableObject {
     private var task: Task<Void, Never>?
     private var generation = 0
 
+    var stagedFileCount: Int { changes?.files.filter { $0.side == "staged" }.count ?? 0 }
+    var canPrepareCommit: Bool {
+        !busy && !writing && workspace?.trusted == true && stagedFileCount > 0
+            && !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     func start() {
-        run("Starting Rust service") {
+        run("正在启动 Rust 服务") {
             try self.bridge.start()
             struct Hello: Decodable { let protocolVersion: Int; enum CodingKeys: String, CodingKey { case protocolVersion = "protocol" } }
             let hello: Hello = try await self.bridge.call("hello")
-            guard hello.protocolVersion == 1 else { throw BridgeError(code: "VERSION_MISMATCH", message: "Rebuild the app and Rust bridge together.", detail: "Protocol \(hello.protocolVersion)") }
+            guard hello.protocolVersion == 1 else { throw BridgeError(code: "VERSION_MISMATCH", message: "请同时重新构建应用和 Rust 桥接服务。", detail: "协议 \(hello.protocolVersion)") }
             let recent: [Workspace] = try await self.bridge.call("recent")
             try Task.checkCancellation()
             self.recent = recent
@@ -54,29 +60,22 @@ final class WorkspaceModel: ObservableObject {
     func cancelRead() {
         guard !writing else { return }
         generation += 1; task?.cancel(); task = nil; busy = false
-        status = "Read cancelled. Refresh to load the latest state."
+        status = "已取消读取。刷新以载入最新状态。"
     }
     func pickRepository() {
         guard !writing else { return }
-        if !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let alert = NSAlert()
-            alert.messageText = "Discard the commit message draft if a different repository opens?"
-            alert.addButton(withTitle: "Keep Working")
-            alert.addButton(withTitle: "Choose Repository")
-            guard alert.runModal() == .alertSecondButtonReturn else { return }
-        }
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true; panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false; panel.prompt = "Open Repository"
+        panel.allowsMultipleSelection = false; panel.prompt = "打开仓库"
         if panel.runModal() == .OK, let url = panel.url { open(url.path) }
     }
     func closeRepository() {
         guard !writing else { return }
         if !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let alert = NSAlert()
-            alert.messageText = "Discard the commit message draft and close this repository?"
-            alert.addButton(withTitle: "Keep Working")
-            alert.addButton(withTitle: "Close Repository")
+            alert.messageText = "丢弃提交说明草稿并关闭此仓库？"
+            alert.addButton(withTitle: "继续编辑")
+            alert.addButton(withTitle: "关闭仓库")
             guard alert.runModal() == .alertSecondButtonReturn else { return }
         }
         cancelRead()
@@ -85,10 +84,22 @@ final class WorkspaceModel: ObservableObject {
         commits = []; preview = nil; message = ""; search = ""; status = ""
         mode = "changes"
     }
+    func requiresDraftConfirmation(for path: String) -> Bool {
+        guard let workspace, !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        return URL(fileURLWithPath: workspace.path).standardizedFileURL.path
+            != URL(fileURLWithPath: path).standardizedFileURL.path
+    }
     func open(_ path: String) {
         guard !writing else { return }
+        if requiresDraftConfirmation(for: path) {
+            let alert = NSAlert()
+            alert.messageText = "打开其他仓库时，丢弃当前提交说明草稿？"
+            alert.addButton(withTitle: "继续编辑")
+            alert.addButton(withTitle: "打开仓库")
+            guard alert.runModal() == .alertSecondButtonReturn else { return }
+        }
         // Draft is per selected repository; preserve it on a failed open.
-        run("Opening repository") {
+        run("正在打开仓库") {
             let workspace: Workspace = try await self.bridge.call("open", ["path": path])
             let changes: Changes = try await self.bridge.call("changes", ["workspace": workspace.id])
             try Task.checkCancellation()
@@ -97,14 +108,14 @@ final class WorkspaceModel: ObservableObject {
             self.loadedDiffs = [:]
             self.diff = nil; self.selectedFile = nil; self.selectedCommit = nil
             self.commitPatch = nil; self.commits = []; self.preview = nil; self.mode = "changes"
-            self.status = "Repository loaded"
+            self.status = "仓库已载入"
             self.recent.removeAll { $0.id == workspace.id }; self.recent.insert(changes.workspace, at: 0)
         }
     }
     func refresh() {
         guard let workspace else { return }
         preview = nil
-        run("Refreshing repository") { try await self.reload(workspace.id) }
+        run("正在刷新仓库") { try await self.reload(workspace.id) }
     }
     private func reload(_ id: String) async throws {
         let changes: Changes = try await bridge.call("changes", ["workspace": id], cancellable: !writing)
@@ -129,7 +140,7 @@ final class WorkspaceModel: ObservableObject {
     func loadHistory(reset: Bool) {
         guard let workspace else { return }
         let offset = reset ? 0 : commits.count
-        run("Reading history") {
+        run("正在读取提交历史") {
             let rows: [CommitEntry] = try await self.bridge.call("history", ["workspace": workspace.id, "offset": offset])
             try Task.checkCancellation()
             self.commits = reset ? rows : self.commits + rows
@@ -141,7 +152,7 @@ final class WorkspaceModel: ObservableObject {
         diff = nil
         guard let workspace, let file = changes?.files.first(where: { $0.id == selectedFile }) else { return }
         loadedDiffs.removeValue(forKey: file.id)
-        run("Reading \(file.path)") {
+        run("正在读取 \(file.path)") {
             let diff: FileDiff = try await self.bridge.call("diff", ["workspace": workspace.id, "path": file.path, "side": file.side])
             try Task.checkCancellation(); self.diff = diff
             self.loadedDiffs[file.id] = diff
@@ -161,21 +172,21 @@ final class WorkspaceModel: ObservableObject {
     func loadCommit() {
         guard let workspace, let oid = selectedCommit else { return }
         commitPatch = nil
-        run("Reading commit") {
+        run("正在读取提交") {
             let patch: String = try await self.bridge.call("commit_diff", ["workspace": workspace.id, "oid": oid, "parent": 0])
             try Task.checkCancellation(); self.commitPatch = patch
         }
     }
     func trust() {
         guard let workspace else { return }
-        run("Trusting repository", write: true) {
+        run("正在信任仓库", write: true) {
             let _: Empty = try await self.bridge.call("trust", ["workspace": workspace.id, "trusted": true], cancellable: false)
             try await self.reload(workspace.id)
         }
     }
     func stage() {
-        guard let diff, let workspace else { return }
-        run(diff.side == "staged" ? "Unstaging file" : "Staging file", write: true) {
+        guard !busy, !writing, let diff, diff.canStage, let workspace else { return }
+        run(diff.side == "staged" ? "正在取消暂存文件" : "正在暂存文件", write: true) {
             do {
                 let result: OperationResult = try await self.bridge.call("stage", ["snapshot": diff.id], cancellable: false)
                 self.show(result)
@@ -188,27 +199,29 @@ final class WorkspaceModel: ObservableObject {
         }
     }
     func review() {
-        guard let diff else { return }
-        run("Saving human review", write: true) {
+        guard !busy, !writing, let diff, let workspace else { return }
+        run("正在保存人工评审", write: true) {
             let _: Empty = try await self.bridge.call("review", ["snapshot": diff.id, "reviewed": !diff.reviewed], cancellable: false)
-            let updated: FileDiff = try await self.bridge.call("diff", ["workspace": self.workspace!.id, "path": diff.path, "side": diff.side], cancellable: false)
+            let updated: FileDiff = try await self.bridge.call("diff", ["workspace": workspace.id, "path": diff.path, "side": diff.side], cancellable: false)
             self.diff = updated
             self.loadedDiffs[diff.side + ":" + diff.path] = updated
-            self.status = updated.reviewed ? "Human review recorded for this content" : "Marked unread"
+            self.status = updated.reviewed ? "已记录此内容的人工评审" : "已标记为待评审"
         }
     }
     func prepareCommit() {
-        guard let workspace, let changes else { return }
-        run("Checking staged content") {
+        guard canPrepareCommit, let workspace, let changes else { return }
+        run("正在检查已暂存内容") {
             let preview: CommitPreview = try await self.bridge.call("prepare_commit", ["workspace": workspace.id, "token": changes.token])
             try Task.checkCancellation(); self.preview = preview
         }
     }
     func commit() {
-        guard let preview, let workspace else { return }
+        guard !busy, !writing, let preview, !preview.files.isEmpty,
+              let workspace, workspace.trusted,
+              !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let message = message
         self.preview = nil
-        run("Committing staged content", write: true) {
+        run("正在提交已暂存内容", write: true) {
             do {
                 let result: OperationResult = try await self.bridge.call("commit", ["preview": preview.id, "message": message], cancellable: false)
                 self.show(result)
@@ -226,3 +239,4 @@ final class WorkspaceModel: ObservableObject {
         if !result.ok { error = result.warning ?? result.message }
     }
 }
+
