@@ -36,3 +36,23 @@ func dumpNativeLayout(_ window: NSWindow) {
     }
     visit(root, depth: 0)
 }
+
+/// A capture must fail, not merely look green in CI, if application chrome hides actions.
+@MainActor
+func validatePreviewChrome(_ window: NSWindow) throws {
+    guard let root = window.contentView else { return }
+    var frames: [String: NSRect] = [:]
+    func visit(_ view: NSView) {
+        if let probe = view as? LayoutProbeView { frames[probe.name] = probe.convert(probe.bounds, to: root) }
+        view.subviews.forEach(visit)
+    }
+    visit(root)
+    guard let tab = frames["repository-tab-trailing"], let file = frames["file-header"],
+          file.minY >= tab.maxY - 0.5,
+          frames["context-header"].map({ $0.minY >= tab.maxY - 0.5 }) ?? true,
+          frames["sidebar-footer"].map({ $0.maxY <= root.bounds.height + 0.5 }) ?? false else {
+        throw NSError(domain: "ProofPreviewLayout", code: 1,
+                      userInfo: [NSLocalizedDescriptionKey: "Repository tabs overlap headers or sidebar footer exceeds viewport: \(frames)"])
+    }
+    print("Preview chrome verified: tab bottom=\(tab.maxY), file header top=\(file.minY), context top=\(frames["context-header"]?.minY.description ?? "collapsed")")
+}

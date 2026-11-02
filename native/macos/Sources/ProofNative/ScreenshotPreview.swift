@@ -119,6 +119,7 @@ enum ScreenshotPreview {
                 view.layoutSubtreeIfNeeded()
                 view.displayIfNeeded()
                 dumpNativeLayout(window)
+                try validatePreviewChrome(window)
                 guard #available(macOS 14.0, *) else { throw CaptureError.requiresScreenCaptureKit }
                 // Capture the WindowServer-composited native window. cacheDisplay and
                 // ImageRenderer omit GPU-composited glass and are not visual evidence.

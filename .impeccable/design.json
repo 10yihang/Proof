@@ -59,7 +59,7 @@
         "defaultContentHeight": 900,
         "repositoryToolbarWidth": 260
       },
-      "navigation": "User-approved reference skeleton: repository tab strip through root NavigationSplitView safeAreaInset; combined 44pt Changes/Commit/History rail and ideal280pt file pane; central Diff and responsive Context inspector; sidebar-local GeometryReader bounds retained",
+      "navigation": "User-approved reference skeleton: repository tab strip made from actual32pt row segments inside each native column; no overlay or root safeAreaInset; combined 44pt Changes/Commit/History rail and ideal280pt file pane; central Diff and responsive Context inspector; sidebar-local GeometryReader bounds retained",
       "windowToolbar": "Native unified toolbar; fixed260pt repository identity; NSWindow titleVisibility hidden while retaining title; Context/refresh only, compact file actions live in56pt file header",
       "surfaces": {
         "document": "NSColor.textBackgroundColor, opaque",

@@ -12,12 +12,15 @@ struct WorkspaceView: View {
     @State private var showsContext = true
     @State private var contextPopover = false
     @State private var availableWidth: CGFloat = 1000
+    private let repositoryTabHeight: CGFloat = 32
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             GeometryReader { column in
-                HStack(spacing: 0) {
+                VStack(spacing: 0) {
+                    repositoryTabRow(leading: true)
+                    HStack(spacing: 0) {
                     navigationRail
                     VStack(spacing: 0) {
                         HStack {
@@ -29,12 +32,15 @@ struct WorkspaceView: View {
                         else { Spacer(minLength: 0) }
                         sidebarStatus.captureLayout("sidebar-footer")
                     }
+                    }
                 }.frame(width: column.size.width, height: column.size.height, alignment: .topLeading)
                     .captureLayout("sidebar-column")
             }
             .navigationSplitViewColumnWidth(min: 294, ideal: 324, max: 384)
         } detail: {
-            HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                repositoryTabRow(leading: false)
+                HStack(spacing: 0) {
                 Group {
                     if model.workspace == nil { welcome }
                     else if model.mode == "commit" { commitEditor }
@@ -46,12 +52,12 @@ struct WorkspaceView: View {
                     Divider()
                     ProofContextInspector(model: model).frame(width: 260)
                 }
+                }
             }
         }
         .navigationSplitViewStyle(.balanced)
-        // Keep the native split at scene root. Communicate the tab strip as an
-        // inset instead of relocating its AppKit toolbar-exclusion coordinates.
-        .safeAreaInset(edge: .top, spacing: 0) { repositoryTabs }
+        // Each native column owns its real tab-row segment. A root overlay or
+        // safeAreaInset does not propagate across AppKit column hosting boundaries.
         .background(GeometryReader { viewport in
             Color.clear
                 .onAppear { availableWidth = viewport.size.width }
@@ -59,6 +65,7 @@ struct WorkspaceView: View {
         })
         .navigationTitle(model.workspace?.name ?? "Proof")
         .toolbar { documentToolbar }
+        .hideAutomaticToolbarTitle()
         .alert("Repository needs your trust", isPresented: $trustConfirmation) {
             Button("Cancel", role: .cancel) {}
             Button("Trust Repository") { model.trust() }
@@ -99,9 +106,9 @@ struct WorkspaceView: View {
             }
         }.frame(maxWidth: 540, alignment: .leading).padding(40).frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-    private var repositoryTabs: some View {
+    private func repositoryTabRow(leading: Bool) -> some View {
         HStack(spacing: 0) {
-            if let workspace = model.workspace {
+            if leading, let workspace = model.workspace {
                 HStack(spacing: 8) {
                     Image(systemName: "folder")
                     Text(workspace.name).lineLimit(1)
@@ -110,16 +117,18 @@ struct WorkspaceView: View {
                         .buttonStyle(.plain).disabled(model.writing)
                         .help("Close repository").accessibilityLabel("Close repository")
                 }.font(.system(size: 11, weight: .medium)).padding(.horizontal, 12)
-                    .frame(width: 220, height: 32)
+                    .frame(width: 220, height: repositoryTabHeight)
                     .background(Color.blue.opacity(0.07), ignoresSafeAreaEdges: [])
                     .overlay(alignment: .bottom) { Rectangle().fill(Color.blue.opacity(0.65)).frame(height: 1) }
                     .help(workspace.path)
             }
             Spacer(minLength: 0)
-            Button(action: requestOpen) { Image(systemName: "plus") }
-                .buttonStyle(.plain).frame(width: 36, height: 32).disabled(model.writing)
-                .help("Open repository (replaces the current repository)").accessibilityLabel("Open repository")
-        }.frame(height: 32).background(Color(nsColor: .windowBackgroundColor), ignoresSafeAreaEdges: [])
+            if !leading {
+                Button(action: requestOpen) { Image(systemName: "plus") }
+                    .buttonStyle(.plain).frame(width: 36, height: repositoryTabHeight).disabled(model.writing)
+                    .help("Open repository (replaces the current repository)").accessibilityLabel("Open repository")
+            }
+        }.frame(height: repositoryTabHeight).captureLayout(leading ? "repository-tab-leading" : "repository-tab-trailing").background(Color(nsColor: .windowBackgroundColor), ignoresSafeAreaEdges: [])
     }
     private var navigationRail: some View {
         VStack(spacing: 8) {
@@ -145,6 +154,7 @@ struct WorkspaceView: View {
                 Text(model.workspace?.name ?? "Proof").font(.system(size: 12, weight: .semibold))
                 if let changes = model.changes {
                     Label(changes.branch ?? "Detached HEAD", systemImage: "arrow.triangle.branch")
+                        .labelStyle(.titleAndIcon)
                         .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
                         .help(changes.branch ?? "Detached HEAD")
                 }
@@ -425,5 +435,12 @@ private struct ProofMark: View {
                 }.stroke(.white, style: StrokeStyle(lineWidth: 29 * scale, lineCap: .round, lineJoin: .round))
             }
         }.accessibilityHidden(true)
+    }
+}
+
+private extension View {
+    @ViewBuilder func hideAutomaticToolbarTitle() -> some View {
+        if #available(macOS 15.0, *) { self.toolbar(removing: .title) }
+        else { self }
     }
 }
