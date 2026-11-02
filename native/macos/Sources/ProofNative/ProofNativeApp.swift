@@ -12,6 +12,14 @@ struct ProofNativeApp: App {
                 .preferredColorScheme(ScreenshotPreview.colorScheme)
                 .frame(minWidth: 1000, minHeight: 680)
                 .task {
+                    if let window = NSApp.windows.first {
+                        // VStack column headers are document content, not titlebar
+                        // accessories. Let AppKit reserve its actual toolbar height;
+                        // the system still owns the transparent unified chrome.
+                        window.styleMask.remove(.fullSizeContentView)
+                        window.titlebarAppearsTransparent = true
+                        window.titlebarSeparatorStyle = .none
+                    }
                     if ScreenshotPreview.outputDirectory != nil {
                         if let window = NSApp.windows.first {
                             // Capture outlives the view task when its hosting view moves windows.

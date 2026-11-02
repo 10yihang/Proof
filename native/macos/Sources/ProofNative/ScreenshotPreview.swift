@@ -127,7 +127,7 @@ enum ScreenshotPreview {
                 configuration.showsCursor = false
                 configuration.ignoreShadowsSingleWindow = true
                 configuration.ignoreGlobalClipSingleWindow = true
-                print("Scene window frame: \(window.frame); key=\(window.isKeyWindow) active=\(NSApp.isActive); SDK capture is unscaled")
+                print("Scene window frame: \(window.frame); content=\(window.contentView?.frame ?? .zero); layout=\(window.contentLayoutRect); key=\(window.isKeyWindow) active=\(NSApp.isActive); SDK capture is unscaled")
                 let capturedImage = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
                 let bitmap = NSBitmapImageRep(cgImage: capturedImage)
                 guard let png = bitmap.representation(using: .png, properties: [:]) else { throw CaptureError.noBitmap }
