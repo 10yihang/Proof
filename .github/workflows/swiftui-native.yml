@@ -39,6 +39,7 @@ jobs:
         run: ./native/macos/build.sh
       - name: Verify local bundle signature and bridge protocol
         run: |
+          xcrun vtool -show-build "native/macos/build/Proof Native.app/Contents/MacOS/ProofNative"
           codesign --verify --deep --strict --verbose=2 "native/macos/build/Proof Native.app"
           python3 - <<'PY'
           import json, subprocess, tempfile

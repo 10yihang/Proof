@@ -92,11 +92,15 @@ enum ScreenshotPreview {
         guard !captureStarted, let directory = outputDirectory else { return }
         captureStarted = true
         do {
+            // Let SwiftUI finish installing its scene, safe areas and toolbar.
+            try await Task.sleep(nanoseconds: 1_000_000_000)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             // Keep the scene-owned window: moving its toolbar into another window
             // breaks SwiftUI validation and loses the system's glass integration.
             let window = sourceWindow
             window.appearance = NSAppearance(named: themeAppearance)
+            NSApp.setActivationPolicy(.regular)
+            window.minSize = NSSize(width: 1440, height: 900)
             window.setFrame(NSRect(x: 0, y: 0, width: 1440, height: 900), display: true)
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
@@ -121,7 +125,7 @@ enum ScreenshotPreview {
                 configuration.showsCursor = false
                 configuration.ignoreShadowsSingleWindow = true
                 configuration.ignoreGlobalClipSingleWindow = true
-                print("Scene window frame: \(window.frame); SDK capture is unscaled")
+                print("Scene window frame: \(window.frame); key=\(window.isKeyWindow) active=\(NSApp.isActive); SDK capture is unscaled")
                 let capturedImage = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
                 let bitmap = NSBitmapImageRep(cgImage: capturedImage)
                 guard let png = bitmap.representation(using: .png, properties: [:]) else { throw CaptureError.noBitmap }

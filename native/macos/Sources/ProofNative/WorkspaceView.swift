@@ -108,9 +108,9 @@ struct WorkspaceView: View {
                 .help("Reading options").accessibilityLabel("Reading options")
                 Button { model.review() } label: {
                     Label(diff.reviewed ? "Reviewed" : "Mark Reviewed", systemImage: diff.reviewed ? "checkmark.circle.fill" : "checkmark.circle")
-                }.labelStyle(.titleAndIcon).disabled(model.busy).help("Human review of this content; separate from staging")
+                }.labelStyle(.titleAndIcon).nativeGlassControl().disabled(model.busy).help("Human review of this content; separate from staging")
                 Button(diff.side == "staged" ? "Unstage…" : "Stage…") { stageConfirmation = true }
-                    .disabled(model.busy || !diff.canStage)
+                    .nativeGlassControl().disabled(model.busy || !diff.canStage)
             }
             Button { model.refresh() } label: { Image(systemName: "arrow.clockwise") }
                 .help("Refresh repository (⌘R)").accessibilityLabel("Refresh repository")
@@ -262,5 +262,15 @@ struct WorkspaceView: View {
             Text("Creates a local commit. Configured Git hooks may run. No push, amend or AI invocation. Changed index or HEAD will invalidate this preview.").font(.caption).foregroundStyle(.secondary)
             HStack { Spacer(); Button("Cancel", role: .cancel) { model.preview = nil }; Button("Commit") { model.commit() }.keyboardShortcut(.defaultAction) }
         }.padding(24).frame(width: 560)
+    }
+}
+
+private extension View {
+    @ViewBuilder func nativeGlassControl() -> some View {
+        if #available(macOS 26.0, *) {
+            self.buttonStyle(.glass)
+        } else {
+            self.buttonStyle(.bordered)
+        }
     }
 }
