@@ -6,42 +6,35 @@ struct WorkspaceView: View {
     @State private var trustConfirmation = false
     @State private var stageConfirmation = false
     @State private var rawPatch = false
-    @State private var navigationExpanded = false
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
-        VStack(spacing: 0) {
-            workspaceToolbar
-            Divider()
-            if let workspace = model.workspace {
-                HStack(spacing: 0) {
-                    navigation(workspace)
-                        .frame(width: navigationExpanded ? 136 : 46)
-                    Divider()
-                    if model.mode == "commit" {
-                        commitEditor
-                    } else {
-                        HSplitView {
-                            fileList.frame(minWidth: 220, idealWidth: 260, maxWidth: 280)
-                            detail.frame(minWidth: 460, maxWidth: .infinity, maxHeight: .infinity)
-                        }
-                    }
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            VStack(spacing: 0) {
+                repositoryIdentity
+                Picker("Workspace section", selection: $model.mode) {
+                    Text("Changes").tag("changes")
+                    Text("Commit").tag("commit")
+                    Text("History").tag("history")
                 }
-            } else {
-                welcome
+                .pickerStyle(.segmented).labelsHidden()
+                .disabled(model.writing).padding(.horizontal, 16).padding(.bottom, 16)
+                if model.workspace != nil { fileList }
+                Spacer(minLength: 0)
+                sidebarStatus
             }
-            Divider()
-            HStack(spacing: 10) {
-                if model.busy {
-                    ProgressView().controlSize(.small)
-                    Text(model.activity).lineLimit(1)
-                    if !model.writing { Button("Cancel") { model.cancelRead() }.buttonStyle(.link) }
-                } else { Text(model.status.isEmpty ? "Local Git · Human review · No AI running" : model.status).lineLimit(1) }
-                Spacer()
-                if let changes = model.changes { Text("\(changes.files.count) changes").monospacedDigit() }
+            .navigationSplitViewColumnWidth(min: 250, ideal: 290, max: 340)
+        } detail: {
+            Group {
+                if model.workspace == nil { welcome }
+                else if model.mode == "commit" { commitEditor }
+                else { detail }
             }
-            .font(.system(size: 10)).foregroundStyle(.secondary).padding(.horizontal, 12).frame(height: 24)
+            .background(Color(nsColor: .textBackgroundColor))
+            .navigationTitle(documentTitle)
+            .toolbar { documentToolbar }
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .navigationSplitViewStyle(.balanced)
         .alert("Repository needs your trust", isPresented: $trustConfirmation) {
             Button("Cancel", role: .cancel) {}
             Button("Trust Repository") { model.trust() }
@@ -82,75 +75,79 @@ struct WorkspaceView: View {
             }
         }.frame(maxWidth: 540, alignment: .leading).padding(40).frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-    private var workspaceToolbar: some View {
-        HStack(spacing: 12) {
-            Button { navigationExpanded.toggle() } label: {
-                Image(systemName: "sidebar.left").frame(width: 22, height: 22)
-            }.buttonStyle(.borderless).help("Toggle navigation").accessibilityLabel("Toggle navigation")
-            Image(systemName: "folder").foregroundStyle(.secondary)
-            Text(model.workspace?.name ?? "Proof").font(.system(size: 13, weight: .semibold))
-            if let changes = model.changes {
-                Divider().frame(height: 14)
-                Label(changes.branch ?? "Detached HEAD", systemImage: "arrow.triangle.branch")
-                    .font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
-            }
-            Spacer()
-            Button(action: requestOpen) { Image(systemName: "folder.badge.plus") }
-                .help("Open Repository (⌘O)").accessibilityLabel("Open Repository").disabled(model.writing)
-            Button { model.refresh() } label: { Image(systemName: "arrow.clockwise") }
-                .help("Refresh repository (⌘R)").accessibilityLabel("Refresh repository").disabled(model.workspace == nil || model.busy)
-        }
-        .buttonStyle(.borderless).controlSize(.small)
-        .padding(.horizontal, 13).frame(height: 42)
-        .background(Color(nsColor: .windowBackgroundColor))
+    private var documentTitle: String {
+        if model.mode == "commit" { return "Commit" }
+        if model.mode == "history" { return "History" }
+        return model.diff.map { ($0.path as NSString).lastPathComponent } ?? "Changes"
     }
-    private func navigation(_ workspace: Workspace) -> some View {
-        VStack(spacing: 6) {
-            navigationItem("Changes", mode: "changes", symbol: "square.stack.3d.up")
-            navigationItem("Commit", mode: "commit", symbol: "checkmark.circle")
-            navigationItem("History", mode: "history", symbol: "clock")
-            Spacer()
-            if let operation = model.changes?.operation {
-                Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange).help(operation)
-            }
-            Button { if !workspace.trusted { trustConfirmation = true } } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: workspace.trusted ? "checkmark.shield" : "lock").frame(width: 20)
-                    if navigationExpanded { Text(workspace.trusted ? "Trusted" : "Read-only").font(.caption); Spacer(minLength: 0) }
-                }.frame(height: 28)
-            }
-            .buttonStyle(.plain).foregroundStyle(.secondary)
-            .help(workspace.trusted ? "Trusted repository\n" + workspace.path : "Trust repository for Git writes…")
-            .accessibilityLabel(workspace.trusted ? "Trusted repository" : "Trust repository for Git writes")
-            .disabled(model.busy || workspace.trusted)
-        }
-        .padding(.horizontal, 7).padding(.vertical, 10)
-        .background(Color(nsColor: .windowBackgroundColor))
-    }
-    private func navigationItem(_ title: String, mode: String, symbol: String) -> some View {
-        Button { model.mode = mode } label: {
+    private var repositoryIdentity: some View {
+        VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 8) {
-                Image(systemName: symbol).font(.system(size: 15)).frame(width: 20)
-                if navigationExpanded { Text(title).font(.system(size: 12, weight: .medium)); Spacer(minLength: 0) }
+                Image(systemName: "folder").foregroundStyle(.secondary)
+                Text(model.workspace?.name ?? "Proof").font(.system(size: 18, weight: .semibold))
+                Spacer()
+                Menu {
+                    Button("Open Repository…", action: requestOpen).disabled(model.writing)
+                    Button("Refresh") { model.refresh() }.disabled(model.workspace == nil || model.busy)
+                } label: { Image(systemName: "ellipsis.circle") }
+                .menuStyle(.borderlessButton).fixedSize().help("Repository actions")
             }
-            .frame(maxWidth: .infinity).frame(height: 32)
-            .foregroundStyle(model.mode == mode ? Color.accentColor : Color.secondary)
-            .background(model.mode == mode ? Color.accentColor.opacity(0.11) : Color.clear, in: RoundedRectangle(cornerRadius: 5))
-            .contentShape(Rectangle())
+            if let changes = model.changes {
+                Label(changes.branch ?? "Detached HEAD", systemImage: "arrow.triangle.branch")
+                    .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                    .help(changes.branch ?? "Detached HEAD")
+            }
+        }.padding(.horizontal, 18).padding(.top, 10).padding(.bottom, 20)
+    }
+    @ToolbarContentBuilder private var documentToolbar: some ToolbarContent {
+        ToolbarItemGroup(placement: .primaryAction) {
+            if let diff = model.diff, model.mode == "changes" {
+                Menu {
+                    Toggle("Show Raw Patch", isOn: $rawPatch)
+                } label: { Image(systemName: "text.alignleft") }
+                .help("Reading options").accessibilityLabel("Reading options")
+                Button { model.review() } label: {
+                    Label(diff.reviewed ? "Reviewed" : "Mark Reviewed", systemImage: diff.reviewed ? "checkmark.circle.fill" : "checkmark.circle")
+                }.disabled(model.busy).help("Human review of this content; separate from staging")
+                Button(diff.side == "staged" ? "Unstage…" : "Stage…") { stageConfirmation = true }
+                    .disabled(model.busy || !diff.canStage)
+            }
+            Button { model.refresh() } label: { Image(systemName: "arrow.clockwise") }
+                .help("Refresh repository (⌘R)").accessibilityLabel("Refresh repository")
+                .disabled(model.workspace == nil || model.busy)
         }
-        .buttonStyle(.plain).disabled(model.writing).help(title).accessibilityLabel(title)
-        .accessibilityAddTraits(model.mode == mode ? .isSelected : [])
+    }
+    private var sidebarStatus: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if model.busy {
+                HStack {
+                    ProgressView().controlSize(.small)
+                    Text(model.activity).lineLimit(2)
+                    if !model.writing { Button("Cancel") { model.cancelRead() }.buttonStyle(.link) }
+                }
+            } else if !model.status.isEmpty {
+                Text(model.status).fixedSize(horizontal: false, vertical: true)
+            }
+            if let workspace = model.workspace {
+                HStack {
+                    Button { if !workspace.trusted { trustConfirmation = true } } label: {
+                        Label(workspace.trusted ? "Trusted repository" : "Read-only · Trust…", systemImage: workspace.trusted ? "checkmark.shield" : "lock")
+                    }.buttonStyle(.plain).disabled(model.busy || workspace.trusted)
+                    .help(workspace.path)
+                    Spacer()
+                    if let operation = model.changes?.operation {
+                        Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange).help(operation)
+                    }
+                }
+            }
+        }.font(.system(size: 11)).foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, alignment: .leading).padding(18)
     }
     private var fileList: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text(model.mode == "history" ? "History" : "Changes").font(.system(size: 12, weight: .semibold))
-                Spacer()
-                if model.mode == "changes", let changes = model.changes { Text("\(changes.files.count)").font(.system(size: 11)).foregroundStyle(.secondary) }
-            }.padding(.horizontal, 14).frame(height: 36)
             TextField(model.mode == "history" ? "Filter loaded commits" : "Filter files", text: $model.search)
-                .textFieldStyle(.roundedBorder).controlSize(.small).padding(.horizontal, 10).padding(.bottom, 10)
-            Divider()
+                .textFieldStyle(.roundedBorder).controlSize(.regular)
+                .padding(.horizontal, 16).padding(.bottom, 12)
             if model.mode == "history" {
                 List(selection: $model.selectedCommit) {
                     ForEach(model.commits.filter { model.search.isEmpty || ($0.subject + $0.author + $0.oid).localizedCaseInsensitiveContains(model.search) }) { commit in
@@ -172,30 +169,29 @@ struct WorkspaceView: View {
                                     Image(systemName: file.path.hasSuffix(".swift") ? "swift" : "doc.text")
                                         .font(.system(size: 14)).foregroundStyle(.secondary).frame(width: 18)
                                     VStack(alignment: .leading, spacing: 3) {
-                                        Text((file.path as NSString).lastPathComponent).font(.system(size: 12, weight: model.selectedFile == file.id ? .medium : .regular)).lineLimit(1)
+                                        Text((file.path as NSString).lastPathComponent).font(.system(size: 13, weight: model.selectedFile == file.id ? .medium : .regular)).lineLimit(1)
                                         Text((file.path as NSString).deletingLastPathComponent.isEmpty ? "." : (file.path as NSString).deletingLastPathComponent)
-                                            .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                                            .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                                         if let old = file.oldPath { Text("from \(old)").font(.caption2).foregroundStyle(.secondary).lineLimit(1) }
                                     }
                                     Spacer(minLength: 2)
                                     Text(file.conflicted ? "!" : file.status)
                                         .font(.system(size: 10, weight: .semibold, design: .monospaced))
                                         .foregroundStyle(file.conflicted ? Color.orange : Color.secondary)
-                                }.padding(.vertical, 5).tag(file.id).help(file.path)
+                                }.padding(.vertical, 7).tag(file.id).help(file.path)
                             }
                         } header: {
                             HStack {
                                 Text(side == "staged" ? "Staged" : "Unstaged")
                                 Spacer()
                                 Text("\((model.changes?.files ?? []).filter { $0.side == side }.count)").monospacedDigit()
-                            }.font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+                            }.font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
                         }
                     }
                 }.listStyle(.sidebar).disabled(model.writing)
                 if model.changes?.files.isEmpty == true { Text("Working tree clean").foregroundStyle(.secondary).padding() }
             }
         }
-        .background(Color(nsColor: .controlBackgroundColor))
     }
     @ViewBuilder private var detail: some View {
         if model.mode == "history", let patch = model.commitPatch {
@@ -214,37 +210,19 @@ struct WorkspaceView: View {
         } else if let diff = model.diff, model.mode == "changes" {
             VStack(spacing: 0) {
                 HStack(spacing: 8) {
-                    Image(systemName: "doc.text").foregroundStyle(.secondary)
-                    Text((diff.path as NSString).lastPathComponent).font(.system(size: 12, weight: .semibold)).lineLimit(1).help(diff.path)
-                    Text(diff.side == "staged" ? "Index" : "Working tree").font(.system(size: 11)).foregroundStyle(.secondary)
-                    Spacer(minLength: 8)
+                    Text((diff.path as NSString).deletingLastPathComponent)
+                        .lineLimit(1).truncationMode(.middle).help(diff.path)
+                    Image(systemName: "chevron.right").font(.system(size: 8))
+                    Text(diff.side == "staged" ? "Index" : "Working tree")
+                    Spacer(minLength: 12)
                     Text("+\(diff.additions)").foregroundStyle(Color(nsColor: .systemGreen))
                     Text("−\(diff.deletions)").foregroundStyle(Color(nsColor: .systemRed))
-                    Divider().frame(height: 14)
-                    Toggle("Patch", isOn: $rawPatch).toggleStyle(.checkbox).help("Show raw Git patch")
-                    Button { model.review() } label: {
-                        Label(diff.reviewed ? "Reviewed" : "Mark Reviewed", systemImage: diff.reviewed ? "checkmark.circle.fill" : "checkmark.circle")
-                    }.disabled(model.busy).help("Human review only; separate from staging")
-                    Button(diff.side == "staged" ? "Unstage…" : "Stage…") { stageConfirmation = true }
-                        .disabled(model.busy || !diff.canStage)
-                }
-                .font(.system(size: 11)).controlSize(.small)
-                .padding(.horizontal, 14).frame(height: 40)
-                .background(Color(nsColor: .controlBackgroundColor))
-                HStack(spacing: 6) {
-                    Text((diff.path as NSString).deletingLastPathComponent).lineLimit(1).truncationMode(.middle)
-                    Image(systemName: "chevron.right").font(.system(size: 8))
-                    Text((diff.path as NSString).lastPathComponent).lineLimit(1)
-                    Spacer()
-                    Text(diff.reviewed ? "Reviewed · content-bound" : "Not reviewed")
-                        .foregroundStyle(diff.reviewed ? Color.accentColor : Color.secondary)
-                }.font(.system(size: 10)).foregroundStyle(.secondary).padding(.horizontal, 14).frame(height: 27)
-                .background(Color(nsColor: .windowBackgroundColor))
+                }.font(.system(size: 11)).foregroundStyle(.secondary)
+                .padding(.horizontal, 20).frame(height: 40)
                 if let notice = diff.notice {
                     Text(notice).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading).padding(10)
                 }
-                Divider()
                 if rawPatch || diff.hunks.allSatisfy({ $0.lines.isEmpty }) { PatchView(patch: diff.patch) }
                 else { NativeDiffView(diff: diff) }
             }

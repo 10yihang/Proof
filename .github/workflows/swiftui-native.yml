@@ -20,13 +20,16 @@ concurrency:
 jobs:
   build:
     if: github.ref == 'refs/heads/swiftui-native-preview'
-    runs-on: macos-15
+    runs-on: xcode-27
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Toolchain versions
         run: |
+          sw_vers
+          xcodebuild -version
+          xcrun --show-sdk-version
           swift --version
           rustc --version
           git --version

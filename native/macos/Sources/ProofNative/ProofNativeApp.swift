@@ -24,6 +24,7 @@ struct ProofNativeApp: App {
                     model.start()
                 }
         }
+        .windowToolbarStyle(.unified)
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("Open Repository…") { model.pickRepository() }.keyboardShortcut("o")

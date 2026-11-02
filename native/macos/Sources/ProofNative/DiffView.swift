@@ -111,8 +111,8 @@ struct CodeTextView: NSViewRepresentable {
 
     private static func attributedLine(_ row: CodeRow) -> NSAttributedString {
         let paragraph = NSMutableParagraphStyle()
-        paragraph.minimumLineHeight = 21
-        paragraph.maximumLineHeight = 21
+        paragraph.minimumLineHeight = 22
+        paragraph.maximumLineHeight = 22
         paragraph.tabStops = []
         paragraph.defaultTabInterval = 31.2
         let result = NSMutableAttributedString(string: row.text + "\n", attributes: [
@@ -178,7 +178,7 @@ final class DiffRuler: NSRulerView {
     @objc private func viewportDidChange(_ notification: Notification) { needsDisplay = true }
 
     override func drawHashMarksAndLabels(in rect: NSRect) {
-        NSColor.windowBackgroundColor.setFill()
+        NSColor.textBackgroundColor.setFill()
         bounds.fill()
         guard let text = scrollView?.documentView as? DiffTextView else { return }
         let paragraph = NSMutableParagraphStyle()

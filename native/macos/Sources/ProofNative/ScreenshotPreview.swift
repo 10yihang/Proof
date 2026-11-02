@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import ScreenCaptureKit
 
 /// Deterministic native rendering for CI. Never opens a repository or starts the bridge.
 @MainActor
@@ -122,13 +123,25 @@ enum ScreenshotPreview {
                 guard let view = window.contentView?.superview else { throw CaptureError.noView }
                 view.layoutSubtreeIfNeeded()
                 view.displayIfNeeded()
-                guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { throw CaptureError.noBitmap }
-                window.effectiveAppearance.performAsCurrentDrawingAppearance {
-                    view.cacheDisplay(in: view.bounds, to: bitmap)
+                guard #available(macOS 14.0, *) else { throw CaptureError.requiresScreenCaptureKit }
+                // Capture the WindowServer-composited native window. cacheDisplay and
+                // ImageRenderer omit GPU-composited glass and are not visual evidence.
+                let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: false)
+                guard let capturedWindow = content.windows.first(where: { $0.windowID == CGWindowID(window.windowNumber) }) else {
+                    throw CaptureError.noWindow
                 }
+                let filter = SCContentFilter(desktopIndependentWindow: capturedWindow)
+                let configuration = SCStreamConfiguration()
+                configuration.width = 1440
+                configuration.height = 900
+                configuration.showsCursor = false
+                configuration.ignoreShadowsSingleWindow = true
+                let capturedImage = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
+                let bitmap = NSBitmapImageRep(cgImage: capturedImage)
                 guard let png = bitmap.representation(using: .png, properties: [:]) else { throw CaptureError.noBitmap }
                 try png.write(to: directory.appendingPathComponent("changes-\(name).png"))
-                print("Native AppKit capture: changes-\(name).png (\(bitmap.pixelsWide) × \(bitmap.pixelsHigh))")
+                print("WindowServer ScreenCaptureKit: changes-\(name).png (\(bitmap.pixelsWide) × \(bitmap.pixelsHigh)); \(ProcessInfo.processInfo.operatingSystemVersionString)")
+
             }
             // Direct exit deliberately avoids normal app close prompts; no bridge exists.
             exit(EXIT_SUCCESS)
@@ -137,7 +150,7 @@ enum ScreenshotPreview {
             exit(EXIT_FAILURE)
         }
     }
-    private enum CaptureError: Error { case noView, noBitmap }
+    private enum CaptureError: Error { case noView, noBitmap, noWindow, requiresScreenCaptureKit }
 }
 
 /// Only screenshot mode uses this window; normal app sizing remains native.
