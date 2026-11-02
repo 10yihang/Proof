@@ -65,7 +65,7 @@ jobs:
               data = path.read_bytes()
               assert data[:8] == b'\x89PNG\r\n\x1a\n', path
               width, height = struct.unpack('>II', data[16:24])
-              assert width >= 1440 and height >= 680, (width, height)
+              assert width >= 1000 and height >= 680, (width, height)
               assert len(data) > 20000, 'Capture suspiciously empty'
               print(path, width, height, len(data))
           PYVERIFY

@@ -6,6 +6,7 @@ struct WorkspaceView: View {
     @State private var trustConfirmation = false
     @State private var stageConfirmation = false
     @State private var rawPatch = false
+    @State private var titlebarInset: CGFloat = 0
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
@@ -35,6 +36,10 @@ struct WorkspaceView: View {
             .toolbar { documentToolbar }
         }
         .navigationSplitViewStyle(.balanced)
+        .padding(.top, titlebarInset)
+        .background(WindowLayoutInset { inset in
+            if titlebarInset != inset { titlebarInset = inset }
+        })
         .alert("Repository needs your trust", isPresented: $trustConfirmation) {
             Button("Cancel", role: .cancel) {}
             Button("Trust Repository") { model.trust() }
@@ -130,10 +135,13 @@ struct WorkspaceView: View {
             }
             if let workspace = model.workspace {
                 HStack {
-                    Button { if !workspace.trusted { trustConfirmation = true } } label: {
-                        Label(workspace.trusted ? "Trusted repository" : "Read-only · Trust…", systemImage: workspace.trusted ? "checkmark.shield" : "lock")
-                    }.buttonStyle(.plain).disabled(model.busy || workspace.trusted)
-                    .help(workspace.path)
+                    if workspace.trusted {
+                        Label("Trusted repository", systemImage: "checkmark.shield").help(workspace.path)
+                    } else {
+                        Button { trustConfirmation = true } label: {
+                            Label("Read-only · Trust…", systemImage: "lock")
+                        }.buttonStyle(.plain).disabled(model.busy).help(workspace.path)
+                    }
                     Spacer()
                     if let operation = model.changes?.operation {
                         Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange).help(operation)
@@ -272,5 +280,31 @@ private extension View {
         } else {
             self.buttonStyle(.bordered)
         }
+    }
+}
+
+/// Native layout guide, not a guessed toolbar height. SwiftUI's split columns
+/// extend under the titlebar; document headers must occupy its content region.
+private struct WindowLayoutInset: NSViewRepresentable {
+    let onChange: (CGFloat) -> Void
+    func makeNSView(context: Context) -> Probe { Probe(onChange: onChange) }
+    func updateNSView(_ view: Probe, context: Context) { view.onChange = onChange; view.measure() }
+    final class Probe: NSView {
+        var onChange: (CGFloat) -> Void
+        private var observer: NSObjectProtocol?
+        init(onChange: @escaping (CGFloat) -> Void) { self.onChange = onChange; super.init(frame: .zero) }
+        required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let observer { NotificationCenter.default.removeObserver(observer) }
+            observer = NotificationCenter.default.addObserver(forName: NSWindow.didResizeNotification, object: window, queue: .main) { [weak self] _ in self?.measure() }
+            measure()
+        }
+        func measure() {
+            guard let window, let content = window.contentView else { return }
+            let inset = max(0, content.bounds.height - window.contentLayoutRect.height)
+            DispatchQueue.main.async { [weak self] in self?.onChange(inset) }
+        }
+        deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
     }
 }
