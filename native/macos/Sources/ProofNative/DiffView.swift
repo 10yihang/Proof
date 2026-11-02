@@ -173,7 +173,7 @@ final class DiffScrollView: NSScrollView {
     }
 
     var initialViewportDiagnostic: String {
-        "bounds=\(contentView.bounds), insets=\(contentView.contentInsets), document=\(documentView?.frame.description ?? "nil"), expected=\(initialDocumentBounds?.description ?? "nil"), startsVisible=\(isAtDocumentStart)"
+        "bounds=\(contentView.bounds), insets=\(contentView.contentInsets), document=\(String(describing: documentView?.frame)), expected=\(String(describing: initialDocumentBounds)), startsVisible=\(isAtDocumentStart)"
     }
 
     override func layout() {
