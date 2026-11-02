@@ -47,6 +47,27 @@ jobs:
               p.stdin.close()
               assert p.wait(timeout=10) == 0
           PY
+      - name: Render actual SwiftUI Changes previews
+        timeout-minutes: 2
+        run: |
+          "native/macos/build/Proof Native.app/Contents/MacOS/ProofNative" --capture-preview "$PWD/native/macos/build/screenshots"
+          python3 - <<'PYVERIFY'
+          import pathlib, struct
+          for theme in ('light', 'dark'):
+              path = pathlib.Path(f'native/macos/build/screenshots/changes-{theme}.png')
+              data = path.read_bytes()
+              assert data[:8] == b'\x89PNG\r\n\x1a\n', path
+              width, height = struct.unpack('>II', data[16:24])
+              assert width >= 1440 and height >= 860, (width, height)
+              assert len(data) > 20000, 'Capture suspiciously empty'
+              print(path, width, height, len(data))
+          PYVERIFY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Proof-Native-Screenshots-${{ github.sha }}
+          path: native/macos/build/screenshots/*.png
+          if-no-files-found: error
+          retention-days: 7
       - name: Package local-build artifact
         run: ditto -c -k --sequesterRsrc --keepParent "native/macos/build/Proof Native.app" "native/macos/build/Proof-Native-macOS.zip"
       - uses: actions/upload-artifact@v4

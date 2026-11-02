@@ -4,13 +4,21 @@ import SwiftUI
 @main
 @MainActor
 struct ProofNativeApp: App {
-    @StateObject private var model = WorkspaceModel()
+    @StateObject private var model = ScreenshotPreview.makeModel()
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     var body: some Scene {
         Window("Proof Native", id: "main") {
             WorkspaceView(model: model)
                 .frame(minWidth: 1000, minHeight: 680)
-                .task { delegate.model = model; NSApp.windows.first?.delegate = delegate; model.start() }
+                .task {
+                    if ScreenshotPreview.outputDirectory != nil {
+                        if let window = NSApp.windows.first { await ScreenshotPreview.capture(window: window) }
+                        return
+                    }
+                    delegate.model = model
+                    NSApp.windows.first?.delegate = delegate
+                    model.start()
+                }
         }
         .commands {
             CommandGroup(replacing: .newItem) {

@@ -127,8 +127,26 @@ This is source plus a reproducible build path, not a verified macOS binary.
 ## Deliberate first-version limits
 
 One repository/window at a time; commit drafts are memory-only. No split diff,
-syntax highlighting, hunk-level actions, graph layout, branch switching, merge
+full parser-based syntax highlighting, hunk-level actions, graph layout, branch switching, merge
 parent picker, blame, file editor, logical groups, evidence/AI panels, recovery,
 stash, remotes, settings or updater. History filters only loaded rows. No working
 copy auto-refresh. Large diff limits come from core. Use the existing Tauri app
 for features beyond this focused read/review/stage/commit workflow.
+
+## Native Changes visual preview
+
+The Changes surface now uses a compact collapsible navigation rail, filename/path
+hierarchy, a single-line action toolbar and an AppKit diff with a separate gutter,
+full-width change bands and lightweight lexical coloring (not a full parser).
+No CodeEditSourceEditor dependency is added; its official README warns it is not
+yet production-ready. SwiftUI and AppKit remain the only UI frameworks.
+
+The macOS CI build renders the actual app window in light and dark appearances:
+
+```sh
+"native/macos/build/Proof Native.app/Contents/MacOS/ProofNative" --capture-preview /tmp/proof-captures
+```
+
+This explicit mode uses illustrative data labeled Preview, starts no bridge, and
+opens no Git repository. The PNGs are native AppKit captures, not browser mockups.
+They prove layout/rendering only, not interactive acceptance or release readiness.
