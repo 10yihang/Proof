@@ -42,11 +42,18 @@ func dumpNativeLayout(_ window: NSWindow) {
 func validatePreviewChrome(_ window: NSWindow) throws {
     guard let root = window.contentView else { return }
     var frames: [String: NSRect] = [:]
+    var diffScrolls: [DiffScrollView] = []
     func visit(_ view: NSView) {
         if let probe = view as? LayoutProbeView { frames[probe.name] = probe.convert(probe.bounds, to: root) }
+        if let scroll = view as? DiffScrollView { diffScrolls.append(scroll) }
         view.subviews.forEach(visit)
     }
     visit(root)
+    diffScrolls.forEach { print("Initial diff viewport: \($0.initialViewportDiagnostic)") }
+    guard !diffScrolls.isEmpty, diffScrolls.allSatisfy({ $0.isAtDocumentStart }) else {
+        throw NSError(domain: "ProofPreviewLayout", code: 2,
+                      userInfo: [NSLocalizedDescriptionKey: "Initial diff text is not visible at the document leading edge"])
+    }
     guard let branch = frames["branch-header"], let file = frames["file-header"],
           let diff = frames["diff-viewport"], let commit = frames["commit-editor"],
           let status = frames["status-bar"], let files = frames["files-column"],

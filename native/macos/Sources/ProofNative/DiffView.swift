@@ -52,8 +52,8 @@ struct CodeTextView: NSViewRepresentable {
     }
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    func makeNSView(context: Context) -> NSScrollView {
-        let scroll = NSScrollView()
+    func makeNSView(context: Context) -> DiffScrollView {
+        let scroll = DiffScrollView()
         scroll.hasVerticalScroller = true
         scroll.hasHorizontalScroller = true
         scroll.autohidesScrollers = true
@@ -87,7 +87,7 @@ struct CodeTextView: NSViewRepresentable {
         return scroll
     }
 
-    func updateNSView(_ scroll: NSScrollView, context: Context) {
+    func updateNSView(_ scroll: DiffScrollView, context: Context) {
         let appearance = scroll.effectiveAppearance.name.rawValue
         guard context.coordinator.identity != identity || context.coordinator.appearance != appearance || context.coordinator.rows != rows,
               let text = scroll.documentView as? DiffTextView else { return }
@@ -107,7 +107,7 @@ struct CodeTextView: NSViewRepresentable {
         text.layoutManager?.ensureLayout(for: text.textContainer!)
         text.needsDisplay = true
         scroll.verticalRulerView?.needsDisplay = true
-        if changed { text.scrollToBeginningOfDocument(nil) }
+        if changed { scroll.scrollToDocumentStartOnNextLayout() }
     }
 
     private static func attributedLine(_ row: CodeRow) -> NSAttributedString {
@@ -138,6 +138,53 @@ struct CodeTextView: NSViewRepresentable {
         }
         return result
     }
+}
+
+/// Reset a newly selected diff's viewport, not its insertion point. AppKit lays
+/// out ruler/content insets before this runs; theme and review updates keep the
+/// user's scroll position because only an identity change requests a reset.
+final class DiffScrollView: NSScrollView {
+    private var needsInitialScroll = false
+
+    func scrollToDocumentStartOnNextLayout() {
+        needsInitialScroll = true
+        needsLayout = true
+    }
+
+    /// Native clip bounds at the document's leading/top edge, including rulers.
+    var initialDocumentBounds: NSRect? {
+        guard let document = documentView else { return nil }
+        let clip = contentView
+        var proposed = clip.bounds
+        proposed.origin = NSPoint(x: document.frame.minX - clip.contentInsets.left,
+                                  y: document.frame.minY - clip.contentInsets.top)
+        return clip.constrainBoundsRect(proposed)
+    }
+
+    /// Used by native preview QA; checks the text edge too, not just its box.
+    var isAtDocumentStart: Bool {
+        guard let expected = initialDocumentBounds, let text = documentView as? NSTextView,
+              abs(contentView.bounds.minX - expected.minX) <= 0.5,
+              abs(contentView.bounds.minY - expected.minY) <= 0.5 else { return false }
+        guard rulersVisible, let ruler = verticalRulerView else { return true }
+        let textStart = text.convert(text.textContainerOrigin, to: self).x
+        let rulerEnd = ruler.convert(ruler.bounds, to: self).maxX
+        return textStart >= rulerEnd - 0.5 && textStart <= rulerEnd + text.textContainerInset.width + 1
+    }
+
+    var initialViewportDiagnostic: String {
+        "bounds=\(contentView.bounds), insets=\(contentView.contentInsets), document=\(documentView?.frame.description ?? "nil"), expected=\(initialDocumentBounds?.description ?? "nil"), startsVisible=\(isAtDocumentStart)"
+    }
+
+    override func layout() {
+        super.layout()
+        guard needsInitialScroll, contentView.bounds.width > 0,
+              contentView.bounds.height > 0, let expected = initialDocumentBounds else { return }
+        needsInitialScroll = false
+        contentView.scroll(to: expected.origin)
+        reflectScrolledClipView(contentView)
+    }
+
 }
 
 final class DiffTextView: NSTextView {
