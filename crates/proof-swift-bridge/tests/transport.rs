@@ -38,7 +38,10 @@ fn process_round_trip_frames_errors_and_escaped_paths() {
     assert_eq!(rejected["error"]["code"], "INVALID_REQUEST");
     let opened = exchange(json!({"id":19,"command":{"method":"open","path":path}}));
     assert_eq!(opened["id"], 19);
-    assert_eq!(opened["result"]["path"], path.to_str().unwrap());
+    assert_eq!(
+        opened["result"]["path"],
+        std::fs::canonicalize(&path).unwrap().to_str().unwrap()
+    );
     assert_eq!(
         exchange(json!({"id":20,"command":{"method":"recent"}}))["result"][0]["id"],
         opened["result"]["id"]
