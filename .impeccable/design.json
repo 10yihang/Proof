@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-11-02T07:08:31Z",
+  "generatedAt": "2026-11-02T07:36:45Z",
   "title": "Proof Native — Reference workbench skeleton, native window chrome",
   "surface": "native/macos/Changes",
   "mode": "operate",
@@ -60,7 +60,7 @@
         "repositoryToolbarWidth": 260
       },
       "navigation": "User-approved reference skeleton: repository tab strip made from actual32pt row segments inside each native column; no overlay or root safeAreaInset; combined 44pt Changes/Commit/History rail and ideal280pt file pane; central Diff and responsive Context inspector; sidebar-local GeometryReader bounds retained",
-      "windowToolbar": "Native unified toolbar; fixed260pt repository identity; NSWindow titleVisibility hidden while retaining title; Context/refresh only, compact file actions live in56pt file header",
+      "windowToolbar": "Native unified toolbar; fixed260pt repository identity with explicit titleAndIcon branch; automatic title removed on15+ and retained NSWindow title hidden for fallback; Context/refresh only; small bordered actions in56pt file header",
       "surfaces": {
         "document": "NSColor.textBackgroundColor, opaque",
         "text": "NSColor.textColor",
@@ -81,13 +81,22 @@
       },
       "motion": "No added decorative entrance motion; retain system behavior and Reduce Motion",
       "validation": {
-        "status": "Reference skeleton approved; revised source/build and native WindowServer light/dark pixel inspection pending fresh CI; final rendered acceptance not asserted",
+        "status": "SHIP: four native Changes preview layouts pass geometry assertions and visual inspection; not full interaction, old-OS runtime, feature parity or user aesthetic acceptance",
         "reference": "User-provided original screenshot inspected for structure only; private identifiers/content excluded from documentation",
-        "required": "Fresh actual app-window captures at runner dimensions; previous revision evidence is not current acceptance",
+        "required": "Final actual app-window captures inspected in light/dark at compact1024x674 and wide1440x677",
         "pixelIdenticalClaim": false,
         "fixture": "Preview · illustrative repository · no Git operations",
         "olderSystemRuntimeTested": false,
-        "capturePlan": "Same fixture, light/dark at compact1024x674 and wide1440x900; screenshot-only single setFrame request per size, actual frame recorded; no display settings changed. Four captures pending."
+        "capturePlan": "Completed four actual captures. Requested wide1440x900 constrained to1440x677; no display/security changes or scaled proxies.",
+        "sourceSHA": "eb19c7e3ba3efa94ed873f99d582871cbbb83b08",
+        "ciRun": "https://github.com/10yihang/Proof/actions/runs/41406785901",
+        "runtime": "macOS27.0.1 / Xcode27.1 / SDK27.0",
+        "deploymentEvidence": {
+          "Swift": "13.0",
+          "Rust": "11.0",
+          "Info.plist": "13.0",
+          "SDK": "27.0"
+        }
       },
       "identityReferences": [
         "assets/proof.svg",
@@ -148,7 +157,7 @@
   },
   "narrative": {
     "northStar": "Restore Proof’s approved workbench skeleton; native materials support, not replace, its structure.",
-    "overview": "The user-approved reference restores repository tabs, a compact navigation rail, files, central Diff and responsive Context. Current implementation truthfully supports one active repository and loaded-snapshot context only. This supersedes the earlier no-rail composition while leaving original Web/Tauri untouched; fresh render QA remains pending.",
+    "overview": "The user-approved reference restores repository tabs, a compact navigation rail, files, central Diff and responsive Context. Current implementation truthfully supports one active repository and loaded-snapshot context only. This supersedes the earlier no-rail composition while leaving original Web/Tauri untouched; final Changes layout captures pass; broader acceptance remains separate.",
     "keyCharacteristics": [
       "32pt single-active repository tab strip",
       "44pt rail and ideal280pt file pane",
