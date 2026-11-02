@@ -13,3 +13,6 @@ Concept-only multi-repo, fetch/pull/push, branch switching, stash/tags/remotes n
 
 ## Verification
 Full batch native light/dark at actual compact/wide runner frames. CI includes Rust bridge real-Git tests, pure Swift tree/state checks, signature/protocol checks and native geometry assertions for branch/file/diff/commit/footer. First capture inspection then one batched correction/confirmation. macOS13 deployment remains; actual old-OS runtime untested. No user Mac/Codex or display/security changes. Await current source build and user visual acceptance.
+
+## Confirmed native evidence
+Source c6be5fadf7c8d19e7fb9ddcb7bb742da1354f865, CI41432134236/job125233030388 green. Four actual WindowServer captures1440x677 and1024x674 on macOS27.0.1/Xcode27.1/SDK27.0. Native toolbar40, branchbottom/filetop82, usableDiff353/350, checkedcommit134, status24. Corrected first-load horizontal offset with inset-aware native layout reset only on snapshot identity changes; all four text-start/ruler assertions pass. Scoped reviewer SHIP closes the reported scroll defect, not user aesthetic acceptance/full interaction or accessibility certification. Swiftmin13/Rustmin11/bundle13 verified from packaged binaries; old runtime untested. No further visual changes after confirmation.

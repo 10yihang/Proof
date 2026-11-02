@@ -150,13 +150,44 @@
         ]
       },
       "validation": {
-        "status": "Current revision build and actual captures pending; no visual acceptance claim",
+        "status": "SHIP scoped to resolved visual fixes and captured layout; not user aesthetic acceptance, full interaction or accessibility validation",
         "reference": "User-approved full synthetic Fork-layout/Linear-visual concept; supersedes CodeEdit and B-topbar",
-        "required": "Native actual light/dark compact and wide; geometry assertions and state tests",
+        "required": "Four actual native light/dark captures verified at1440x677 and1024x674; geometry and state checks pass",
         "olderSystemRuntimeTested": false,
-        "deploymentTarget": "macOS13; current package minos/plist verification pending",
+        "deploymentTarget": "macOS13; final Swift minos13.0, Rust sidecar minos11.0, Info.plist13.0 verified; older runtime untested",
         "fixture": "演示数据 · 不执行 Git 操作",
-        "pixelIdenticalClaim": false
+        "pixelIdenticalClaim": false,
+        "sourceSHA": "c6be5fadf7c8d19e7fb9ddcb7bb742da1354f865",
+        "ciRun": "https://github.com/10yihang/Proof/actions/runs/41432134236",
+        "ciJob": 125233030388,
+        "runtime": "macOS27.0.1 / Xcode27.1 / SDK27.0",
+        "checks": [
+          "4 Rust bridge real-Git tests",
+          "Swift tree/state/draft/write guard checks",
+          "Release build",
+          "Bundle signature and bridge protocol",
+          "Four native captures and geometry assertions"
+        ],
+        "captureSizes": {
+          "wide": "1440x677",
+          "compact": "1024x674"
+        },
+        "geometryEvidence": {
+          "nativeTitlebarHeight": 40,
+          "branchBarBottom": 82,
+          "fileHeaderTop": 82,
+          "diffHeightCompact": 350,
+          "diffHeightWide": 353,
+          "inlineCommitHeight": 134,
+          "statusHeight": 24
+        },
+        "initialScroll": "Native clip insets respected after layout on content identity changes only; all four captures startsVisible=true",
+        "deploymentEvidence": {
+          "Swift": "13.0",
+          "Rust": "11.0",
+          "Info.plist": "13.0",
+          "SDK": "27.0"
+        }
       }
     }
   },
