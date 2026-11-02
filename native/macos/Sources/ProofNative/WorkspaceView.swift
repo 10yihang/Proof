@@ -20,8 +20,8 @@ struct WorkspaceView: View {
                 }
                 .pickerStyle(.segmented).labelsHidden()
                 .disabled(model.writing).padding(.horizontal, 16).padding(.bottom, 16)
-                if model.workspace != nil { fileList.layoutPriority(-1) }
-                Spacer(minLength: 0)
+                if model.workspace != nil { fileList }
+                else { Spacer(minLength: 0) }
                 sidebarStatus.captureLayout("sidebar-footer")
             }
             .captureLayout("sidebar-column")
@@ -165,7 +165,7 @@ struct WorkspaceView: View {
                             if !commit.refs.isEmpty { Text(commit.refs).font(.caption).foregroundStyle(.blue).lineLimit(1) }
                         }.padding(.vertical, 3).tag(commit.oid)
                     }
-                }.listStyle(.inset).disabled(model.writing)
+                }.listStyle(.inset).frame(minHeight: 0, maxHeight: .infinity).disabled(model.writing)
                 if model.commits.isEmpty && !model.busy { Text("No commits to display").foregroundStyle(.secondary).padding() }
                 if model.hasMoreHistory { Button("Load More") { model.loadHistory(reset: false) }.disabled(model.busy).padding(8) }
             } else {
@@ -196,7 +196,7 @@ struct WorkspaceView: View {
                             }.font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
                         }
                     }
-                }.listStyle(.sidebar).disabled(model.writing)
+                }.listStyle(.sidebar).frame(minHeight: 0, maxHeight: .infinity).disabled(model.writing)
                 if model.changes?.files.isEmpty == true { Text("Working tree clean").foregroundStyle(.secondary).padding() }
             }
         }
