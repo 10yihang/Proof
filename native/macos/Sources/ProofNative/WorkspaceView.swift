@@ -15,46 +15,48 @@ struct WorkspaceView: View {
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
-        GeometryReader { viewport in
-            VStack(spacing: 0) {
-                repositoryTabs
-                NavigationSplitView(columnVisibility: $columnVisibility) {
-                    GeometryReader { column in
-                        HStack(spacing: 0) {
-                            navigationRail
-                            VStack(spacing: 0) {
-                                HStack {
-                                    Text(model.mode == "history" ? "History" : model.mode == "commit" ? "Commit files" : "Changed files")
-                                        .font(.system(size: 12, weight: .semibold))
-                                    Spacer()
-                                }.padding(.horizontal, 12).frame(height: 36)
-                                if model.workspace != nil { fileList }
-                                else { Spacer(minLength: 0) }
-                                sidebarStatus.captureLayout("sidebar-footer")
-                            }
-                        }.frame(width: column.size.width, height: column.size.height, alignment: .topLeading)
-                            .captureLayout("sidebar-column")
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            GeometryReader { column in
+                HStack(spacing: 0) {
+                    navigationRail
+                    VStack(spacing: 0) {
+                        HStack {
+                            Text(model.mode == "history" ? "History" : model.mode == "commit" ? "Commit files" : "Changed files")
+                                .font(.system(size: 12, weight: .semibold))
+                            Spacer()
+                        }.padding(.horizontal, 12).frame(height: 36)
+                        if model.workspace != nil { fileList }
+                        else { Spacer(minLength: 0) }
+                        sidebarStatus.captureLayout("sidebar-footer")
                     }
-                    .navigationSplitViewColumnWidth(min: 294, ideal: 324, max: 384)
-                } detail: {
-                    HStack(spacing: 0) {
-                        Group {
-                            if model.workspace == nil { welcome }
-                            else if model.mode == "commit" { commitEditor }
-                            else { detail }
-                        }.frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .captureLayout("detail-column")
-                            .background(Color(nsColor: .textBackgroundColor))
-                        if viewport.size.width >= 1200 && showsContext && model.mode == "changes" {
-                            Divider()
-                            ProofContextInspector(model: model).frame(width: 260)
-                        }
-                    }
-                }.navigationSplitViewStyle(.balanced)
+                }.frame(width: column.size.width, height: column.size.height, alignment: .topLeading)
+                    .captureLayout("sidebar-column")
             }
-            .onAppear { availableWidth = viewport.size.width }
-            .onChange(of: viewport.size.width) { availableWidth = $0 }
+            .navigationSplitViewColumnWidth(min: 294, ideal: 324, max: 384)
+        } detail: {
+            HStack(spacing: 0) {
+                Group {
+                    if model.workspace == nil { welcome }
+                    else if model.mode == "commit" { commitEditor }
+                    else { detail }
+                }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .captureLayout("detail-column")
+                    .background(Color(nsColor: .textBackgroundColor))
+                if availableWidth >= 1200 && showsContext && model.mode == "changes" {
+                    Divider()
+                    ProofContextInspector(model: model).frame(width: 260)
+                }
+            }
         }
+        .navigationSplitViewStyle(.balanced)
+        // Keep the native split at scene root. Communicate the tab strip as an
+        // inset instead of relocating its AppKit toolbar-exclusion coordinates.
+        .safeAreaInset(edge: .top, spacing: 0) { repositoryTabs }
+        .background(GeometryReader { viewport in
+            Color.clear
+                .onAppear { availableWidth = viewport.size.width }
+                .onChange(of: viewport.size.width) { availableWidth = $0 }
+        })
         .navigationTitle(model.workspace?.name ?? "Proof")
         .toolbar { documentToolbar }
         .alert("Repository needs your trust", isPresented: $trustConfirmation) {
@@ -109,7 +111,7 @@ struct WorkspaceView: View {
                         .help("Close repository").accessibilityLabel("Close repository")
                 }.font(.system(size: 11, weight: .medium)).padding(.horizontal, 12)
                     .frame(width: 220, height: 32)
-                    .background(Color.blue.opacity(0.07))
+                    .background(Color.blue.opacity(0.07), ignoresSafeAreaEdges: [])
                     .overlay(alignment: .bottom) { Rectangle().fill(Color.blue.opacity(0.65)).frame(height: 1) }
                     .help(workspace.path)
             }
@@ -117,7 +119,7 @@ struct WorkspaceView: View {
             Button(action: requestOpen) { Image(systemName: "plus") }
                 .buttonStyle(.plain).frame(width: 36, height: 32).disabled(model.writing)
                 .help("Open repository (replaces the current repository)").accessibilityLabel("Open repository")
-        }.frame(height: 32).background(Color(nsColor: .windowBackgroundColor))
+        }.frame(height: 32).background(Color(nsColor: .windowBackgroundColor), ignoresSafeAreaEdges: [])
     }
     private var navigationRail: some View {
         VStack(spacing: 8) {
@@ -147,7 +149,7 @@ struct WorkspaceView: View {
                         .help(changes.branch ?? "Detached HEAD")
                 }
             }
-        }.frame(maxWidth: 300)
+        }.frame(width: 260, alignment: .leading)
     }
     @ToolbarContentBuilder private var documentToolbar: some ToolbarContent {
         ToolbarItem(placement: .principal) { repositoryIdentity }
@@ -327,7 +329,7 @@ struct WorkspaceView: View {
             }
         } else if let diff = model.diff, model.mode == "changes" {
             VStack(spacing: 0) {
-                fileHeader(diff)
+                fileHeader(diff).captureLayout("file-header")
                 if let notice = diff.notice {
                     Text(notice).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading).padding(10)
@@ -348,8 +350,10 @@ struct WorkspaceView: View {
             Image(systemName: "chevron.left.forwardslash.chevron.right").foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 3) {
                 Text((diff.path as NSString).lastPathComponent).font(.system(size: 12, weight: .semibold)).lineLimit(1)
-                Text(diff.path).font(.system(size: 10)).foregroundStyle(.secondary)
-                    .lineLimit(1).truncationMode(.middle)
+                HStack(spacing: 8) {
+                    Text(diff.path).lineLimit(1).truncationMode(.middle)
+                    Text(diff.side == "staged" ? "HEAD → Index" : "Index → Worktree").fixedSize()
+                }.font(.system(size: 10)).foregroundStyle(.secondary)
             }.frame(maxWidth: .infinity, alignment: .leading).help(diff.path)
             HStack(spacing: 5) {
                 Text("+\(diff.additions)").foregroundStyle(Color(nsColor: .systemGreen))
@@ -368,7 +372,7 @@ struct WorkspaceView: View {
                 .menuStyle(.borderlessButton).fixedSize().help("Reading tools").accessibilityLabel("Reading tools")
         }.buttonStyle(.bordered).controlSize(.small)
             .padding(.horizontal, 12).frame(height: 56)
-            .background(Color(nsColor: .windowBackgroundColor))
+            .background(Color(nsColor: .windowBackgroundColor), ignoresSafeAreaEdges: [])
     }
     private var commitEditor: some View {
         VStack(alignment: .leading, spacing: 16) {

@@ -12,6 +12,9 @@ struct ProofNativeApp: App {
                 .preferredColorScheme(ScreenshotPreview.colorScheme)
                 .frame(minWidth: 1000, minHeight: 560, alignment: .topLeading)
                 .task {
+                    // Preserve the window title for accessibility and Window menus;
+                    // the unified toolbar already presents repository identity.
+                    NSApp.windows.first?.titleVisibility = .hidden
                     if ScreenshotPreview.outputDirectory != nil {
                         if let window = NSApp.windows.first {
                             // Capture outlives the view task when its hosting view moves windows.

@@ -11,7 +11,7 @@ struct ProofContextInspector: View {
             HStack {
                 Text("Context").font(.system(size: 12, weight: .semibold))
                 Spacer()
-            }.padding(.horizontal, 16).frame(height: 40)
+            }.padding(.horizontal, 16).frame(height: 40).captureLayout("context-header")
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
@@ -57,7 +57,6 @@ struct ProofContextInspector: View {
                 .fixedSize(horizontal: false, vertical: true)
             VStack(spacing: 10) {
                 field("Comparison", diff.side == "staged" ? "HEAD → Index" : "Index → Worktree")
-                field("Base", diff.base)
                 if let head = model.changes?.head {
                     field("HEAD", String(head.prefix(12)), help: head)
                 }

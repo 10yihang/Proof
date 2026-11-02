@@ -56,10 +56,11 @@
         "contextPopoverWidth": 300,
         "contextPopoverHeight": 470,
         "defaultContentWidth": 1440,
-        "defaultContentHeight": 900
+        "defaultContentHeight": 900,
+        "repositoryToolbarWidth": 260
       },
-      "navigation": "User-approved reference skeleton: repository tab strip above NavigationSplitView; combined 44pt Changes/Commit/History rail and ideal280pt file pane; central Diff and responsive Context inspector; sidebar-local GeometryReader bounds retained",
-      "windowToolbar": "System unified toolbar: repository identity in principal position, context and refresh actions; file review/stage/reading controls moved into a 56pt compact neutral file header",
+      "navigation": "User-approved reference skeleton: repository tab strip through root NavigationSplitView safeAreaInset; combined 44pt Changes/Commit/History rail and ideal280pt file pane; central Diff and responsive Context inspector; sidebar-local GeometryReader bounds retained",
+      "windowToolbar": "Native unified toolbar; fixed260pt repository identity; NSWindow titleVisibility hidden while retaining title; Context/refresh only, compact file actions live in56pt file header",
       "surfaces": {
         "document": "NSColor.textBackgroundColor, opaque",
         "text": "NSColor.textColor",
@@ -135,7 +136,6 @@
         "fields": [
           "Loaded diff path",
           "Comparison direction",
-          "Base",
           "HEAD when available",
           "Opaque snapshot ID, not Git commit hash",
           "Loaded snapshot human-review hunk counts",
