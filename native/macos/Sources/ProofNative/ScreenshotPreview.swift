@@ -4,6 +4,7 @@ import SwiftUI
 /// Deterministic native rendering for CI. Never opens a repository or starts the bridge.
 @MainActor
 enum ScreenshotPreview {
+    private static var captureStarted = false
     static var outputDirectory: URL? {
         let args = ProcessInfo.processInfo.arguments
         guard let index = args.firstIndex(of: "--capture-preview"), args.indices.contains(index + 1) else { return nil }
@@ -74,7 +75,8 @@ enum ScreenshotPreview {
     }
 
     static func capture(window sourceWindow: NSWindow) async {
-        guard let directory = outputDirectory else { return }
+        guard !captureStarted, let directory = outputDirectory else { return }
+        captureStarted = true
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             // CI's virtual screen can be only 768 points tall. Preserve the actual

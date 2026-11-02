@@ -12,7 +12,10 @@ struct ProofNativeApp: App {
                 .frame(minWidth: 1000, minHeight: 680)
                 .task {
                     if ScreenshotPreview.outputDirectory != nil {
-                        if let window = NSApp.windows.first { await ScreenshotPreview.capture(window: window) }
+                        if let window = NSApp.windows.first {
+                            // Capture outlives the view task when its hosting view moves windows.
+                            Task { await ScreenshotPreview.capture(window: window) }
+                        }
                         return
                     }
                     delegate.model = model
