@@ -21,7 +21,7 @@ struct WorkspaceView: View {
                         commitEditor
                     } else {
                         HSplitView {
-                            fileList.frame(minWidth: 220, idealWidth: 260, maxWidth: 360)
+                            fileList.frame(minWidth: 220, idealWidth: 260, maxWidth: 280)
                             detail.frame(minWidth: 460, maxWidth: .infinity, maxHeight: .infinity)
                         }
                     }
@@ -41,6 +41,7 @@ struct WorkspaceView: View {
             }
             .font(.system(size: 10)).foregroundStyle(.secondary).padding(.horizontal, 12).frame(height: 24)
         }
+        .background(Color(nsColor: .windowBackgroundColor))
         .alert("Repository needs your trust", isPresented: $trustConfirmation) {
             Button("Cancel", role: .cancel) {}
             Button("Trust Repository") { model.trust() }
@@ -194,6 +195,7 @@ struct WorkspaceView: View {
                 if model.changes?.files.isEmpty == true { Text("Working tree clean").foregroundStyle(.secondary).padding() }
             }
         }
+        .background(Color(nsColor: .controlBackgroundColor))
     }
     @ViewBuilder private var detail: some View {
         if model.mode == "history", let patch = model.commitPatch {
@@ -237,6 +239,7 @@ struct WorkspaceView: View {
                     Text(diff.reviewed ? "Reviewed · content-bound" : "Not reviewed")
                         .foregroundStyle(diff.reviewed ? Color.accentColor : Color.secondary)
                 }.font(.system(size: 10)).foregroundStyle(.secondary).padding(.horizontal, 14).frame(height: 27)
+                .background(Color(nsColor: .windowBackgroundColor))
                 if let notice = diff.notice {
                     Text(notice).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading).padding(10)

@@ -123,9 +123,9 @@ struct CodeTextView: NSViewRepresentable {
         guard row.kind != "header" else { return result }
         // Lightweight lexical accents, not a language parser. Git text remains authoritative.
         let rules: [(String, NSColor)] = [
-            (#"\b(import|from|export|default|const|let|var|func|fn|pub|struct|enum|class|impl|return|if|else|guard|throw|throws|try|await|async|for|in|match|case|switch|self|Self|true|false|nil|null|None|Some|mut|use|where|private|static)\b"#, .systemPurple),
-            (#"\b[0-9]+(?:\.[0-9]+)?\b"#, .systemOrange),
-            (#"\"(?:\\.|[^\"\\])*\""#, .systemRed),
+            (#"\b(import|from|export|default|const|let|var|func|fn|pub|struct|enum|class|impl|return|if|else|guard|throw|throws|try|await|async|for|in|match|case|switch|self|Self|true|false|nil|null|None|Some|mut|use|where|private|static)\b"#, DiffPalette.keyword),
+            (#"\b[0-9]+(?:\.[0-9]+)?\b"#, DiffPalette.number),
+            (#"\"(?:\\.|[^\"\\])*\""#, DiffPalette.string),
             (#"//.*$"#, .secondaryLabelColor)
         ]
         let range = NSRange(location: 0, length: (row.text as NSString).length)
@@ -191,7 +191,9 @@ final class DiffRuler: NSRulerView {
         for row in text.rows {
             guard let line = text.rowRect(row) else { continue }
             let local = convert(line, from: text)
-            guard local.intersects(bounds) else { continue }
+            // The text rectangle lives to the right of this ruler, so only its
+            // vertical interval is relevant; a 2D intersection hides every row.
+            guard local.maxY >= bounds.minY && local.minY <= bounds.maxY else { continue }
             if let color = row.background {
                 color.setFill()
                 NSRect(x: 0, y: local.minY, width: bounds.width, height: local.height).fill()
@@ -206,5 +208,19 @@ final class DiffRuler: NSRulerView {
         }
         NSColor.separatorColor.setFill()
         NSRect(x: bounds.maxX - 1, y: bounds.minY, width: 1, height: bounds.height).fill()
+    }
+}
+
+/// Quiet, readable lexical ink in both appearances; diff backgrounds own red/green state.
+private enum DiffPalette {
+    static let keyword = adaptive(light: (0.43, 0.25, 0.57), dark: (0.77, 0.61, 0.89))
+    static let number = adaptive(light: (0.52, 0.32, 0.13), dark: (0.85, 0.70, 0.47))
+    static let string = adaptive(light: (0.58, 0.25, 0.18), dark: (0.88, 0.65, 0.53))
+
+    private static func adaptive(light: (CGFloat, CGFloat, CGFloat), dark: (CGFloat, CGFloat, CGFloat)) -> NSColor {
+        NSColor(name: nil) { appearance in
+            let rgb = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
+            return NSColor(srgbRed: rgb.0, green: rgb.1, blue: rgb.2, alpha: 1)
+        }
     }
 }

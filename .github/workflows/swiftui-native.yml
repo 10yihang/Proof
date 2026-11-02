@@ -50,7 +50,9 @@ jobs:
       - name: Render actual SwiftUI Changes previews
         timeout-minutes: 2
         run: |
-          "native/macos/build/Proof Native.app/Contents/MacOS/ProofNative" --capture-preview "$PWD/native/macos/build/screenshots"
+          for theme in light dark; do
+            "native/macos/build/Proof Native.app/Contents/MacOS/ProofNative" --capture-preview "$PWD/native/macos/build/screenshots" --preview-theme "$theme"
+          done
           python3 - <<'PYVERIFY'
           import pathlib, struct
           for theme in ('light', 'dark'):

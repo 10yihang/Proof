@@ -9,6 +9,7 @@ struct ProofNativeApp: App {
     var body: some Scene {
         Window("Proof Native", id: "main") {
             WorkspaceView(model: model)
+                .preferredColorScheme(ScreenshotPreview.colorScheme)
                 .frame(minWidth: 1000, minHeight: 680)
                 .task {
                     if ScreenshotPreview.outputDirectory != nil {

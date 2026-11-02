@@ -11,9 +11,22 @@ enum ScreenshotPreview {
         return URL(fileURLWithPath: args[index + 1], isDirectory: true)
     }
 
+    static var themeName: String {
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: "--preview-theme"), args.indices.contains(index + 1) else { return "light" }
+        return args[index + 1] == "dark" ? "dark" : "light"
+    }
+    static var themeAppearance: NSAppearance.Name { themeName == "dark" ? .darkAqua : .aqua }
+    static var colorScheme: ColorScheme? {
+        outputDirectory == nil ? nil : (themeName == "dark" ? .dark : .light)
+    }
+
     static func makeModel() -> WorkspaceModel {
         let model = WorkspaceModel()
         guard outputDirectory != nil else { return model }
+        // One process per appearance: establish AppKit appearance before SwiftUI
+        // creates any toolbar, text view or semantic-color-backed native surface.
+        NSApplication.shared.appearance = NSAppearance(named: themeAppearance)
         let workspace = Workspace(id: "preview-only", name: "Proof", path: "/Preview/Proof", trusted: true)
         let files = [
             ChangedFile(path: "native/macos/Sources/ProofNative/WorkspaceModel.swift", oldPath: nil, status: "M", side: "unstaged", conflicted: false),
@@ -86,6 +99,8 @@ enum ScreenshotPreview {
                 contentRect: NSRect(x: 0, y: 0, width: 1440, height: 900),
                 styleMask: sourceWindow.styleMask, backing: .buffered, defer: false
             )
+            window.appearance = NSAppearance(named: themeAppearance)
+            window.backgroundColor = .windowBackgroundColor
             window.title = sourceWindow.title
             window.titleVisibility = sourceWindow.titleVisibility
             window.titlebarAppearsTransparent = sourceWindow.titlebarAppearsTransparent
@@ -100,14 +115,17 @@ enum ScreenshotPreview {
             window.setFrame(NSRect(x: 0, y: 0, width: 1440, height: 900), display: true)
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
-            for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", NSAppearance.Name.darkAqua)] {
+            for (name, appearance) in [(themeName, themeAppearance)] {
                 window.appearance = NSAppearance(named: appearance)
                 try await Task.sleep(nanoseconds: 600_000_000)
+                window.makeFirstResponder(nil)
                 guard let view = window.contentView?.superview else { throw CaptureError.noView }
                 view.layoutSubtreeIfNeeded()
                 view.displayIfNeeded()
                 guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { throw CaptureError.noBitmap }
-                view.cacheDisplay(in: view.bounds, to: bitmap)
+                window.effectiveAppearance.performAsCurrentDrawingAppearance {
+                    view.cacheDisplay(in: view.bounds, to: bitmap)
+                }
                 guard let png = bitmap.representation(using: .png, properties: [:]) else { throw CaptureError.noBitmap }
                 try png.write(to: directory.appendingPathComponent("changes-\(name).png"))
                 print("Native AppKit capture: changes-\(name).png (\(bitmap.pixelsWide) × \(bitmap.pixelsHigh))")
