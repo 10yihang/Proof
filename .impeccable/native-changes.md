@@ -12,3 +12,5 @@ FINISH: One batched native inspection and one correction/confirmation if needed;
 
 ## Approved top-chrome refinement B
 Center repository name over its branch without a floating badge or app-mark tile. On macOS26+, hide only the principal toolbar item shared glass background using the system API; retain native interactive tool groups. Prefer visible native window-toolbar background for calmer continuous chrome. Keep the working column-owned32pt tab rows and all workspace geometry/behavior unchanged. Screenshot verification pending this refinement; prior capture evidence above describes the preceding revision.
+
+First native B capture45b1b09/CI41408744048 confirmed title-capsule removal and intact geometry, but default toolbar retained sidebar/detail tonal seam and native detail-region centering. Final bounded appearance check requests system regularMaterial for toolbar and column-owned tab strips. This is native Material, not a claim of custom Liquid Glass; system toolbar style is a preference and may remain column-dependent. No placement or safe-area changes.

@@ -65,6 +65,7 @@ struct WorkspaceView: View {
         })
         .navigationTitle(model.workspace?.name ?? "Proof")
         .toolbar { documentToolbar }
+        .toolbarBackground(.regularMaterial, for: .windowToolbar)
         .toolbarBackground(.visible, for: .windowToolbar)
         .hideAutomaticToolbarTitle()
         .alert("Repository needs your trust", isPresented: $trustConfirmation) {
@@ -129,7 +130,7 @@ struct WorkspaceView: View {
                     .buttonStyle(.plain).frame(width: 36, height: repositoryTabHeight).disabled(model.writing)
                     .help("Open repository (replaces the current repository)").accessibilityLabel("Open repository")
             }
-        }.frame(height: repositoryTabHeight).captureLayout(leading ? "repository-tab-leading" : "repository-tab-trailing").background(Color(nsColor: .windowBackgroundColor), ignoresSafeAreaEdges: [])
+        }.frame(height: repositoryTabHeight).captureLayout(leading ? "repository-tab-leading" : "repository-tab-trailing").background(.regularMaterial, ignoresSafeAreaEdges: [])
     }
     private var navigationRail: some View {
         VStack(spacing: 8) {
