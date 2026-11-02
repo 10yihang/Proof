@@ -100,8 +100,10 @@ enum ScreenshotPreview {
             let window = sourceWindow
             window.appearance = NSAppearance(named: themeAppearance)
             NSApp.setActivationPolicy(.regular)
-            window.minSize = NSSize(width: 1440, height: 900)
-            window.setFrame(NSRect(x: 0, y: 0, width: 1440, height: 900), display: true)
+            // Use the runner's real usable screen rather than an offscreen clone.
+            let visible = window.screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+            let height = min(900, visible.height)
+            window.setFrame(NSRect(x: visible.minX, y: visible.minY, width: 1440, height: height), display: true)
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             for (name, appearance) in [(themeName, themeAppearance)] {
