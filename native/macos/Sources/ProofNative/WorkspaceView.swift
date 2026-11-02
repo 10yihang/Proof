@@ -9,8 +9,8 @@ struct WorkspaceView: View {
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
-        GeometryReader { geometry in
         NavigationSplitView(columnVisibility: $columnVisibility) {
+            GeometryReader { column in
             VStack(spacing: 0) {
                 repositoryIdentity.captureLayout("repository-header")
                 Picker("Workspace section", selection: $model.mode) {
@@ -24,7 +24,9 @@ struct WorkspaceView: View {
                 else { Spacer(minLength: 0) }
                 sidebarStatus.captureLayout("sidebar-footer")
             }
+            .frame(width: column.size.width, height: column.size.height, alignment: .topLeading)
             .captureLayout("sidebar-column")
+            }
             .navigationSplitViewColumnWidth(min: 250, ideal: 290, max: 340)
         } detail: {
             Group {
@@ -38,8 +40,6 @@ struct WorkspaceView: View {
             .toolbar { documentToolbar }
         }
         .navigationSplitViewStyle(.balanced)
-        .frame(width: geometry.size.width, height: geometry.size.height)
-        }
         .alert("Repository needs your trust", isPresented: $trustConfirmation) {
             Button("Cancel", role: .cancel) {}
             Button("Trust Repository") { model.trust() }
