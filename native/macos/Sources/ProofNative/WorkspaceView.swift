@@ -65,6 +65,7 @@ struct WorkspaceView: View {
         })
         .navigationTitle(model.workspace?.name ?? "Proof")
         .toolbar { documentToolbar }
+        .toolbarBackground(.visible, for: .windowToolbar)
         .hideAutomaticToolbarTitle()
         .alert("Repository needs your trust", isPresented: $trustConfirmation) {
             Button("Cancel", role: .cancel) {}
@@ -148,21 +149,24 @@ struct WorkspaceView: View {
             .accessibilityAddTraits(model.mode == mode ? .isSelected : [])
     }
     private var repositoryIdentity: some View {
-        HStack(spacing: 8) {
-            ProofMark().frame(width: 24, height: 24)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(model.workspace?.name ?? "Proof").font(.system(size: 12, weight: .semibold))
-                if let changes = model.changes {
-                    Label(changes.branch ?? "Detached HEAD", systemImage: "arrow.triangle.branch")
-                        .labelStyle(.titleAndIcon)
-                        .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
-                        .help(changes.branch ?? "Detached HEAD")
-                }
+        VStack(spacing: 2) {
+            Text(model.workspace?.name ?? "Proof")
+                .font(.system(size: 12, weight: .semibold)).lineLimit(1)
+            if let changes = model.changes {
+                Label(changes.branch ?? "Detached HEAD", systemImage: "arrow.triangle.branch")
+                    .labelStyle(.titleAndIcon)
+                    .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                    .help(changes.branch ?? "Detached HEAD")
             }
-        }.frame(width: 260, alignment: .leading)
+        }.frame(width: 260)
     }
     @ToolbarContentBuilder private var documentToolbar: some ToolbarContent {
-        ToolbarItem(placement: .principal) { repositoryIdentity }
+        if #available(macOS 26.0, *) {
+            ToolbarItem(placement: .principal) { repositoryIdentity }
+                .sharedBackgroundVisibility(.hidden)
+        } else {
+            ToolbarItem(placement: .principal) { repositoryIdentity }
+        }
         ToolbarItemGroup(placement: .primaryAction) {
             if model.mode == "changes" {
             Button {
@@ -412,29 +416,6 @@ struct WorkspaceView: View {
             Text("Creates a local commit. Configured Git hooks may run. No push, amend or AI invocation. Changed index or HEAD will invalidate this preview.").font(.caption).foregroundStyle(.secondary)
             HStack { Spacer(); Button("Cancel", role: .cancel) { model.preview = nil }; Button("Commit") { model.commit() }.keyboardShortcut(.defaultAction) }
         }.padding(24).frame(width: 560)
-    }
-}
-
-/// The existing assets/proof.svg mark, drawn as native vector geometry.
-private struct ProofMark: View {
-    var body: some View {
-        GeometryReader { geometry in
-            let scale = geometry.size.width / 512
-            ZStack {
-                RoundedRectangle(cornerRadius: 108 * scale).fill(Color(red: 49 / 255, green: 91 / 255, blue: 206 / 255))
-                    .padding(32 * scale)
-                Path { path in
-                    path.move(to: CGPoint(x: 169 * scale, y: 151 * scale))
-                    path.addLines([CGPoint(x: 131 * scale, y: 151 * scale), CGPoint(x: 131 * scale, y: 361 * scale), CGPoint(x: 169 * scale, y: 361 * scale)])
-                    path.move(to: CGPoint(x: 343 * scale, y: 151 * scale))
-                    path.addLines([CGPoint(x: 381 * scale, y: 151 * scale), CGPoint(x: 381 * scale, y: 361 * scale), CGPoint(x: 343 * scale, y: 361 * scale)])
-                }.stroke(.white, style: StrokeStyle(lineWidth: 24 * scale, lineCap: .round, lineJoin: .round))
-                Path { path in
-                    path.move(to: CGPoint(x: 192 * scale, y: 258 * scale))
-                    path.addLines([CGPoint(x: 239 * scale, y: 304 * scale), CGPoint(x: 324 * scale, y: 196 * scale)])
-                }.stroke(.white, style: StrokeStyle(lineWidth: 29 * scale, lineCap: .round, lineJoin: .round))
-            }
-        }.accessibilityHidden(true)
     }
 }
 
