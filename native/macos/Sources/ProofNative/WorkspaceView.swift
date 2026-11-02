@@ -6,10 +6,10 @@ struct WorkspaceView: View {
     @State private var trustConfirmation = false
     @State private var stageConfirmation = false
     @State private var rawPatch = false
-    @State private var titlebarInset: CGFloat = 0
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
+        GeometryReader { geometry in
         NavigationSplitView(columnVisibility: $columnVisibility) {
             VStack(spacing: 0) {
                 repositoryIdentity
@@ -20,7 +20,7 @@ struct WorkspaceView: View {
                 }
                 .pickerStyle(.segmented).labelsHidden()
                 .disabled(model.writing).padding(.horizontal, 16).padding(.bottom, 16)
-                if model.workspace != nil { fileList }
+                if model.workspace != nil { fileList.layoutPriority(-1) }
                 Spacer(minLength: 0)
                 sidebarStatus
             }
@@ -36,17 +36,8 @@ struct WorkspaceView: View {
             .toolbar { documentToolbar }
         }
         .navigationSplitViewStyle(.balanced)
-        .padding(.top, titlebarInset)
-        .background(GeometryReader { geometry in
-            Color.clear.onAppear {
-                if ScreenshotPreview.outputDirectory != nil {
-                    print("SwiftUI root size: \(geometry.size); safe area: \(geometry.safeAreaInsets)")
-                }
-            }
-        })
-        .background(WindowLayoutInset { inset in
-            if titlebarInset != inset { titlebarInset = inset }
-        })
+        .frame(width: geometry.size.width, height: geometry.size.height)
+        }
         .alert("Repository needs your trust", isPresented: $trustConfirmation) {
             Button("Cancel", role: .cancel) {}
             Button("Trust Repository") { model.trust() }
@@ -290,28 +281,3 @@ private extension View {
     }
 }
 
-/// Native layout guide, not a guessed toolbar height. SwiftUI's split columns
-/// extend under the titlebar; document headers must occupy its content region.
-private struct WindowLayoutInset: NSViewRepresentable {
-    let onChange: (CGFloat) -> Void
-    func makeNSView(context: Context) -> Probe { Probe(onChange: onChange) }
-    func updateNSView(_ view: Probe, context: Context) { view.onChange = onChange; view.measure() }
-    final class Probe: NSView {
-        var onChange: (CGFloat) -> Void
-        private var observer: NSObjectProtocol?
-        init(onChange: @escaping (CGFloat) -> Void) { self.onChange = onChange; super.init(frame: .zero) }
-        required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            if let observer { NotificationCenter.default.removeObserver(observer) }
-            observer = NotificationCenter.default.addObserver(forName: NSWindow.didResizeNotification, object: window, queue: .main) { [weak self] _ in self?.measure() }
-            measure()
-        }
-        func measure() {
-            guard let window, let content = window.contentView else { return }
-            let inset = max(0, content.bounds.height - window.contentLayoutRect.height)
-            DispatchQueue.main.async { [weak self] in self?.onChange(inset) }
-        }
-        deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
-    }
-}
