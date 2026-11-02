@@ -12,7 +12,7 @@ struct WorkspaceView: View {
         GeometryReader { geometry in
         NavigationSplitView(columnVisibility: $columnVisibility) {
             VStack(spacing: 0) {
-                repositoryIdentity
+                repositoryIdentity.captureLayout("repository-header")
                 Picker("Workspace section", selection: $model.mode) {
                     Text("Changes").tag("changes")
                     Text("Commit").tag("commit")
@@ -22,8 +22,9 @@ struct WorkspaceView: View {
                 .disabled(model.writing).padding(.horizontal, 16).padding(.bottom, 16)
                 if model.workspace != nil { fileList.layoutPriority(-1) }
                 Spacer(minLength: 0)
-                sidebarStatus
+                sidebarStatus.captureLayout("sidebar-footer")
             }
+            .captureLayout("sidebar-column")
             .navigationSplitViewColumnWidth(min: 250, ideal: 290, max: 340)
         } detail: {
             Group {
@@ -31,6 +32,7 @@ struct WorkspaceView: View {
                 else if model.mode == "commit" { commitEditor }
                 else { detail }
             }
+            .captureLayout("detail-column")
             .background(Color(nsColor: .textBackgroundColor))
             .navigationTitle(documentTitle)
             .toolbar { documentToolbar }
