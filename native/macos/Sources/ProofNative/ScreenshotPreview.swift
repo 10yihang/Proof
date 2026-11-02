@@ -84,6 +84,7 @@ enum ScreenshotPreview {
             hunk.header + "\n" + hunk.lines.map { ($0.kind == "add" ? "+" : $0.kind == "delete" ? "-" : " ") + $0.content }.joined(separator: "\n")
         }.joined(separator: "\n")
         model.diff = FileDiff(id: "preview-snapshot", path: files[0].path, side: "unstaged", base: "HEAD", patch: patch, hunks: hunks, additions: 12, deletions: 3, kind: "text", notice: nil, canStage: true)
+        model.loadedDiffs[files[0].id] = model.diff
         model.status = "Preview · illustrative repository · no Git operations"
         return model
     }

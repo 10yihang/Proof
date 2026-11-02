@@ -8,6 +8,8 @@ final class WorkspaceModel: ObservableObject {
     @Published var recent: [Workspace] = []
     @Published var changes: Changes?
     @Published var diff: FileDiff?
+    // Only bridge-returned snapshots count toward loaded review coverage.
+    @Published var loadedDiffs: [String: FileDiff] = [:]
     @Published var commits: [CommitEntry] = []
     @Published var commitPatch: String?
     @Published var selectedFile: String?
@@ -77,6 +79,7 @@ final class WorkspaceModel: ObservableObject {
             try Task.checkCancellation()
             if self.workspace?.id != workspace.id { self.message = "" }
             self.workspace = changes.workspace; self.changes = changes
+            self.loadedDiffs = [:]
             self.diff = nil; self.selectedFile = nil; self.selectedCommit = nil
             self.commitPatch = nil; self.commits = []; self.preview = nil; self.mode = "changes"
             self.status = "Repository loaded"
@@ -92,6 +95,7 @@ final class WorkspaceModel: ObservableObject {
         let changes: Changes = try await bridge.call("changes", ["workspace": id], cancellable: !writing)
         try Task.checkCancellation()
         self.changes = changes; workspace = changes.workspace
+        loadedDiffs = [:]
         diff = nil; selectedFile = nil; commitPatch = nil; selectedCommit = nil; preview = nil
         if mode == "history" {
             let rows: [CommitEntry] = try await bridge.call("history", ["workspace": id, "offset": 0], cancellable: !writing)
@@ -103,6 +107,7 @@ final class WorkspaceModel: ObservableObject {
         guard !writing else { return }
         search = ""
         cancelRead()
+        loadedDiffs = [:]
         diff = nil; selectedFile = nil; commitPatch = nil; selectedCommit = nil; preview = nil
         if mode == "history" { loadHistory(reset: true) }
     }
@@ -117,11 +122,28 @@ final class WorkspaceModel: ObservableObject {
         }
     }
     func loadFile() {
-        guard let workspace, let file = changes?.files.first(where: { $0.id == selectedFile }) else { return }
+        guard !writing else { return }
         diff = nil
+        guard let workspace, let file = changes?.files.first(where: { $0.id == selectedFile }) else {
+            if mode == "changes" { cancelRead() }
+            return
+        }
+        loadedDiffs.removeValue(forKey: file.id)
         run("Reading \(file.path)") {
             let diff: FileDiff = try await self.bridge.call("diff", ["workspace": workspace.id, "path": file.path, "side": file.side])
             try Task.checkCancellation(); self.diff = diff
+            self.loadedDiffs[file.id] = diff
+        }
+    }
+    func nextReviewFile() {
+        guard !busy, let files = changes?.files, !files.isEmpty else { return }
+        let start = files.firstIndex { $0.id == selectedFile }.map { $0 + 1 } ?? 0
+        for offset in 0..<files.count {
+            let file = files[(start + offset) % files.count]
+            if loadedDiffs[file.id]?.reviewed != true {
+                selectedFile = file.id
+                return
+            }
         }
     }
     func loadCommit() {
@@ -159,6 +181,7 @@ final class WorkspaceModel: ObservableObject {
             let _: Empty = try await self.bridge.call("review", ["snapshot": diff.id, "reviewed": !diff.reviewed], cancellable: false)
             let updated: FileDiff = try await self.bridge.call("diff", ["workspace": self.workspace!.id, "path": diff.path, "side": diff.side], cancellable: false)
             self.diff = updated
+            self.loadedDiffs[diff.side + ":" + diff.path] = updated
             self.status = updated.reviewed ? "Human review recorded for this content" : "Marked unread"
         }
     }

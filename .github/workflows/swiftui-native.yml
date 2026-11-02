@@ -35,6 +35,10 @@ jobs:
           git --version
       - name: Rust bridge real-Git tests
         run: cargo test --locked -p proof-swift-bridge
+      - name: Check native change-tree behavior
+        run: |
+          swiftc native/macos/Sources/ProofNative/Models.swift native/macos/Sources/ProofNative/ChangesTree.swift native/macos/Tests/ChangesTreeCheck.swift -o /tmp/proof-tree-check
+          /tmp/proof-tree-check
       - name: Build native app
         run: ./native/macos/build.sh
       - name: Verify local bundle signature and bridge protocol

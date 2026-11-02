@@ -6,6 +6,9 @@ struct WorkspaceView: View {
     @State private var trustConfirmation = false
     @State private var stageConfirmation = false
     @State private var rawPatch = false
+    @State private var scope = "all"
+    @State private var tree = true
+    @State private var collapsed: Set<String> = []
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
@@ -19,7 +22,7 @@ struct WorkspaceView: View {
                     Text("History").tag("history")
                 }
                 .pickerStyle(.segmented).labelsHidden()
-                .disabled(model.writing).padding(.horizontal, 16).padding(.bottom, 16)
+                .disabled(model.writing).padding(.horizontal, 10).padding(.bottom, 10)
                 if model.workspace != nil { fileList }
                 else { Spacer(minLength: 0) }
                 sidebarStatus.captureLayout("sidebar-footer")
@@ -27,7 +30,7 @@ struct WorkspaceView: View {
             .frame(width: column.size.width, height: column.size.height, alignment: .topLeading)
             .captureLayout("sidebar-column")
             }
-            .navigationSplitViewColumnWidth(min: 250, ideal: 290, max: 340)
+            .navigationSplitViewColumnWidth(min: 250, ideal: 280, max: 360)
         } detail: {
             Group {
                 if model.workspace == nil { welcome }
@@ -40,6 +43,7 @@ struct WorkspaceView: View {
             .toolbar { documentToolbar }
         }
         .navigationSplitViewStyle(.balanced)
+        .tint(.blue)
         .alert("Repository needs your trust", isPresented: $trustConfirmation) {
             Button("Cancel", role: .cancel) {}
             Button("Trust Repository") { model.trust() }
@@ -86,23 +90,23 @@ struct WorkspaceView: View {
         return model.diff.map { ($0.path as NSString).lastPathComponent } ?? "Changes"
     }
     private var repositoryIdentity: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 8) {
-                Image(systemName: "folder").foregroundStyle(.secondary)
-                Text(model.workspace?.name ?? "Proof").font(.system(size: 18, weight: .semibold))
-                Spacer()
-                Menu {
-                    Button("Open Repository…", action: requestOpen).disabled(model.writing)
-                    Button("Refresh") { model.refresh() }.disabled(model.workspace == nil || model.busy)
-                } label: { Image(systemName: "ellipsis.circle") }
-                .menuStyle(.borderlessButton).fixedSize().help("Repository actions")
+        HStack(spacing: 8) {
+            ProofMark().frame(width: 24, height: 24)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(model.workspace?.name ?? "Proof").font(.system(size: 13, weight: .semibold))
+                if let changes = model.changes {
+                    Label(changes.branch ?? "Detached HEAD", systemImage: "arrow.triangle.branch")
+                        .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                        .help(changes.branch ?? "Detached HEAD")
+                }
             }
-            if let changes = model.changes {
-                Label(changes.branch ?? "Detached HEAD", systemImage: "arrow.triangle.branch")
-                    .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-                    .help(changes.branch ?? "Detached HEAD")
-            }
-        }.padding(.horizontal, 18).padding(.top, 10).padding(.bottom, 20)
+            Spacer(minLength: 4)
+            Menu {
+                Button("Open Repository…", action: requestOpen).disabled(model.writing)
+                Button("Refresh") { model.refresh() }.disabled(model.workspace == nil || model.busy)
+            } label: { Image(systemName: "ellipsis") }
+            .menuStyle(.borderlessButton).fixedSize().help("Repository actions")
+        }.padding(.horizontal, 12).padding(.vertical, 10)
     }
     @ToolbarContentBuilder private var documentToolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
@@ -113,7 +117,7 @@ struct WorkspaceView: View {
                 .help("Reading options").accessibilityLabel("Reading options")
                 Button { model.review() } label: {
                     Label(diff.reviewed ? "Reviewed" : "Mark Reviewed", systemImage: diff.reviewed ? "checkmark.circle.fill" : "checkmark.circle")
-                }.labelStyle(.titleAndIcon).nativeGlassControl().disabled(model.busy).help("Human review of this content; separate from staging")
+                }.labelStyle(.titleAndIcon).foregroundStyle(.blue).nativeGlassControl().disabled(model.busy).help("Human review of this content; separate from staging")
                 Button(diff.side == "staged" ? "Unstage…" : "Stage…") { stageConfirmation = true }
                     .nativeGlassControl().disabled(model.busy || !diff.canStage)
             }
@@ -123,7 +127,10 @@ struct WorkspaceView: View {
         }
     }
     private var sidebarStatus: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 6) {
+            if model.mode == "changes", let changes = model.changes {
+                reviewCoverage(changes)
+            }
             if model.busy {
                 HStack {
                     ProgressView().controlSize(.small)
@@ -149,13 +156,19 @@ struct WorkspaceView: View {
                 }
             }
         }.font(.system(size: 11)).foregroundStyle(.secondary)
-        .frame(maxWidth: .infinity, alignment: .leading).padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading).padding(10)
     }
     private var fileList: some View {
         VStack(spacing: 0) {
-            TextField(model.mode == "history" ? "Filter loaded commits" : "Filter files", text: $model.search)
-                .textFieldStyle(.roundedBorder).controlSize(.regular)
-                .padding(.horizontal, 16).padding(.bottom, 12)
+            HStack(spacing: 6) {
+                TextField(model.mode == "history" ? "Filter loaded commits" : "Filter files…", text: $model.search)
+                    .textFieldStyle(.roundedBorder).controlSize(.small)
+                if model.mode != "history" {
+                    Button { tree.toggle() } label: { Image(systemName: tree ? "list.bullet" : "list.bullet.indent") }
+                        .buttonStyle(.plain).help(tree ? "Show flat list" : "Show folder tree")
+                        .accessibilityLabel(tree ? "Show flat list" : "Show folder tree")
+                }
+            }.padding(.horizontal, 10).padding(.bottom, 8)
             if model.mode == "history" {
                 List(selection: $model.selectedCommit) {
                     ForEach(model.commits.filter { model.search.isEmpty || ($0.subject + $0.author + $0.oid).localizedCaseInsensitiveContains(model.search) }) { commit in
@@ -169,37 +182,86 @@ struct WorkspaceView: View {
                 if model.commits.isEmpty && !model.busy { Text("No commits to display").foregroundStyle(.secondary).padding() }
                 if model.hasMoreHistory { Button("Load More") { model.loadHistory(reset: false) }.disabled(model.busy).padding(8) }
             } else {
+                Picker("Change scope", selection: $scope) {
+                    Text("All").tag("all")
+                    Text("Unstaged").tag("unstaged")
+                    Text("Staged").tag("staged")
+                }.pickerStyle(.segmented).labelsHidden().controlSize(.small)
+                    .padding(.horizontal, 10).padding(.bottom, 6)
                 List(selection: $model.selectedFile) {
-                    ForEach(["unstaged", "staged"], id: \.self) { side in
-                        Section {
-                            ForEach((model.changes?.files ?? []).filter { $0.side == side && (model.search.isEmpty || $0.path.localizedCaseInsensitiveContains(model.search)) }) { file in
-                                HStack(spacing: 8) {
-                                    Image(systemName: file.path.hasSuffix(".swift") ? "swift" : "doc.text")
-                                        .font(.system(size: 14)).foregroundStyle(.secondary).frame(width: 18)
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Text((file.path as NSString).lastPathComponent).font(.system(size: 13, weight: model.selectedFile == file.id ? .medium : .regular)).lineLimit(1)
-                                        Text((file.path as NSString).deletingLastPathComponent.isEmpty ? "." : (file.path as NSString).deletingLastPathComponent)
-                                            .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                                        if let old = file.oldPath { Text("from \(old)").font(.caption2).foregroundStyle(.secondary).lineLimit(1) }
-                                    }
+                    ForEach(changesTreeRows(files: model.changes?.files ?? [], scope: scope,
+                                            search: model.search, tree: tree, collapsed: collapsed)) { row in
+                        if let file = row.file {
+                            changedFileRow(file, depth: row.depth).tag(file.id)
+                                .listRowInsets(EdgeInsets(top: 0, leading: 6, bottom: 0, trailing: 6))
+                        } else {
+                            Button {
+                                if collapsed.contains(row.id) { collapsed.remove(row.id) }
+                                else { collapsed.insert(row.id) }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: row.isExpanded ? "chevron.down" : "chevron.right")
+                                        .font(.system(size: 9, weight: .semibold)).frame(width: 10)
+                                    if !row.isGroup { Image(systemName: "folder").foregroundStyle(.secondary) }
+                                    Text(row.label).lineLimit(1).truncationMode(.middle)
                                     Spacer(minLength: 2)
-                                    Text(file.conflicted ? "!" : file.status)
-                                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                                        .foregroundStyle(file.conflicted ? Color.orange : Color.secondary)
-                                }.padding(.vertical, 7).tag(file.id).help(file.path)
-                            }
-                        } header: {
-                            HStack {
-                                Text(side == "staged" ? "Staged" : "Unstaged")
-                                Spacer()
-                                Text("\((model.changes?.files ?? []).filter { $0.side == side }.count)").monospacedDigit()
-                            }.font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                                    Text("\(row.count)").foregroundStyle(.secondary).monospacedDigit()
+                                }.font(.system(size: 11, weight: row.isGroup ? .semibold : .regular))
+                                .padding(.leading, CGFloat(row.depth) * 12).frame(height: 30)
+                                .contentShape(Rectangle())
+                            }.buttonStyle(.plain).tag(Optional<String>.none)
+                                .accessibilityLabel("\(row.label), \(row.count) files, \(row.isExpanded ? "expanded" : "collapsed")")
+                                .listRowInsets(EdgeInsets(top: 0, leading: 6, bottom: 0, trailing: 6))
                         }
                     }
-                }.listStyle(.sidebar).frame(minHeight: 0, maxHeight: .infinity).disabled(model.writing)
+                }.listStyle(.sidebar).environment(\.defaultMinListRowHeight, 32)
+                    .frame(minHeight: 0, maxHeight: .infinity).disabled(model.writing)
                 if model.changes?.files.isEmpty == true { Text("Working tree clean").foregroundStyle(.secondary).padding() }
+                else if !model.search.isEmpty && !(model.changes?.files.contains { $0.path.localizedCaseInsensitiveContains(model.search) && (scope == "all" || $0.side == scope) } ?? false) {
+                    Text("No matching files").font(.caption).foregroundStyle(.secondary).padding(8)
+                }
             }
         }
+    }
+    private func changedFileRow(_ file: ChangedFile, depth: Int) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: file.path.hasSuffix(".md") ? "doc.text" : "chevron.left.forwardslash.chevron.right")
+                .font(.system(size: 12)).foregroundStyle(.secondary).frame(width: 15)
+            Text(tree ? (file.path as NSString).lastPathComponent : file.path)
+                .font(.system(size: 12)).lineLimit(1).truncationMode(.middle)
+            Spacer(minLength: 2)
+            if model.loadedDiffs[file.id]?.reviewed == true {
+                Image(systemName: "checkmark").font(.system(size: 10, weight: .semibold)).foregroundStyle(.blue)
+                    .accessibilityLabel("Manually reviewed loaded content")
+            }
+            Text(file.conflicted ? "!" : file.status == "?" ? "U" : file.status)
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(file.conflicted ? Color.orange : Color.secondary)
+        }.padding(.leading, CGFloat(depth) * 12 + 10).frame(height: 32)
+            .help(file.path + (file.oldPath.map { "\nRenamed from " + $0 } ?? ""))
+    }
+    private func reviewCoverage(_ changes: Changes) -> some View {
+        let snapshots = changes.files.compactMap { model.loadedDiffs[$0.id] }
+        let hunks = snapshots.flatMap(\.hunks)
+        let reviewed = hunks.filter { $0.reviewState == "reviewed" }.count
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("\(changes.files.count) files").foregroundStyle(.secondary)
+                Spacer()
+                Label("\(reviewed)/\(hunks.count) hunks reviewed", systemImage: "checkmark.circle")
+                    .foregroundStyle(.blue)
+            }
+            HStack {
+                Text("\(snapshots.count)/\(changes.files.count) files loaded · manual review")
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+                Spacer(minLength: 2)
+                Button { model.nextReviewFile() } label: { Image(systemName: "arrow.right") }
+                    .buttonStyle(.plain).foregroundStyle(.blue)
+                    .help("Next file needing review, including unloaded files")
+                    .accessibilityLabel("Next file needing review")
+                    .disabled(model.busy || !changes.files.contains { model.loadedDiffs[$0.id]?.reviewed != true })
+            }
+        }.help("Review coverage includes only loaded content. Unloaded files are unknown, not reviewed. Review is separate from staging.")
     }
     @ViewBuilder private var detail: some View {
         if model.mode == "history", let patch = model.commitPatch {
@@ -283,3 +345,26 @@ private extension View {
     }
 }
 
+
+/// The existing assets/proof.svg mark, drawn as native vector geometry.
+private struct ProofMark: View {
+    var body: some View {
+        GeometryReader { geometry in
+            let scale = geometry.size.width / 512
+            ZStack {
+                RoundedRectangle(cornerRadius: 108 * scale).fill(Color(red: 49 / 255, green: 91 / 255, blue: 206 / 255))
+                    .padding(32 * scale)
+                Path { path in
+                    path.move(to: CGPoint(x: 169 * scale, y: 151 * scale))
+                    path.addLines([CGPoint(x: 131 * scale, y: 151 * scale), CGPoint(x: 131 * scale, y: 361 * scale), CGPoint(x: 169 * scale, y: 361 * scale)])
+                    path.move(to: CGPoint(x: 343 * scale, y: 151 * scale))
+                    path.addLines([CGPoint(x: 381 * scale, y: 151 * scale), CGPoint(x: 381 * scale, y: 361 * scale), CGPoint(x: 343 * scale, y: 361 * scale)])
+                }.stroke(.white, style: StrokeStyle(lineWidth: 24 * scale, lineCap: .round, lineJoin: .round))
+                Path { path in
+                    path.move(to: CGPoint(x: 192 * scale, y: 258 * scale))
+                    path.addLines([CGPoint(x: 239 * scale, y: 304 * scale), CGPoint(x: 324 * scale, y: 196 * scale)])
+                }.stroke(.white, style: StrokeStyle(lineWidth: 29 * scale, lineCap: .round, lineJoin: .round))
+            }
+        }.accessibilityHidden(true)
+    }
+}

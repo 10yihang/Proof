@@ -33,68 +33,26 @@ History 的 Diff 在侧栏列出，支持切换、关闭和纵向排序。比较
 
 退出应用及关闭主窗口均需原生确认，取消保留窗口；独立 Diff 窗口关闭只影响自身。
 
-## 原生 macOS Changes 预览（2026-11-02）
+## 原生 macOS Changes 预览（2026-11-02，恢复 Proof 身份）
 
-### Overview
+用户认为首轮 Liquid Glass 虽有改善，但与原版差异过大。原生版现在以当前
+`FileTree.tsx`、`WorkspaceTabs.tsx`、`density.css` 和上文原版约定为身份依据，
+不再将“原生”解释为通用代码编辑器。保留系统 unified toolbar 与真实导航材质，
+不恢复多层不透明灰色横栏，也不伪造尚未实现的功能。
 
-**方向：审查文档优先，系统导航浮于其上。** 用户要求更接近 macOS 27 Liquid Glass，
-取代已拒绝的 CodeEdit 式图标轨道与多层灰色横栏。此节仅约束 SwiftUI 原生 Changes
-工作台；上文 Web/Tauri 约定保持不变，不能将其尺寸、Phosphor 图标或固定色板套用到原生界面。
+- 侧栏理想280pt、最小250pt、最大360pt；仓库名13pt、分支10pt，使用原有 `assets/proof.svg` 的原生矢量标志。现有 Changes / Commit / History 入口保留；没有假 Files 或多仓库标签。
+- 文件行32pt，单行12pt名称；默认压缩单子目录链的文件树。支持 All / Unstaged / Staged、搜索展开匹配目录、折叠目录和扁平列表。状态字母与完整路径提示保留，重命名来源置于提示。
+- 蓝色表达选择及人工审查。底部显示已加载文件数、已加载 hunk 的已审查/总数；未加载文件为未知，不算已审查。下一待审查文件包含尚未加载文件。缓存只来自 Rust bridge 返回的快照，打开、刷新、切换视图时清空；不是后台持续验证保证。
+- Reviewed 与 Stage 分离；前者记录人工决定，后者仍有范围确认、信任及快照校验。代码13pt、行高22pt不缩小，实心 `textBackgroundColor`；原生选择、复制、查找和横向滚动保留。
+- `NavigationSplitView` 的侧栏局部 `GeometryReader` 保留，避免 List 理想高度撑坏安全区域；不增加标题栏 padding 或修改窗口 styleMask。
+- 系统26+使用原生玻璃控件；macOS13–15原生兼容外观。Swift最低13、Rust最低11、bundle最低13；SDK27不等于部署最低27。旧系统运行未验收。
 
-系统负责导航与控件的材质，代码保持安静、实心、可读。本文记录当前实现，不表示用户最终认可、
-完整功能验收或真实窗口截图已经通过视觉审查。合成仓库内容必须标明 Preview，不能充当真实 Git 证据。
+### 本轮限制与验收
 
-### Colors
+原版组件和 CSS 已对照，但云端没有原版现场截图；不能宣称逐像素一致。
+预览是明确标注的合成仓库，没有 Git 操作。真实 macOS27 的 WindowServer 明暗窗口截图
+以 runner 实际可用尺寸为准；不修改显示或安全设置来强制1440×900，不以缩放图片替代。
+构建、截图布局检查、用户审美认可、完整交互/辅助功能/旧系统验收是不同层次。
 
-- 代码与详情使用 AppKit `textBackgroundColor` 实心底，正文 `textColor`，辅助信息 `secondaryLabelColor`，分隔使用 `separatorColor`；跟随系统明暗外观。
-- 增删行分别使用 `systemGreen`（10%）与 `systemRed`（9%）的低饱和全行底色；行号槽中的 + / − 同时表达状态，不能只靠颜色。
-- Hunk 标题使用 `unemphasizedSelectedContentBackgroundColor`（45%）与次级文字。蓝色选择、人工审查与红绿增删语义分离；Reviewed 不等于 Stage 或正确性保证。
-- 词法颜色由 `DiffPalette` 分别提供明暗值；这只是轻量阅读辅助，不是完整语言解析器。
-
-### Typography
-
-- SF 系统界面字体与 SF Symbols；仓库名（18pt semibold），文件名（13pt，选中时 medium），父路径与辅助信息（11pt）。
-- AppKit 等宽系统代码字体（13pt regular），固定行高（22pt）；行号字体（11pt）。不以缩小代码字号补偿导航空间。
-
-### Layout
-
-- 1440×900 为设计检查基准；当前原生窗口最低内容尺寸为 1000×560pt，不沿用 Web/Tauri 的最小尺寸。
-- `NavigationSplitView` 使用 balanced 布局；单一原生侧栏宽度最小 250pt、理想 290pt、最大 340pt，可通过系统入口收放。侧栏从上到下合并仓库身份、Changes / Commit / History 分段选择器、筛选与文件列表、活动及信任状态。
-- 窗口使用系统 unified toolbar，`navigationTitle(documentTitle)` 显示当前文件名或页面标题；阅读、人工审查、Stage / Unstage 与刷新动作在该原生工具栏。交通灯与工具栏共享系统窗口区域，不重建自绘标题栏。约 52pt 是方向参考，不是代码强制高度；实际尺寸由系统决定。
-- Changes 内容只有一条路径 / Working tree 或 Index / 增删计数行（40pt，高度固定；水平内距 20pt），随后直接进入代码。没有第二条文件动作栏、全窗底部状态栏或独立图标轨道；必要的内容提示仍可显示。
-- 独立行号槽（105pt）显示旧行、新行、增删标记，不参与复制；文本内距为水平和垂直各 14pt。保留水平滚动，不用强制折行挤压代码。
-
-### Elevation & Depth
-
-**导航材质不进入代码。** 在支持的 macOS 26 / 27 上，原生导航与工具栏由系统提供 Liquid Glass
-外观；macOS 13–15 使用原生兼容外观，不能称为玻璃。具体材质受系统外观及辅助功能设置影响。
-不以手工 blur、渐变、截图贴图或半透明代码底伪造玻璃；不添加第三方 UI / 编辑器依赖。
-
-### Shapes
-
-系统决定工具栏按钮、分段选择器、搜索输入及侧栏选中行的圆角与焦点外观，不记录臆造的圆角常量。
-代码区是连续文档而非卡片堆叠；分隔线轻量，不添加装饰性投影。
-
-### Components
-
-- 侧栏列内的 `GeometryReader` 将内容限定在真实列视口，阻断嵌套 `List` 的理想高度撑大整个原生分栏；`List` 保留 0pt 最小视口、可扩展最大高度及键盘选择；Staged / Unstaged 为独立分区，文件名、父路径、状态各有清楚层级。
-- 工具栏保留文字与图标组合的人工审查入口；Stage / Unstage 仍经范围确认，不与 Reviewed 合并。忙碌、信任与可写状态控制禁用态。
-- 只读 `NSTextView` 保留原生选择、复制、查找与滚动；原始 Patch 由阅读菜单切换。
-- 活动、取消只读请求、信任及仓库操作提示留在侧栏底部。保留原有确认、内容绑定审查、过期写拒绝和取消机制；本轮不改变后端。
-
-### Do's and Don'ts
-
-- **Do** 优先真实代码与比较范围；保留可访问名称、键盘路径、系统焦点和 Reduce Motion 行为，不添加装饰入场运动。
-- **Do** 用目标系统上的真实应用窗口明暗截图验证布局与材质，并分别记录系统 / SDK、捕获方式与 Preview 数据来源；旧系统截图只证明兼容外观。
-- **Don't** 把构建成功或无窗口的合成渲染当作视觉验收；未经审查的截图也不代表最终认可。
-- **Don't** 恢复四层灰色横栏、图标轨道、全窗状态栏，或在实心代码区添加玻璃；不要将本节覆盖到 Web/Tauri。
-
-### 本轮证据
-
-2026-11-02：源代码 `13853cb0d8933770170a987f941bc1a6e80d23e0` 在 GitHub Actions
-[41394469046](https://github.com/10yihang/Proof/actions/runs/41394469046) 全部通过。
-真实 macOS 27.0.1 / Xcode 27.1 / SDK 27.0 活动窗口截图为 1024×674，遵循 runner 的实际屏幕尺寸；
-原生 screencapture 与 ScreenCaptureKit 均捕获同一应用窗口。Preview 为明确标注的合成仓库，无 Git 操作。
-构建与布局证据不等于用户审美认可、完整交互验收或旧系统运行测试。
-包内 Swift 可执行文件 minos13.0、Rust sidecar minos11.0、Info.plist 最低13.0，均链接 SDK27.0；
-因此应用部署目标为 macOS13，而非27。macOS13实际运行未测试。
+独立功能差距仍包括多仓库标签与逐仓库状态、Files 编辑器、完整 History 图与比较标签、
+Context 检查器、分栏 Diff、hunk 导航及展开上下文。此次恢复 Changes 身份并不声称这些已完成。

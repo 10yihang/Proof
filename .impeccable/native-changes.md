@@ -1,11 +1,9 @@
 # Native Changes — Operate
 
 ## Direction contract
-THESIS: The review document leads; system navigation floats above it. Replace the rejected four gray stacked bars and icon rail, not polish them.
-OWN-WORLD: User-pinned macOS 27 Liquid Glass. Native NavigationSplitView, system unified toolbar, SF typography and symbols. Glass belongs to navigation and controls; the code remains solid and quiet.
-STORY: Choose a changed file, read exact additions/removals, mark human review, then explicitly stage. Review and Git writes remain separate decisions.
-FIRST VIEWPORT: 1440×900. One 290pt native sidebar combines repository, section picker and file list. Traffic lights and rounded system toolbar share one 52pt region with filename and review/stage actions. A single subdued path/scope row leads directly into 13pt code on 22pt lines. Status lives at the sidebar foot, not across the window.
-FORM: User-pinned native macOS canon supersedes arbitrary concept assignment. Code-led, no mockup assets. Seed bd392063 assigned index4, degraded without challengers; user-pinned native canon takes precedence. Context loader unavailable; no generated screenshot is a substitute for native capture.
-FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
-
-Safety: preserve existing confirmations, trust/write disabled states, stale guards and cancellation. No backend changes. System27 real-window light/dark captures required; older systems explicitly fallback without claiming glass.
+THESIS: Preserve Proof’s compact review workbench, not a generic native editor. The user found the first glass rewrite too unlike their original.
+AUTHORITY: Current src/components/FileTree.tsx, WorkspaceTabs.tsx, src/styles/density.css and original docs/DESIGN.md establish identity. No live original screenshot is available in this cloud workspace.
+FIRST VIEWPORT: Native unified titlebar and solid 13pt / 22pt code remain. Compact repository / branch identity uses the original Proof mark. Changes uses a 32pt single-line compressed folder tree, All / Unstaged / Staged scope, tree/list toggle, blue selection and manual review. A 280pt native sidebar retains existing Changes / Commit / History navigation. Review coverage counts only loaded snapshots and explicitly labels unloaded coverage unknown.
+SAFETY: Retain the sidebar-local GeometryReader sizing boundary, trust/write confirmations, content-bound review, stale guards and cancellations. No Rust change. No fake multi-repository tabs, Files editor, history graph, Context inspector, split diff, or hunk navigation.
+EVIDENCE: Build source and real WindowServer light/dark capture on standard xcode-27. Use actual runner screen dimensions, not scaled 1440×900 proxies; larger display setup is outside scope. Synthetic Preview is clearly labeled and has no Git operations. macOS13 deployment remains; old-OS runtime untested.
+FINISH: One batched native inspection, one correction/confirmation if needed, no open-ended aesthetic loops. User acceptance remains separate.
