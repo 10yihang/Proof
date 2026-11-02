@@ -108,7 +108,7 @@ struct WorkspaceView: View {
                 .help("Reading options").accessibilityLabel("Reading options")
                 Button { model.review() } label: {
                     Label(diff.reviewed ? "Reviewed" : "Mark Reviewed", systemImage: diff.reviewed ? "checkmark.circle.fill" : "checkmark.circle")
-                }.disabled(model.busy).help("Human review of this content; separate from staging")
+                }.labelStyle(.titleAndIcon).disabled(model.busy).help("Human review of this content; separate from staging")
                 Button(diff.side == "staged" ? "Unstage…" : "Stage…") { stageConfirmation = true }
                     .disabled(model.busy || !diff.canStage)
             }

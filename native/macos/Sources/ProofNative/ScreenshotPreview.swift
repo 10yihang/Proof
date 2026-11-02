@@ -93,26 +93,10 @@ enum ScreenshotPreview {
         captureStarted = true
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            // CI's virtual screen can be only 768 points tall. Preserve the actual
-            // production content and toolbar, but remove screen-size clamping for
-            // this offscreen-capable render window. Nothing is raster-scaled.
-            let window = PreviewRenderWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 1440, height: 900),
-                styleMask: sourceWindow.styleMask, backing: .buffered, defer: false
-            )
+            // Keep the scene-owned window: moving its toolbar into another window
+            // breaks SwiftUI validation and loses the system's glass integration.
+            let window = sourceWindow
             window.appearance = NSAppearance(named: themeAppearance)
-            window.backgroundColor = .windowBackgroundColor
-            window.title = sourceWindow.title
-            window.titleVisibility = sourceWindow.titleVisibility
-            window.titlebarAppearsTransparent = sourceWindow.titlebarAppearsTransparent
-            window.toolbarStyle = sourceWindow.toolbarStyle
-            let toolbar = sourceWindow.toolbar
-            sourceWindow.toolbar = nil
-            let content = sourceWindow.contentView
-            sourceWindow.contentView = nil
-            window.contentView = content
-            window.toolbar = toolbar
-            sourceWindow.orderOut(nil)
             window.setFrame(NSRect(x: 0, y: 0, width: 1440, height: 900), display: true)
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
@@ -132,10 +116,12 @@ enum ScreenshotPreview {
                 }
                 let filter = SCContentFilter(desktopIndependentWindow: capturedWindow)
                 let configuration = SCStreamConfiguration()
-                configuration.width = 1440
-                configuration.height = 900
+                configuration.width = Int(window.frame.width)
+                configuration.height = Int(window.frame.height)
                 configuration.showsCursor = false
                 configuration.ignoreShadowsSingleWindow = true
+                configuration.ignoreGlobalClipSingleWindow = true
+                print("Scene window frame: \(window.frame); SDK capture is unscaled")
                 let capturedImage = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
                 let bitmap = NSBitmapImageRep(cgImage: capturedImage)
                 guard let png = bitmap.representation(using: .png, properties: [:]) else { throw CaptureError.noBitmap }
@@ -153,10 +139,3 @@ enum ScreenshotPreview {
     private enum CaptureError: Error { case noView, noBitmap, noWindow, requiresScreenCaptureKit }
 }
 
-/// Only screenshot mode uses this window; normal app sizing remains native.
-@MainActor
-private final class PreviewRenderWindow: NSWindow {
-    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
-        frameRect
-    }
-}
