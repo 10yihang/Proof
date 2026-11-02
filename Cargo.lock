@@ -2766,6 +2766,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "proof-swift-bridge"
+version = "0.1.17"
+dependencies = [
+ "proof-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "quick-xml"
 version = "0.42.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

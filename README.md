@@ -54,3 +54,7 @@ npm run tauri -- build --debug --bundles app --config '{"bundle":{"createUpdater
 Context 支持手动关联会话、本地备注、解除与撤销，原始 Hook 证据保留。交互与数据边界见 [CONTEXT-ASSOCIATIONS.md](docs/CONTEXT-ASSOCIATIONS.md)。
 
 桌面界面采用独立仓库工具栏、页面与 Diff tabs，以及紧凑文件树和提交图。macOS 合并标题栏并保留原生红黄绿；菜单快捷键、弹窗和草稿的交互边界见 [DESKTOP-CHROME.md](docs/DESKTOP-CHROME.md)。新版需要重启原生 App；原生窗口操作仍待解锁后的实机验收。
+
+## SwiftUI 原生版本（独立实验客户端）
+
+新增的 [Proof Native](native/macos/README.md) 使用 SwiftUI / AppKit 界面，复用现有 `proof-core`，不替换 Tauri 应用或共用其本地数据库。提供真实 Changes、Diff、History、人工 Review、Stage/Unstage 和 Commit 流程。构建需 macOS；SwiftUI 编译与实机验收尚未完成，功能范围及验证限制见该目录说明。

@@ -656,7 +656,7 @@ fn inspect_target(workspace: &Workspace, relative: &str) -> Result<CheckedTarget
 
 /// Discovery reads known application locations; it never launches applications.
 pub fn editor_applications() -> Vec<EditorApplication> {
-    let mut paths = Vec::new();
+    let mut paths: Vec<PathBuf> = Vec::new();
     #[cfg(target_os = "macos")]
     {
         let mut roots = vec![

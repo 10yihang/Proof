@@ -1,0 +1,13 @@
+[package]
+name = "proof-swift-bridge"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+proof-core = { path = "../proof-core" }
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

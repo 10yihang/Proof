@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/proof-core", "crates/proof-observer", "src-tauri"]
+members = ["crates/proof-core", "crates/proof-observer", "crates/proof-swift-bridge", "src-tauri"]
 default-members = ["crates/proof-core"]
 resolver = "2"
 

@@ -1,0 +1,56 @@
+name: SwiftUI native preview
+on:
+  push:
+    branches: [swiftui-native-preview]
+    paths:
+      - 'native/macos/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/swiftui-native.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: swiftui-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/swiftui-native-preview'
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Toolchain versions
+        run: |
+          swift --version
+          rustc --version
+          git --version
+      - name: Rust bridge real-Git tests
+        run: cargo test --locked -p proof-swift-bridge
+      - name: Build native app
+        run: ./native/macos/build.sh
+      - name: Verify local bundle signature and bridge protocol
+        run: |
+          codesign --verify --deep --strict --verbose=2 "native/macos/build/Proof Native.app"
+          python3 - <<'PY'
+          import json, subprocess, tempfile
+          with tempfile.TemporaryDirectory() as data:
+              p = subprocess.Popen(['native/macos/build/Proof Native.app/Contents/MacOS/proof-swift-bridge', data], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+              p.stdin.write('{"id":1,"command":{"method":"hello"}}\n')
+              p.stdin.flush()
+              assert json.loads(p.stdout.readline()) == {'id': 1, 'result': {'protocol': 1}}
+              p.stdin.close()
+              assert p.wait(timeout=10) == 0
+          PY
+      - name: Package local-build artifact
+        run: ditto -c -k --sequesterRsrc --keepParent "native/macos/build/Proof Native.app" "native/macos/build/Proof-Native-macOS.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Proof-Native-macOS-${{ github.sha }}
+          path: native/macos/build/Proof-Native-macOS.zip
+          retention-days: 7
