@@ -37,6 +37,13 @@ struct WorkspaceView: View {
         }
         .navigationSplitViewStyle(.balanced)
         .padding(.top, titlebarInset)
+        .background(GeometryReader { geometry in
+            Color.clear.onAppear {
+                if ScreenshotPreview.outputDirectory != nil {
+                    print("SwiftUI root size: \(geometry.size); safe area: \(geometry.safeAreaInsets)")
+                }
+            }
+        })
         .background(WindowLayoutInset { inset in
             if titlebarInset != inset { titlebarInset = inset }
         })

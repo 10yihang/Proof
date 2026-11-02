@@ -10,7 +10,7 @@ struct ProofNativeApp: App {
         Window("Proof Native", id: "main") {
             WorkspaceView(model: model)
                 .preferredColorScheme(ScreenshotPreview.colorScheme)
-                .frame(minWidth: 1000, minHeight: 680)
+                .frame(minWidth: 1000, minHeight: 560, alignment: .topLeading)
                 .task {
                     if ScreenshotPreview.outputDirectory != nil {
                         if let window = NSApp.windows.first {
