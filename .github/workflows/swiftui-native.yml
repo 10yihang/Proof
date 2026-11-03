@@ -80,6 +80,9 @@ jobs:
               done
             done
           done
+          for theme in light dark; do
+            "native/macos/build/Proof Native.app/Contents/MacOS/ProofNative" --capture-preview "$PWD/native/macos/build/screenshots" --preview-page changes --preview-theme "$theme" --preview-wide --preview-reduced-transparency || capture_failed=1
+          done
           python3 - <<'PYVERIFY'
           import itertools, json, pathlib, struct
           directory = pathlib.Path('native/macos/build/screenshots')
@@ -104,6 +107,16 @@ jobs:
                   if not metadata['geometryPassed']:
                       geometry_failures.append(metadata['geometryError'])
           assert len(evidence) == 24
+          for theme in ('light', 'dark'):
+              name = f'changes-{theme}-wide-reduced'
+              metadata = json.loads((directory / f'{name}.json').read_text())
+              assert metadata['forcedReducedTransparency'] and metadata['geometryPassed']
+              assert isinstance(metadata['systemReduceTransparency'], bool)
+              for prefix in ('', 'sck-'):
+                  data = (directory / f'{prefix}{name}.png').read_bytes()
+                  assert data[:8] == b'\x89PNG\r\n\x1a\n' and len(data) > 20000
+              evidence.append(metadata)
+          assert len(evidence) == 26
           (directory / 'evidence-index.json').write_text(json.dumps(evidence, indent=2))
           assert not geometry_failures, '\n'.join(geometry_failures)
           PYVERIFY

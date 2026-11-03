@@ -10,6 +10,9 @@ struct ProofNativeApp: App {
     var body: some Scene {
         Window("Proof Native", id: "main") {
             WorkspaceView(model: model)
+                .transformEnvironment(\.accessibilityReduceTransparency) { value in
+                    if ScreenshotPreview.forceReducedTransparency { value = true }
+                }
                 .preferredColorScheme(ScreenshotPreview.colorScheme ?? (appearance == "light" ? .light : appearance == "dark" ? .dark : nil))
                 .frame(minWidth: 1000, minHeight: 560, alignment: .topLeading)
                 .task {

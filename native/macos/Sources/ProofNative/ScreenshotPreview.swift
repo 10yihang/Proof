@@ -24,8 +24,12 @@ enum ScreenshotPreview {
         ProcessInfo.processInfo.arguments.contains("--preview-collapsed")
     }
 
+    static var forceReducedTransparency: Bool {
+        ProcessInfo.processInfo.arguments.contains("--preview-reduced-transparency")
+    }
+
     static var captureName: String {
-        "\(pageName)-\(themeName)-\(sizeName)" + (sidebarCollapsed ? "-collapsed" : "")
+        "\(pageName)-\(themeName)-\(sizeName)" + (sidebarCollapsed ? "-collapsed" : "") + (forceReducedTransparency ? "-reduced" : "")
     }
 
     static var sizeName: String {
@@ -216,6 +220,9 @@ enum ScreenshotPreview {
                 "renderer": "screencapture and ScreenCaptureKit",
                 "windowWidth": Int(window.frame.width), "windowHeight": Int(window.frame.height),
                 "screenCaptureKitWidth": bitmap.pixelsWide, "screenCaptureKitHeight": bitmap.pixelsHigh,
+                "systemReduceTransparency": NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency,
+                "forcedReducedTransparency": forceReducedTransparency,
+                "materialScope": "Native behind-window material; appearance depends on desktop and accessibility settings",
                 "operatingSystem": ProcessInfo.processInfo.operatingSystemVersionString
             ]
             try JSONSerialization.data(withJSONObject: evidence, options: [.prettyPrinted, .sortedKeys])

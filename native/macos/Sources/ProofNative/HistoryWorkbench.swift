@@ -20,7 +20,7 @@ struct HistoryWorkbench: View {
                     HStack(spacing: 7) {
                         Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                         TextField("搜索已加载的提交…", text: $model.search).textFieldStyle(.plain)
-                    }.padding(8).background(Color(nsColor: WorkbenchPalette.raised), in: RoundedRectangle(cornerRadius: 8))
+                    }.padding(9).workbenchInputSurface()
                     Spacer(minLength: 0)
                 }.padding(14)
                 tableHeader
@@ -31,7 +31,7 @@ struct HistoryWorkbench: View {
                             ancestry(commit, index: index)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(commit.subject).lineLimit(1).fontWeight(model.selectedCommit == commit.id ? .medium : .regular)
-                                if !commit.refs.isEmpty { Text(commit.refs).font(.system(size: 9)).foregroundStyle(Color(nsColor: WorkbenchPalette.accent)).lineLimit(1) }
+                                if !commit.refs.isEmpty { Text(commit.refs).font(.system(size: 10)).foregroundStyle(Color(nsColor: WorkbenchPalette.accent)).lineLimit(1) }
                             }.frame(maxWidth: .infinity, alignment: .leading)
                             Text(commit.author).lineLimit(1).frame(width: 90, alignment: .leading)
                             Text(String(commit.oid.prefix(8))).font(.system(size: 11, design: .monospaced)).frame(width: 76, alignment: .leading)

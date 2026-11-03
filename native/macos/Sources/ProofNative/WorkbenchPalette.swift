@@ -4,11 +4,11 @@ import SwiftUI
 /// Airy native surfaces: blue-tinted chrome, independent light cards, opaque code.
 enum WorkbenchPalette {
     static let canvas = adaptive(light: 0xFFFFFF, dark: 0x1B2230)
-    static let navigation = adaptive(light: 0xEAF1FC, dark: 0x151E2D)
+    static let navigation = adaptive(light: 0xE7EEF8, dark: 0x141D2B)
     static let panel = adaptive(light: 0xF9FBFF, dark: 0x202A3A)
-    static let raised = adaptive(light: 0xF1F5FD, dark: 0x29364A)
-    static let selection = adaptive(light: 0xD9E8FF, dark: 0x254777)
-    static let border = adaptive(light: 0xD6DFEF, dark: 0x3A4960)
+    static let raised = adaptive(light: 0xF4F7FC, dark: 0x283448)
+    static let selection = adaptive(light: 0xD6E6FF, dark: 0x294B78)
+    static let border = adaptive(light: 0xDCE4F0, dark: 0x3C4A5D)
     static let text = adaptive(light: 0x17243D, dark: 0xEDF3FF)
     static let secondary = adaptive(light: 0x536582, dark: 0xB1C1DA)
     static let accent = adaptive(light: 0x0964EC, dark: 0x7BB2FF)
@@ -31,12 +31,30 @@ enum WorkbenchPalette {
 struct WorkbenchBackdrop: NSViewRepresentable {
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
-        view.material = .sidebar
+        view.material = .underWindowBackground
         view.blendingMode = .behindWindow
-        view.state = .active
+        view.state = .followsWindowActiveState
         return view
     }
     func updateNSView(_ view: NSVisualEffectView, context: Context) {}
+}
+
+/// One native backdrop, with a quiet highlight on the surface itself. No image,
+/// artificial wallpaper, or decorative color blobs are used for translucency.
+struct WorkbenchChromeBackground: View {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorScheme) private var colorScheme
+    var body: some View {
+        ZStack {
+            if reduceTransparency { Color(nsColor: WorkbenchPalette.navigation) }
+            else {
+                WorkbenchBackdrop()
+                Color(nsColor: WorkbenchPalette.navigation).opacity(colorScheme == .dark ? 0.16 : 0.12)
+            }
+            LinearGradient(colors: [.white.opacity(colorScheme == .dark ? 0.025 : 0.18), .clear],
+                           startPoint: .top, endPoint: .bottom)
+        }
+    }
 }
 
 private struct WorkbenchCard: ViewModifier {
@@ -44,14 +62,34 @@ private struct WorkbenchCard: ViewModifier {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     func body(content: Content) -> some View {
         content
-            .background(Color(nsColor: WorkbenchPalette.canvas).opacity(reduceTransparency ? 1 : 0.91))
-            .background(.regularMaterial)
+            .background(Color(nsColor: WorkbenchPalette.canvas).opacity(reduceTransparency ? 1 : (colorScheme == .dark ? 0.86 : 0.78)))
+            .background(.thinMaterial)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .shadow(color: .black.opacity(colorScheme == .dark ? 0.15 : 0.055), radius: 8, x: 0, y: 3)
+            .shadow(color: .black.opacity(colorScheme == .dark ? 0.22 : 0.065), radius: 10, x: 0, y: 4)
+    }
+}
+private struct WorkbenchInputSurface: ViewModifier {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    func body(content: Content) -> some View {
+        content
+            .background(Color(nsColor: WorkbenchPalette.panel).opacity(reduceTransparency ? 1 : 0.75), in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color(nsColor: WorkbenchPalette.border), lineWidth: 0.75))
+    }
+}
+private struct WorkbenchSelection: ViewModifier {
+    let selected: Bool
+    @State private var hovered = false
+    func body(content: Content) -> some View {
+        content
+            .background(selected ? Color(nsColor: WorkbenchPalette.selection) : hovered ? Color(nsColor: WorkbenchPalette.accent).opacity(0.065) : .clear,
+                        in: RoundedRectangle(cornerRadius: 7))
+            .onHover { hovered = $0 }
     }
 }
 extension View {
     func workbenchCard() -> some View { modifier(WorkbenchCard()) }
+    func workbenchInputSurface() -> some View { modifier(WorkbenchInputSurface()) }
+    func workbenchSelection(_ selected: Bool) -> some View { modifier(WorkbenchSelection(selected: selected)) }
     @ViewBuilder func airyControlSurface() -> some View {
         if #available(macOS 26.0, *) {
             self.glassEffect(.regular, in: RoundedRectangle(cornerRadius: 8))

@@ -3,7 +3,6 @@ import SwiftUI
 
 struct WorkspaceView: View {
     @ObservedObject var model: WorkspaceModel
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @AppStorage("proof.native.compact") private var compact = true
     @State private var trustConfirmation = false
     @State private var stageConfirmation = false
@@ -34,8 +33,7 @@ struct WorkspaceView: View {
                 }
             }.frame(width: window.size.width, height: window.size.height)
         }
-        .background(Color(nsColor: WorkbenchPalette.navigation).opacity(reduceTransparency ? 1 : 0.22))
-        .background(WorkbenchBackdrop())
+        .background(WorkbenchChromeBackground())
         .background(NativeWindowChrome())
         .ignoresSafeArea(.container, edges: .top)
         .tint(Color(nsColor: WorkbenchPalette.accent))
@@ -95,7 +93,7 @@ struct WorkspaceView: View {
             }
             Button { model.setSidebarVisible(!model.sidebarVisible, persist: ScreenshotPreview.outputDirectory == nil) } label: {
                 Image(systemName: "sidebar.left").font(.system(size: 17)).frame(width: 30, height: 30)
-            }.buttonStyle(.plain).help("展开或收起侧边栏 ⌘⌥S").keyboardShortcut("s", modifiers: [.command, .option])
+            }.buttonStyle(.plain).airyControlSurface().help("展开或收起侧边栏 ⌘⌥S").keyboardShortcut("s", modifiers: [.command, .option])
             Divider().frame(height: 24)
             repositoryTab
             if model.workspace != nil {
@@ -113,7 +111,6 @@ struct WorkspaceView: View {
                 .popover(isPresented: $contextPopover) { ProofContextInspector(model: model).frame(width: 300, height: 470) }
             openRepositoryButton
         }.font(.system(size: 13)).padding(.horizontal, 16).frame(height: 54)
-            .background(Color(nsColor: WorkbenchPalette.navigation).opacity(0.18))
             .overlay(alignment: .bottom) { horizontalRule.opacity(0.45) }
     }
     private var repositoryTab: some View {
@@ -129,7 +126,7 @@ struct WorkspaceView: View {
                 Image(systemName: "shippingbox")
                 Text(model.workspace?.name ?? "选择仓库")
             }
-                .font(.system(size: 13, weight: .medium)).lineLimit(1)
+                .font(.system(size: 13, weight: .medium)).foregroundStyle(Color(nsColor: WorkbenchPalette.text)).lineLimit(1)
                 .frame(minWidth: 110, maxWidth: 180, alignment: .leading)
         }.menuStyle(.borderlessButton).fixedSize().disabled(model.writing)
             .help(model.workspace?.path ?? "本地仓库")
@@ -172,14 +169,13 @@ struct WorkspaceView: View {
             navigationButton("设置", icon: "gearshape", mode: "settings", key: ",", count: nil)
                 .padding(.bottom, 12).captureLayout("sidebar-footer")
         }.padding(.horizontal, 14)
-            .background(Color(nsColor: WorkbenchPalette.navigation).opacity(0.12))
     }
     private func unavailableNavigation(_ title: String, icon: String) -> some View {
         HStack(spacing: 9) {
             Image(systemName: icon).frame(width: 16)
             Text(title)
             Spacer()
-            Text("未接入").font(.system(size: 9))
+            Text("未接入").font(.system(size: 10))
         }.foregroundStyle(Color(nsColor: WorkbenchPalette.secondary).opacity(0.7))
             .help("此原生版本尚未接入该功能，请使用现有 Git 工具。")
             .accessibilityLabel("\(title)，此原生版本未接入")
@@ -188,7 +184,7 @@ struct WorkspaceView: View {
         Button { model.mode = mode } label: {
             HStack(spacing: 9) { Image(systemName: icon).frame(width: 16); Text(title).font(.system(size: 14)); Spacer(minLength: 2); if let count { Text("\(count)").font(.system(size: 11)) } }
                 .padding(.horizontal, 10).frame(height: compact ? 38 : 44).contentShape(Rectangle())
-                .background(activeMode == mode ? Color(nsColor: WorkbenchPalette.selection) : .clear, in: RoundedRectangle(cornerRadius: 8))
+                .workbenchSelection(activeMode == mode)
         }.buttonStyle(.plain).disabled(model.writing).keyboardShortcut(key)
             .accessibilityAddTraits(activeMode == mode ? .isSelected : []).padding(.bottom, 3)
     }
@@ -204,7 +200,7 @@ struct WorkspaceView: View {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 TextField(model.mode == "history" ? "筛选已加载提交…" : "筛选文件…", text: $model.search)
                     .textFieldStyle(.plain).font(.system(size: 13))
-            }.padding(8).background(Color(nsColor: WorkbenchPalette.raised), in: RoundedRectangle(cornerRadius: 8))
+            }.padding(9).workbenchInputSurface()
                 .padding(.horizontal, 12).padding(.bottom, 10)
             if model.mode == "history" { historyList }
             else { changedFiles }
@@ -224,8 +220,7 @@ struct WorkspaceView: View {
                                 changedFileRow(file, depth: row.depth)
                                     .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                             }.buttonStyle(.plain).id(file.id)
-                                .background(model.selectedFile == file.id ? Color(nsColor: WorkbenchPalette.selection) : .clear,
-                                            in: RoundedRectangle(cornerRadius: 7))
+                                .workbenchSelection(model.selectedFile == file.id)
                                 .accessibilityAddTraits(model.selectedFile == file.id ? .isSelected : [])
                         } else {
                             Button {
@@ -265,15 +260,13 @@ struct WorkspaceView: View {
             Image(systemName: "doc.text").font(.system(size: 12)).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
             VStack(alignment: .leading, spacing: 4) {
                 Text((file.path as NSString).lastPathComponent).font(.system(size: 14)).lineLimit(1).truncationMode(.middle)
-                if model.selectedFile == file.id, let snapshot = model.loadedDiffs[file.id] {
-                    Text("+\(snapshot.additions)   −\(snapshot.deletions)").font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary)
-                }
+
             }
             Spacer(minLength: 2)
             if model.loadedDiffs[file.id]?.reviewed == true { Image(systemName: "checkmark").font(.system(size: 10)).accessibilityLabel("已人工评审此快照") }
             Text(file.conflicted ? "!" : file.status == "?" ? "U" : file.status).font(.system(size: 9, design: .monospaced)).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
         }.padding(.leading, CGFloat(depth) * 10 + 6).padding(.trailing, 6)
-            .frame(height: model.selectedFile == file.id ? 46 : 34).help(file.path)
+            .frame(height: 36).help(file.path)
     }
     private var historyList: some View {
         VStack(spacing: 0) {
@@ -299,7 +292,7 @@ struct WorkspaceView: View {
                     .buttonStyle(.plain).disabled(model.busy || !(model.changes?.files.contains { model.loadedDiffs[$0.id]?.reviewed != true } ?? false))
                     .help("下一个待评审文件（含未加载文件）").accessibilityLabel("下一个待评审文件")
             }.padding(.top, 7)
-        }.font(.system(size: 10)).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
+        }.font(.system(size: 11)).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
             .padding(.horizontal, 18).padding(.bottom, 14).padding(.top, 5)
     }
     @ViewBuilder private var selectedContent: some View {
@@ -335,7 +328,7 @@ struct WorkspaceView: View {
             Image(systemName: "doc.text").foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 4) {
                 Text((diff.path as NSString).lastPathComponent).font(.system(size: 14, weight: .semibold)).lineLimit(1).truncationMode(.middle)
-                Text((diff.path as NSString).deletingLastPathComponent).font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                Text((diff.path as NSString).deletingLastPathComponent).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
             }.help(diff.path)
             Text("+\(diff.additions)").foregroundStyle(Color(nsColor: WorkbenchPalette.additionInk))
             Text("−\(diff.deletions)").foregroundStyle(Color(nsColor: WorkbenchPalette.deletionInk))
@@ -366,8 +359,7 @@ struct WorkspaceView: View {
                 TextEditor(text: $model.message).font(.system(size: 13)).scrollContentBackground(.hidden)
                     .padding(4).disabled(model.writing).accessibilityLabel("提交信息")
             }.frame(minHeight: 56, maxHeight: .infinity)
-                .background(Color(nsColor: WorkbenchPalette.panel), in: RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(nsColor: WorkbenchPalette.border), lineWidth: 0.7))
+                .workbenchInputSurface()
             Button { model.prepareCommit() } label: {
                 Text("检查并提交 \(model.stagedFileCount) 个文件…").frame(maxWidth: .infinity)
             }.buttonStyle(WorkbenchButtonStyle(prominent: true))
@@ -381,7 +373,7 @@ struct WorkspaceView: View {
             Text(ScreenshotPreview.outputDirectory != nil ? "演示数据 · 不执行 Git 操作" : model.status.isEmpty ? "\(model.changes?.files.count ?? 0) 个更改" : model.status).lineLimit(1)
             Spacer()
             if model.diff != nil { Text("只读 Diff") }
-        }.font(.system(size: 9)).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
+        }.font(.system(size: 10)).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
             .padding(.horizontal, 18).frame(height: 24)
             .overlay(alignment: .top) { horizontalRule }.captureLayout("status-bar")
     }

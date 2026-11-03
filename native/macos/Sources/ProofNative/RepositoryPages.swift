@@ -14,7 +14,7 @@ struct RepositoryHomeView: View {
             VStack(alignment: .leading, spacing: 22) {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("仓库").font(.system(size: 26, weight: .semibold))
+                        Text("仓库").font(.system(size: 24, weight: .semibold))
                         Text("从最近打开的本地仓库继续工作。").foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -41,7 +41,7 @@ struct RepositoryHomeView: View {
                                 .buttonStyle(.plain).help("清除搜索").accessibilityLabel("清除仓库搜索")
                         }
                     }
-                    .padding(10).background(Color(nsColor: WorkbenchPalette.canvas).opacity(0.75), in: RoundedRectangle(cornerRadius: 8))
+                    .padding(9).workbenchInputSurface()
                     if repositories.isEmpty {
                         Text("没有匹配的仓库。试试其他名称或路径。")
                             .foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
@@ -139,7 +139,7 @@ struct BranchesView: View {
         GeometryReader { geometry in
             VStack(alignment: .leading, spacing: 18) {
                 HStack {
-                    Text("分支").font(.system(size: 25, weight: .semibold))
+                    Text("分支").font(.system(size: 24, weight: .semibold))
                     Text("\(model.branches.count)").foregroundStyle(.secondary)
                     Spacer()
                     Label("只读浏览", systemImage: "eye").font(.caption).foregroundStyle(.secondary)
@@ -172,7 +172,7 @@ struct BranchesView: View {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 TextField("筛选分支", text: $query).textFieldStyle(.plain).accessibilityLabel("筛选分支")
             }
-            .padding(9).background(Color(nsColor: WorkbenchPalette.canvas).opacity(0.75), in: RoundedRectangle(cornerRadius: 8))
+            .padding(9).workbenchInputSurface()
             Picker("分支范围", selection: $remote) {
                 Text("本地 \(model.branches.filter { !$0.remote }.count)").tag(false)
                 Text("远程 \(model.branches.filter(\.remote).count)").tag(true)
@@ -212,7 +212,7 @@ struct BranchesView: View {
                                     Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary)
                                 }
                                 .padding(.horizontal, 12).padding(.vertical, compact ? 11 : 16)
-                                .background(model.selectedBranch == branch.id ? Color(nsColor: WorkbenchPalette.selection) : .clear, in: RoundedRectangle(cornerRadius: 8))
+                                .workbenchSelection(model.selectedBranch == branch.id)
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain).help(branch.id)
@@ -279,7 +279,7 @@ struct NativeSettingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                Text("偏好设置").font(.system(size: 26, weight: .semibold))
+                Text("偏好设置").font(.system(size: 24, weight: .semibold))
                 VStack(alignment: .leading, spacing: 0) {
                     sectionTitle("外观", subtitle: "选择适合你的阅读环境。")
                     settingRow("主题", detail: "跟随系统，或为 Proof 单独选择外观。") {
