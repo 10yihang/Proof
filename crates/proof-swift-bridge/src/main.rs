@@ -12,6 +12,13 @@ fn main() {
         std::process::exit(1);
     }
 }
+fn respond(output: &Mutex<io::Stdout>, response: Response) -> io::Result<()> {
+    // One complete frame per lock, including reader-side validation failures.
+    let mut output = output.lock().unwrap();
+    serde_json::to_writer(&mut *output, &response)?;
+    output.write_all(b"\n")?;
+    output.flush()
+}
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);
     let data_dir = args
@@ -23,7 +30,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut core = Proof::open(data_dir)?;
     let cancellations = Arc::new(Mutex::new(HashMap::<u64, ReadCancellation>::new()));
     let reader_cancellations = cancellations.clone();
-    let (tx, rx) = mpsc::sync_channel(32);
+    let output = Arc::new(Mutex::new(io::stdout()));
+    let reader_output = output.clone();
+    let (tx, rx) = mpsc::sync_channel::<(Request, ReadCancellation)>(32);
     std::thread::spawn(move || {
         let mut input = io::stdin().lock();
         loop {
@@ -43,12 +52,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let raw: serde_json::Value = match serde_json::from_slice(&bytes) {
                 Ok(raw) => raw,
                 Err(error) => {
-                    if tx
-                        .send(Err(Response::new(
+                    if respond(
+                        &reader_output,
+                        Response::new(
                             0,
                             Err(Error::new("INVALID_REQUEST", "Invalid JSON request", error)),
-                        )))
-                        .is_err()
+                        ),
+                    )
+                    .is_err()
                     {
                         break;
                     }
@@ -67,16 +78,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let request: Request = match serde_json::from_value(raw) {
                 Ok(request) => request,
                 Err(error) => {
-                    if tx
-                        .send(Err(Response::new(
+                    if respond(
+                        &reader_output,
+                        Response::new(
                             id,
                             Err(Error::new(
                                 "INVALID_REQUEST",
                                 "Unsupported or malformed request",
                                 error,
                             )),
-                        )))
-                        .is_err()
+                        ),
+                    )
+                    .is_err()
                     {
                         break;
                     }
@@ -84,38 +97,53 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
             let cancellation = ReadCancellation::default();
-            if request.command.cancellable() {
-                reader_cancellations
-                    .lock()
-                    .unwrap()
-                    .insert(id, cancellation.clone());
+            {
+                let mut pending = reader_cancellations.lock().unwrap();
+                // Duplicate IDs make result ownership ambiguous. Close the input
+                // rather than emit a second response for an in-flight request.
+                if pending.contains_key(&id) {
+                    break;
+                }
+                pending.insert(id, cancellation.clone());
             }
-            if tx.send(Ok((request, cancellation))).is_err() {
-                break;
+            // Never block this reader on the work queue: cancellation must still
+            // reach an active AI job when the queue is full.
+            match tx.try_send((request, cancellation)) {
+                Ok(()) => (),
+                Err(mpsc::TrySendError::Disconnected(_)) => break,
+                Err(mpsc::TrySendError::Full(_)) => {
+                    reader_cancellations.lock().unwrap().remove(&id);
+                    if respond(
+                        &reader_output,
+                        Response::new(
+                            id,
+                            Err(Error::new(
+                                "BRIDGE_BUSY",
+                                "Too many queued requests",
+                                "Request was not executed; wait for outstanding requests",
+                            )),
+                        ),
+                    )
+                    .is_err()
+                    {
+                        break;
+                    }
+                }
             }
         }
         for cancel in reader_cancellations.lock().unwrap().values() {
             cancel.cancel();
         }
     });
-    let mut output = io::stdout().lock();
-    for item in rx {
-        let response = match item {
-            Err(response) => response,
-            Ok((request, cancellation)) => {
-                let id = request.id;
-                let result = if request.command.cancellable() {
-                    cancellation.run(|| dispatch(&mut core, request.command))
-                } else {
-                    dispatch(&mut core, request.command)
-                };
-                cancellations.lock().unwrap().remove(&id);
-                Response::new(id, result)
-            }
+    for (request, cancellation) in rx {
+        let id = request.id;
+        let result = if request.command.cancellable() {
+            cancellation.run(|| dispatch(&mut core, request.command))
+        } else {
+            dispatch(&mut core, request.command)
         };
-        serde_json::to_writer(&mut output, &response)?;
-        output.write_all(b"\n")?;
-        output.flush()?;
+        cancellations.lock().unwrap().remove(&id);
+        respond(&output, Response::new(id, result))?;
     }
     Ok(())
 }

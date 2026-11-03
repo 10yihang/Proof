@@ -1,15 +1,21 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct WorkspaceView: View {
     @ObservedObject var model: WorkspaceModel
     @AppStorage("proof.native.compact") private var compact = true
     @State private var trustConfirmation = false
     @State private var stageConfirmation = false
+    @State private var pendingStage: FileDiff?
+    @State private var pendingHunk: Hunk?
+    @State private var hunkPopover = false
     @State private var rawPatch = false
     @State private var splitDiff = true
     @State private var collapsed: Set<String> = []
     @State private var contextPopover = false
+    @State private var aiPanel = false
+    @Environment(\.scenePhase) private var scenePhase
     @FocusState private var fileListFocused: Bool
 
     private var activeMode: String { model.workspace == nil && model.mode != "settings" ? "repositories" : model.mode }
@@ -45,16 +51,27 @@ struct WorkspaceView: View {
         } message: {
             Text("启用 \(model.workspace?.path ?? "此仓库") 的 Git 写操作？仓库配置、过滤器和 hooks 可能运行本地程序。请仅信任你控制或检查过的代码。")
         }
-        .alert(model.diff?.side == "staged" ? "取消暂存此文件？" : "暂存此文件？", isPresented: $stageConfirmation) {
-            Button("取消", role: .cancel) {}
-            Button(model.diff?.side == "staged" ? "取消暂存" : "暂存文件") { model.stage() }
+        .alert(pendingStage?.side == "staged" ? "取消暂存所选变化？" : "暂存所选变化？", isPresented: $stageConfirmation) {
+            Button("取消", role: .cancel) { pendingStage = nil; pendingHunk = nil }
+            Button(pendingStage?.side == "staged" ? "取消暂存" : "暂存") {
+                guard let snapshot = pendingStage else { return }
+                if let hunk = pendingHunk { model.stageHunk(snapshot: snapshot.id, hunk: hunk.id) }
+                else { model.stage(snapshot: snapshot.id) }
+                pendingStage = nil; pendingHunk = nil
+            }
         } message: {
-            Text("\(model.diff?.path ?? "")\n应用整个文件的变化，保留工作区内容。若快照已过期，Core 将拒绝操作。人工评审状态不等于暂存状态。")
+            Text("\(pendingStage?.path ?? "")\n\(pendingHunk?.header ?? "整个文件")\n只应用所选范围，保留工作区内容。若快照已过期，Core 将拒绝操作。人工评审状态不等于暂存状态。")
         }
         .alert("操作未完成", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
             Button("好") { model.error = nil }
         } message: { Text(model.error ?? "") }
         .sheet(item: $model.preview) { commitConfirmation($0) }
+        .sheet(item: $model.operationPreview, onDismiss: { model.cancelOperation() }) { RepositoryOperationConfirmation(model: model, preview: $0) }
+        .sheet(isPresented: $aiPanel) { AIAssistanceView(model: model) }
+        .onAppear { if ScreenshotPreview.outputDirectory == nil { model.startAutoRefresh() } }
+        .onDisappear { model.stopAutoRefresh() }
+        .onChange(of: scenePhase) { model.setWorkspaceActive($0 == .active) }
+        .onChange(of: stageConfirmation || trustConfirmation || hunkPopover || aiPanel) { model.dialogPresented = $0 }
         .onChange(of: model.mode) { _ in model.changeMode() }
         .onChange(of: model.selectedFile) { _ in model.loadFile() }
         .onChange(of: model.selectedCommit) { _ in model.loadCommit() }
@@ -78,14 +95,14 @@ struct WorkspaceView: View {
                     filesPanel.workbenchCard()
                         .frame(maxHeight: .infinity)
                     inlineCommit.captureLayout("commit-editor").workbenchCard()
-                        .frame(height: max(175, min(240, size.height * 0.27)))
+                        .frame(height: max(220, min(280, size.height * 0.31)))
                 }.frame(width: size.width < 1000 ? 260 : 282)
                 selectedContent.workbenchCard()
             }.padding(12)
         }
     }
     private func titleBar(width: CGFloat) -> some View {
-        HStack(spacing: 18) {
+        HStack(spacing: width < 1250 ? 12 : 18) {
             Color.clear.frame(width: 72).accessibilityHidden(true)
             HStack(spacing: 8) {
                 Image(systemName: "checkmark.seal.fill").foregroundStyle(Color(nsColor: WorkbenchPalette.accent))
@@ -100,9 +117,12 @@ struct WorkspaceView: View {
                 Divider().frame(height: 24)
                 Button { model.mode = "branches" } label: {
                     Label(model.changes?.branch ?? "分离的 HEAD", systemImage: "arrow.triangle.branch")
-                        .lineLimit(1).truncationMode(.middle).frame(maxWidth: 215, alignment: .leading)
+                        .lineLimit(1).truncationMode(.middle).frame(maxWidth: width < 1250 ? 145 : 215, alignment: .leading)
                 }.buttonStyle(.plain).disabled(model.writing).help("查看当前仓库分支")
-                Button { model.refresh() } label: { Label("刷新", systemImage: "arrow.clockwise") }
+                RepositorySyncControls(model: model, compact: width < 1250)
+                Button { aiPanel = true } label: { Label("AI", systemImage: "sparkles") }
+                    .buttonStyle(.plain).disabled(model.busy || model.workspace?.trusted != true).help("评审文件或生成提交说明，仅在确认后运行")
+                Button { model.refresh() } label: { Image(systemName: "arrow.clockwise") }
                     .buttonStyle(.plain).disabled(model.busy)
             }
             Spacer(minLength: 4)
@@ -149,7 +169,7 @@ struct WorkspaceView: View {
             }
             Divider().padding(.horizontal, 10).padding(.vertical, 14)
             VStack(alignment: .leading, spacing: 16) {
-                unavailableNavigation("远程仓库", icon: "network")
+                RepositorySyncControls(model: model)
                 unavailableNavigation("标签", icon: "tag")
                 unavailableNavigation("储藏", icon: "archivebox")
             }.padding(.horizontal, 10)
@@ -257,7 +277,7 @@ struct WorkspaceView: View {
     }
     private func changedFileRow(_ file: ChangedFile, depth: Int) -> some View {
         HStack(spacing: 8) {
-            Image(systemName: "doc.text").font(.system(size: 12)).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
+            FileTypeIcon(path: file.path)
             VStack(alignment: .leading, spacing: 4) {
                 Text((file.path as NSString).lastPathComponent).font(.system(size: 14)).lineLimit(1).truncationMode(.middle)
 
@@ -325,7 +345,7 @@ struct WorkspaceView: View {
     }
     private func fileHeader(_ diff: FileDiff) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: "doc.text").foregroundStyle(.secondary)
+            FileTypeIcon(path: diff.path)
             VStack(alignment: .leading, spacing: 4) {
                 Text((diff.path as NSString).lastPathComponent).font(.system(size: 14, weight: .semibold)).lineLimit(1).truncationMode(.middle)
                 Text((diff.path as NSString).deletingLastPathComponent).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
@@ -339,10 +359,21 @@ struct WorkspaceView: View {
                 Button("原始补丁") { rawPatch = true }
             } label: { Text(rawPatch ? "补丁" : splitDiff ? "左右对照" : "统一差异") }
                 .menuStyle(.borderlessButton).fixedSize()
+            Button { hunkPopover.toggle() } label: {
+                Label("\(diff.hunks.count)", systemImage: "line.3.horizontal.decrease")
+            }.help("逐块阅读、人工评审与暂存")
+                .accessibilityLabel("打开 \(diff.hunks.count) 个变更块")
+                .disabled(model.busy || diff.hunks.isEmpty)
+                .popover(isPresented: $hunkPopover) {
+                    HunkActionsView(model: model, diff: diff) { hunk in
+                        pendingStage = diff; pendingHunk = hunk
+                        hunkPopover = false; stageConfirmation = true
+                    }.id(diff.id)
+                }
             Button { model.review() } label: { Text(diff.reviewed ? "已评审" : "待评审") }
                 .accessibilityLabel(diff.reviewed ? "已评审，切换评审状态" : "待评审，切换评审状态")
                 .disabled(model.busy).help("切换此内容快照的人工评审状态，不改变暂存区")
-            Button(diff.side == "staged" ? "取消暂存" : "暂存文件") { stageConfirmation = true }
+            Button(diff.side == "staged" ? "取消暂存" : "暂存文件") { pendingStage = diff; pendingHunk = nil; stageConfirmation = true }
                 .disabled(model.busy || !diff.canStage)
         }.buttonStyle(WorkbenchButtonStyle()).padding(.horizontal, 18).frame(height: 54)
             .overlay(alignment: .bottom) { horizontalRule }
@@ -354,12 +385,18 @@ struct WorkspaceView: View {
                 Spacer()
                 Text("已暂存 \(model.stagedFileCount) 个文件").font(.system(size: 10)).foregroundStyle(.secondary)
             }
+            TextField("提交标题", text: commitSubject, axis: .vertical)
+                .lineLimit(2...2).textFieldStyle(.plain).font(.system(size: 13))
+                .padding(9).workbenchInputSurface()
+                .disabled(model.writing).accessibilityLabel("提交标题")
             ZStack(alignment: .topLeading) {
-                if model.message.isEmpty { Text("填写提交说明…").foregroundStyle(.secondary).padding(8).allowsHitTesting(false) }
-                TextEditor(text: $model.message).font(.system(size: 13)).scrollContentBackground(.hidden)
-                    .padding(4).disabled(model.writing).accessibilityLabel("提交信息")
-            }.frame(minHeight: 56, maxHeight: .infinity)
-                .workbenchInputSurface()
+                if commitBody.wrappedValue.isEmpty {
+                    Text("补充说明（可选）…").foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
+                        .padding(8).allowsHitTesting(false)
+                }
+                TextEditor(text: commitBody).font(.system(size: 13)).scrollContentBackground(.hidden)
+                    .padding(4).disabled(model.writing).accessibilityLabel("提交详细说明，可选")
+            }.frame(minHeight: 40, maxHeight: .infinity).workbenchInputSurface()
             Button { model.prepareCommit() } label: {
                 Text("检查并提交 \(model.stagedFileCount) 个文件…").frame(maxWidth: .infinity)
             }.buttonStyle(WorkbenchButtonStyle(prominent: true))
@@ -367,6 +404,18 @@ struct WorkspaceView: View {
                 .disabled(!model.canPrepareCommit).keyboardShortcut(.return, modifiers: .command)
 
         }.padding(12)
+    }
+    // Both fields edit the same Git message; previews, AI drafts and repository
+    // draft protection continue to use model.message as their single source.
+    private var commitSubject: Binding<String> {
+        Binding(get: { CommitMessage.subject(model.message) }, set: {
+            model.message = CommitMessage.replacingSubject(in: model.message, with: $0)
+        })
+    }
+    private var commitBody: Binding<String> {
+        Binding(get: { CommitMessage.body(model.message) }, set: {
+            model.message = CommitMessage.replacingBody(in: model.message, with: $0)
+        })
     }
     private var statusBar: some View {
         HStack {
@@ -407,5 +456,57 @@ private extension View {
     @ViewBuilder func hideAutomaticToolbarTitle() -> some View {
         if #available(macOS 15.0, *) { self.toolbar(removing: .title) }
         else { self }
+    }
+}
+
+/// Ask Launch Services for the actual extension's native document icon rather
+/// than presenting every source file as the same generic text document.
+private struct FileTypeIcon: View {
+    let path: String
+    var body: some View {
+        let type = UTType(filenameExtension: (path as NSString).pathExtension) ?? .data
+        Image(nsImage: NSWorkspace.shared.icon(for: type))
+            .resizable().aspectRatio(contentMode: .fit).frame(width: 18, height: 18)
+            .accessibilityHidden(true)
+    }
+}
+
+private struct HunkActionsView: View {
+    @ObservedObject var model: WorkspaceModel
+    let diff: FileDiff
+    let onStage: (Hunk) -> Void
+    @State private var selectedID = ""
+    private var selected: Hunk? { diff.hunks.first { $0.id == selectedID } ?? diff.hunks.first }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("变更块 · \((diff.path as NSString).lastPathComponent)")
+                .font(.headline).lineLimit(1).truncationMode(.middle)
+            Picker("所选变更块", selection: Binding(get: { selected?.id ?? "" }, set: { selectedID = $0 })) {
+                ForEach(Array(diff.hunks.enumerated()), id: \.element.id) { index, hunk in
+                    Text("\(index + 1). \(hunk.header)").tag(hunk.id)
+                }
+            }
+            if let hunk = selected {
+                CodeTextView(identity: diff.id + hunk.id, rows:
+                    [CodeRow(text: hunk.header, kind: "header")] + hunk.lines.map {
+                        CodeRow(text: $0.content, kind: $0.kind, oldLine: $0.oldLine, newLine: $0.newLine)
+                    }, numbered: true)
+                    .frame(height: 260).clipShape(RoundedRectangle(cornerRadius: 6))
+                HStack {
+                    Text(hunk.reviewState == "reviewed" ? "已人工评审" : "待人工评审")
+                        .font(.caption).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
+                    Spacer()
+                    Button(hunk.reviewState == "reviewed" ? "标为待评审" : "标为已评审") {
+                        model.reviewHunk(snapshot: diff.id, hunk: hunk.id)
+                    }
+                    Button(diff.side == "staged" ? "取消暂存此块…" : "暂存此块…") { onStage(hunk) }
+                        .disabled(!diff.canStage || diff.kind != "text")
+                }.buttonStyle(WorkbenchButtonStyle())
+                    .disabled(model.busy || model.diff?.id != diff.id)
+            }
+            Text("人工评审只记录当前内容；暂存操作会单独确认。")
+                .font(.caption).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
+        }.padding(16).frame(width: 600)
     }
 }

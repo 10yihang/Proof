@@ -4,7 +4,7 @@ import SwiftUI
 /// Airy native surfaces: blue-tinted chrome, independent light cards, opaque code.
 enum WorkbenchPalette {
     static let canvas = adaptive(light: 0xFFFFFF, dark: 0x1B2230)
-    static let navigation = adaptive(light: 0xE7EEF8, dark: 0x141D2B)
+    static let navigation = adaptive(light: 0xE0EBFC, dark: 0x141D2B)
     static let panel = adaptive(light: 0xF9FBFF, dark: 0x202A3A)
     static let raised = adaptive(light: 0xF4F7FC, dark: 0x283448)
     static let selection = adaptive(light: 0xD6E6FF, dark: 0x294B78)
@@ -66,7 +66,9 @@ struct WorkbenchChromeSurface: View {
             if reduced { Color(nsColor: WorkbenchPalette.navigation) }
             else {
                 WorkbenchBackdrop()
-                Color(nsColor: WorkbenchPalette.navigation).opacity(colorScheme == .dark ? 0.16 : 0.12)
+                // A substantial native tint keeps the chrome blue even over neutral
+                // or warm desktops, while retaining a small amount of real material.
+                Color(nsColor: WorkbenchPalette.navigation).opacity(0.88)
             }
             LinearGradient(colors: [.white.opacity(colorScheme == .dark ? 0.025 : 0.18), .clear],
                            startPoint: .top, endPoint: .bottom)

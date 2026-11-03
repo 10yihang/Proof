@@ -142,7 +142,7 @@ struct BranchesView: View {
                     Text("分支").font(.system(size: 24, weight: .semibold))
                     Text("\(model.branches.count)").foregroundStyle(.secondary)
                     Spacer()
-                    Label("只读浏览", systemImage: "eye").font(.caption).foregroundStyle(.secondary)
+                    RepositorySyncControls(model: model)
                     Button(action: model.loadBranches) { Label("刷新", systemImage: "arrow.clockwise") }
                         .disabled(model.busy || model.workspace == nil)
                 }
@@ -244,8 +244,13 @@ struct BranchesView: View {
                         Text("引用").font(.caption).foregroundStyle(.secondary)
                         Text(branch.id).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
                     }
+                    if !branch.current {
+                        Button(branch.remote ? "创建跟踪分支并切换…" : "切换到此分支…") { model.prepareSwitchBranch(branch) }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(model.busy || model.workspace?.trusted != true)
+                    }
                     if branch.remote {
-                        Text("此处显示本地已知的远程引用，刷新不会连接远程仓库。")
+                        Text("此处显示本地已知的远程引用。同步菜单可获取更新；切换前会显示目标与操作范围。")
                             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }
                 } else {
@@ -300,6 +305,10 @@ struct NativeSettingsView: View {
 
                 VStack(alignment: .leading, spacing: 0) {
                     sectionTitle("工作区", subtitle: "保留熟悉的导航方式。")
+                    settingRow("自动刷新", detail: "仅在应用活跃、没有操作或确认窗口时检查本地变化；不会自动连接远程或运行 AI。") {
+                        Toggle("自动刷新", isOn: $model.autoRefreshEnabled).labelsHidden().toggleStyle(.switch)
+                    }
+                    Divider()
                     settingRow("记住侧边栏状态", detail: "下次启动时，恢复侧边栏的展开或收起状态。") {
                         Toggle("记住侧边栏状态", isOn: $restoreSidebar).labelsHidden().toggleStyle(.switch)
                             .onChange(of: restoreSidebar) { enabled in
@@ -323,6 +332,7 @@ struct NativeSettingsView: View {
                         .lineSpacing(6).padding(.top, 18).frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityLabel("代码字体预览，\(Int(codeFontSize)) 磅")
                 }.padding(20).workbenchCard()
+                NativeAgentSettings(model: model)
                 Text("设置仅保存在此 Mac 的 Proof Native 中。")
                     .font(.caption).foregroundStyle(.secondary)
             }

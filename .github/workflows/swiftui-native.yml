@@ -45,6 +45,10 @@ jobs:
           /tmp/proof-review-check
           swiftc native/macos/Sources/ProofNative/Models.swift native/macos/Sources/ProofNative/Bridge.swift native/macos/Sources/ProofNative/WorkspaceModel.swift native/macos/Tests/WorkspaceNavigationCheck.swift -o /tmp/proof-navigation-check
           /tmp/proof-navigation-check
+          swiftc native/macos/Sources/ProofNative/Models.swift native/macos/Sources/ProofNative/Bridge.swift native/macos/Sources/ProofNative/WorkspaceModel.swift native/macos/Tests/WorkspaceRefreshCheck.swift -o /tmp/proof-refresh-check
+          /tmp/proof-refresh-check
+          swiftc native/macos/Sources/ProofNative/CommitMessage.swift native/macos/Tests/CommitMessageCheck.swift -o /tmp/commit-message-check
+          /tmp/commit-message-check
           swiftc native/macos/Sources/ProofNative/Models.swift native/macos/Sources/ProofNative/WorkbenchPalette.swift native/macos/Sources/ProofNative/DiffView.swift native/macos/Tests/SplitDiffCheck.swift -o /tmp/proof-split-check
           /tmp/proof-split-check
           swiftc native/macos/Sources/ProofNative/WorkbenchPalette.swift native/macos/Tests/WindowChromeCheck.swift -o /tmp/proof-chrome-check

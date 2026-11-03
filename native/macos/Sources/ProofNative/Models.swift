@@ -35,6 +35,7 @@ struct Hunk: Decodable, Identifiable {
     let reviewState: String
 }
 struct FileDiff: Decodable, Identifiable {
+    var token: String? = nil
     let id: String
     let path: String
     let side: String
@@ -57,6 +58,7 @@ struct BranchEntry: Decodable, Identifiable, Hashable {
 }
 
 enum NativePreferences {
+    static let autoRefresh = "proof.native.autoRefresh"
     static let appearance = "proof.native.appearance"
     static let compact = "proof.native.compact"
     static let restoreSidebar = "proof.native.restoreSidebar"
@@ -94,3 +96,102 @@ struct BridgeError: Decodable, LocalizedError {
     var errorDescription: String? { "\(message) [\(code)]\n\(detail)" }
 }
 struct Empty: Decodable {}
+
+// Closed, typed display models. No credentials or arbitrary command execution.
+struct HistoryActionRequest: Decodable {
+    let kind: String
+    let target: String?
+    let name: String?
+    let remote: String?
+    let mode: String?
+    let mainline: Int?
+}
+struct HistoryActionPreview: Decodable, Identifiable {
+    let id: String
+    let request: HistoryActionRequest
+    let head: String?
+    let branch: String?
+    let targetOid: String?
+    let remoteBranch: String?
+    let expectedRemoteOid: String?
+    let dirtyFiles: Int
+    let affectedCommits: Int
+    let operation: String?
+    let arguments: [String]
+    let destructive: Bool
+}
+struct HistoryActionResult: Decodable {
+    let ok: Bool
+    let head: String?
+    let branch: String?
+    let operation: String?
+    let conflicts: [String]
+    let detail: String
+    let warning: String?
+}
+struct HistoryRepositoryState: Decodable {
+    let remotes: [String]
+    let upstream: String?
+    let upstreamRemote: String?
+    let upstreamBranch: String?
+    let ahead: Int
+    let behind: Int
+    let operation: String?
+    let conflicts: [String]
+}
+struct AgentOptions: Codable {
+    var executablePath: String?
+    var model: String?
+}
+struct AgentPrompts: Codable {
+    var grouping: String
+    var review: String
+    var commit: String
+}
+struct AgentSettings: Codable {
+    let revision: UInt64
+    var defaultProvider: String
+    var codex: AgentOptions
+    var claudeCode: AgentOptions
+    var codewiz: AgentOptions
+    var ocr: AgentOptions
+    var prompts: AgentPrompts
+}
+struct AgentProviderInfo: Decodable, Identifiable {
+    let id: String
+    let name: String
+    let available: Bool
+    let path: String?
+    let reason: String?
+    let model: String?
+    let isDefault: Bool
+}
+struct AIFinding: Decodable {
+    let severity: String
+    let title: String
+    let description: String
+    let file: String
+    let side: String
+    let line: Int
+    let endLine: Int?
+    let lineSide: String
+    let suggestion: String
+}
+struct AIReview: Decodable {
+    let summary: String
+    let overallRisk: String
+    let findings: [AIFinding]
+    let behaviorChanges: [String]
+    let missingTests: [String]
+    let reviewPriority: [String]
+}
+struct AIReport: Decodable, Identifiable {
+    let id: String
+    let provider: String
+    let task: String
+    let fingerprint: String
+    let capturedAt: UInt64
+    let review: AIReview?
+    let commitMessage: String?
+    let limitations: [String]
+}

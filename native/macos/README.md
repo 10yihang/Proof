@@ -1,8 +1,8 @@
 # Proof Native — additive SwiftUI client
 
 An independent macOS frontend for the existing `proof-core`, not a replacement
-for the Tauri app. No web view, copied Git implementation, agent CLI or new Rust
-runtime dependency. Runs on macOS 13+. Building requires Xcode 26+ (the preview CI uses Xcode 27), Rust and system Git. New material APIs are availability-guarded for older macOS versions.
+for the Tauri app. No web view, copied Git implementation or new Rust runtime dependency.
+Optional AI uses the existing Core adapters for user-installed Agent CLIs. Runs on macOS 13+. Building requires Xcode 26+ (the preview CI uses Xcode 27), Rust and system Git. New material APIs are availability-guarded for older macOS versions.
 
 ## Build and run on a Mac
 
@@ -34,40 +34,51 @@ Git hooks is intentional. Trust remains explicit and initially off.
 
 ## Implemented workflow
 
-- Native directory picker and recent repositories; Changes / Commit / History.
-- Unstaged and staged file lists with search, status and rename origin.
-- Native selectable unified diff, line numbers, +/- markers, human review state,
-  raw patch, and system find bar (focus the diff and press Cmd-F).
-- Read-only history with incremental paging and first-parent commit patches.
-- Explicit repository trust; snapshot-validated whole-file stage/unstage.
-- Content-bound whole-file manual review, separate from Git staging.
-- Dedicated commit page and checked preview: staged file scope, human coverage,
-  branch, message, unread coverage and hook warning before explicit confirmation.
-- Error/empty/loading states, cancellable reads, stale-response suppression, write
-  exclusion, refresh after writes (including uncertain failures), and quit guards.
-- No automatic AI, observer, push, discard, reset, amend or remote operation.
-
-The three native columns prioritize code over chrome: a system sidebar, compact
-file navigation and a selectable AppKit text surface. System typography, semantic
-colors and standard controls support light/dark mode and keyboard navigation.
-Red/green only supplement explicit diff markers; reviewed uses a blue label.
-This is a native adaptation of `docs/DESIGN.md`, not a redesign of the Tauri UI.
+- Local repository picker/recent repositories, Changes, History, Branches and Settings.
+- Collapsible native shell, light/dark appearances, native materials with opaque
+  accessibility fallback, compact density, system file-type icons and code size.
+- Selectable AppKit unified/split diff, aligned change rows, separate gutters,
+  synchronized vertical scrolling, independent horizontal scrolling, raw patch,
+  lightweight lexical coloring and Cmd-F. Not a full parser/editor.
+- Snapshot-checked whole-file and hunk stage/unstage; separate human review for
+  files or individual hunks. Hunk popover preserves the captured target.
+- Subject/body commit draft, staged-scope preview, human coverage and explicit
+  confirmation before committing. Draft remains intact on errors.
+- Local/remote-tracking branch browsing and previewed branch switching. Remote
+  switching creates a tracking local branch; no force checkout.
+- Explicit Fetch/Pull/Push through Core's short-lived previews. No forced push,
+  rebasing/merging pull or automatic remote access (pull is fast-forward only). Upstream must already be configured.
+- Five-second local refresh while active and idle; skips writes, reads, AI and
+  confirmation dialogs, preserves draft/selection, stops with repository closure.
+- Explicit AI review of the selected file and commit-message generation from
+  staged files. Selected files are analysis focus, not a read allowlist: the Core
+  agent reads the live repository, including related unchanged/ignored context.
+  Explicit confirmation discloses that access and provider transmission. The
+  bridge checks the change token before/after the job, not a frozen filesystem.
+  Findings/limitations
+  are displayed; generated text replaces the draft only after confirmation.
+- Agent CLI path/model/default-provider settings, isolated from the original app.
+  No installation, login, token storage, automatic AI, Observer or code edits.
+- Cancellable reads/AI, stale-response suppression, write exclusion, error/empty
+  states, refresh after writes and uncertain failures, and draft/write quit guards.
 
 ## Data and trust boundaries
 
 Native app data: `~/Library/Application Support/ProofNative/`.
 Bundle identifier: `dev.proof.native`. It never imports or shares the original
 Proof database/settings, and does not read `PROOF_DATA_DIR`. Git repositories and
-their index are naturally shared with other Git clients. Refresh after edits in
-other applications; this first version has no filesystem watcher. Write guards
+their index are naturally shared with other Git clients. An idle local poll detects edits in
+other applications; this is not a filesystem watcher or automatic fetch. Write guards
 in core reject outdated content, index or HEAD rather than silently retrying.
 
 The bundled `proof-swift-bridge <data-directory>` process accepts UTF-8 JSON
 lines on stdin, emits only JSON response lines on stdout, and sends diagnostics
 to stderr. Each request has a numeric ID; all `Proof` access is serialized on one
 worker. Input frames are bounded to 1 MiB. Request schema rejects unknown fields
-and unknown operations. There is no shell command, configurable executable,
-file-write, AI, network, preference or destructive-operation dispatch.
+and unknown operations. There is no arbitrary shell/file-write dispatch. The whitelist permits only
+specific Core Git actions, hunk operations and user-requested local AI tasks.
+Agent executable paths are validated by the existing Core settings layer. Network
+operations require repository trust and a fresh prepared preview.
 
 ```json
 {"id":1,"command":{"method":"hello"}}
@@ -79,7 +90,7 @@ Response: `{"id":1,"result":{"protocol":1}}` or
 `{"id":2,"error":{"code":"…","message":"…","detail":"…"}}`.
 Protocol 1 method schemas live in `crates/proof-swift-bridge/src/lib.rs`; Swift
 validates the handshake. JSON encodes paths/messages with embedded newlines.
-Cancellation only applies to read/preparation methods. Write requests are never
+Cancellation applies to read/preparation methods and explicit AI jobs. Write requests are never
 cancelled or automatically retried. EOF cancels reads but lets an accepted write
 finish; a process crash still requires the user to inspect actual Git state.
 Core snapshots and commit previews remain inside the long-lived Rust process.
@@ -101,12 +112,13 @@ trust rejection, stage/unstage, review migration, multiline commit, history and
 commit diff, stale stage/review/commit rejection, and closed dispatch whitelist.
 No user repository is modified by the tests.
 
-**Native validation:** the preview branch has passed Swift release compilation,
-macOS bridge tests, ad-hoc bundle signature verification and protocol smoke on
-GitHub's macOS 15 runner. Native screenshot capture is CI-only fixture rendering.
-Interactive workflow acceptance, VoiceOver, keyboard focus, window-close behavior
-and real macOS Git-hook behavior are still unverified. This is not a notarized or
-release-ready distribution. See VALIDATION.md for exact run evidence.
+**Native validation:** the preview workflow builds with Xcode 27 and runs bridge,
+model, native Diff/window and message-editor checks. New behavior is validated on
+that exact workflow commit, not inferred from an older green run. Screenshot
+capture uses fixture data and proves rendering, not full user interaction.
+macOS 13 remains the deployment target with availability guards; the CI does not
+run macOS 13. VoiceOver, real account credentials/Agent inference and full manual
+acceptance remain separate checks. This is not notarized or release-ready.
 
 ### Mac acceptance checklist
 
@@ -125,14 +137,17 @@ release-ready distribution. See VALIDATION.md for exact run evidence.
    write; reopen and inspect actual state. Test missing executable at startup.
 9. Test Cmd-O/R/F, tab focus, VoiceOver, resize, long paths/messages and both themes.
 
-## Deliberate first-version limits
+## Remaining capability gaps
 
-One repository/window at a time; commit drafts are memory-only. No split diff,
-full parser-based syntax highlighting, hunk-level actions, graph layout, branch switching, merge
-parent picker, blame, file editor, logical groups, evidence/AI panels, recovery,
-stash, remotes, settings or updater. History filters only loaded rows. No working
-copy auto-refresh. Large diff limits come from core. Use the existing Tauri app
-for features beyond this focused read/review/stage/commit workflow.
+One repository/window at a time; drafts are memory-only. No arbitrary branch
+creation/rename/deletion, merge/rebase/cherry-pick/revert/reset, discard/recovery,
+stash, tags, amend, full history graph, merge-parent picker, blame, file editor,
+full-file/context expansion, logical groups, persisted report browser/finding
+resolution, Observer/session evidence, review export, updater or universal build.
+History filtering covers loaded rows only. AI reports currently display findings,
+not clickable code-range navigation or finding decision workflows. Failed merges
+must be resolved with an existing Git tool. Existing Tauri functionality remains
+unchanged and should be used for features not yet migrated.
 
 ## Native Changes visual preview
 
