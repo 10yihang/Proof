@@ -41,12 +41,29 @@ struct WorkbenchBackdrop: NSViewRepresentable {
 
 /// One native backdrop, with a quiet highlight on the surface itself. No image,
 /// artificial wallpaper, or decorative color blobs are used for translucency.
+private struct WorkbenchOpaqueSurfacesKey: EnvironmentKey {
+    static let defaultValue = false
+}
+extension EnvironmentValues {
+    /// Additive opaque-surface preview only; never turns off the user's setting.
+    var workbenchOpaqueSurfaces: Bool {
+        get { self[WorkbenchOpaqueSurfacesKey.self] }
+        set { self[WorkbenchOpaqueSurfacesKey.self] = newValue }
+    }
+}
 struct WorkbenchChromeBackground: View {
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.accessibilityReduceTransparency) private var systemReduceTransparency
+    @Environment(\.workbenchOpaqueSurfaces) private var opaqueSurfaces
+    var body: some View {
+        WorkbenchChromeSurface(reduced: systemReduceTransparency || opaqueSurfaces)
+    }
+}
+struct WorkbenchChromeSurface: View {
+    let reduced: Bool
     @Environment(\.colorScheme) private var colorScheme
     var body: some View {
         ZStack {
-            if reduceTransparency { Color(nsColor: WorkbenchPalette.navigation) }
+            if reduced { Color(nsColor: WorkbenchPalette.navigation) }
             else {
                 WorkbenchBackdrop()
                 Color(nsColor: WorkbenchPalette.navigation).opacity(colorScheme == .dark ? 0.16 : 0.12)
@@ -59,17 +76,21 @@ struct WorkbenchChromeBackground: View {
 
 private struct WorkbenchCard: ViewModifier {
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.accessibilityReduceTransparency) private var systemReduceTransparency
+    @Environment(\.workbenchOpaqueSurfaces) private var opaqueSurfaces
+    private var reduceTransparency: Bool { systemReduceTransparency || opaqueSurfaces }
     func body(content: Content) -> some View {
         content
             .background(Color(nsColor: WorkbenchPalette.canvas).opacity(reduceTransparency ? 1 : (colorScheme == .dark ? 0.86 : 0.78)))
-            .background(.thinMaterial)
+            .background { if !reduceTransparency { Rectangle().fill(.thinMaterial) } }
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .shadow(color: .black.opacity(colorScheme == .dark ? 0.22 : 0.065), radius: 10, x: 0, y: 4)
     }
 }
 private struct WorkbenchInputSurface: ViewModifier {
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.accessibilityReduceTransparency) private var systemReduceTransparency
+    @Environment(\.workbenchOpaqueSurfaces) private var opaqueSurfaces
+    private var reduceTransparency: Bool { systemReduceTransparency || opaqueSurfaces }
     func body(content: Content) -> some View {
         content
             .background(Color(nsColor: WorkbenchPalette.panel).opacity(reduceTransparency ? 1 : 0.75), in: RoundedRectangle(cornerRadius: 8))
@@ -90,11 +111,17 @@ extension View {
     func workbenchCard() -> some View { modifier(WorkbenchCard()) }
     func workbenchInputSurface() -> some View { modifier(WorkbenchInputSurface()) }
     func workbenchSelection(_ selected: Bool) -> some View { modifier(WorkbenchSelection(selected: selected)) }
-    @ViewBuilder func airyControlSurface() -> some View {
-        if #available(macOS 26.0, *) {
-            self.glassEffect(.regular, in: RoundedRectangle(cornerRadius: 8))
+    func airyControlSurface() -> some View { modifier(AiryControlSurface()) }
+}
+private struct AiryControlSurface: ViewModifier {
+    @Environment(\.accessibilityReduceTransparency) private var reduced
+    @Environment(\.workbenchOpaqueSurfaces) private var opaque
+    @ViewBuilder func body(content: Content) -> some View {
+        if reduced || opaque { content.background(Color(nsColor: WorkbenchPalette.panel), in: RoundedRectangle(cornerRadius: 8)) }
+        else if #available(macOS 26.0, *) {
+            content.glassEffect(.regular, in: RoundedRectangle(cornerRadius: 8))
         } else {
-            self.background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+            content.background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
         }
     }
 }

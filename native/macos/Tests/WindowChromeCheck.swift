@@ -34,8 +34,7 @@ enum WindowChromeCheck {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
                               styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
-        let host = NSHostingView(rootView: AnyView(WorkbenchChromeBackground()
-            .environment(\.accessibilityReduceTransparency, false)))
+        let host = NSHostingView(rootView: AnyView(WorkbenchChromeSurface(reduced: false)))
         window.contentView = host
         func effects(_ view: NSView) -> [NSVisualEffectView] {
             (view as? NSVisualEffectView).map { [$0] } ?? view.subviews.flatMap(effects)
@@ -51,7 +50,7 @@ enum WindowChromeCheck {
         assert(materials[0].material == .underWindowBackground)
         assert(materials[0].blendingMode == .behindWindow)
         assert(materials[0].state == .followsWindowActiveState)
-        host.rootView = AnyView(WorkbenchChromeBackground().environment(\.accessibilityReduceTransparency, true))
+        host.rootView = AnyView(WorkbenchChromeSurface(reduced: true))
         layout()
         assert(effects(host).isEmpty, "Reduced transparency must use the opaque fallback without live blur")
         print("Native material checks passed: single behind-window effect, follows activation, opaque reduce-transparency fallback; systemReduceTransparency=\(NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency)")
