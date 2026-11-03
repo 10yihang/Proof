@@ -11,6 +11,7 @@ struct WorkspaceView: View {
     @State private var splitDiff = true
     @State private var collapsed: Set<String> = []
     @State private var contextPopover = false
+    @FocusState private var fileListFocused: Bool
 
     private var activeMode: String { model.workspace == nil && model.mode != "settings" ? "repositories" : model.mode }
 
@@ -35,6 +36,7 @@ struct WorkspaceView: View {
         }
         .background(Color(nsColor: WorkbenchPalette.navigation).opacity(reduceTransparency ? 1 : 0.22))
         .background(WorkbenchBackdrop())
+        .background(NativeWindowChrome())
         .ignoresSafeArea(.container, edges: .top)
         .tint(Color(nsColor: WorkbenchPalette.accent))
         .foregroundStyle(Color(nsColor: WorkbenchPalette.text))
@@ -184,7 +186,7 @@ struct WorkspaceView: View {
     }
     private func navigationButton(_ title: String, icon: String, mode: String, key: KeyEquivalent, count: Int?) -> some View {
         Button { model.mode = mode } label: {
-            HStack(spacing: 9) { Image(systemName: icon).frame(width: 16); Text(title); Spacer(minLength: 2); if let count { Text("\(count)").font(.system(size: 11)) } }
+            HStack(spacing: 9) { Image(systemName: icon).frame(width: 16); Text(title).font(.system(size: 14)); Spacer(minLength: 2); if let count { Text("\(count)").font(.system(size: 11)) } }
                 .padding(.horizontal, 10).frame(height: compact ? 38 : 44).contentShape(Rectangle())
                 .background(activeMode == mode ? Color(nsColor: WorkbenchPalette.selection) : .clear, in: RoundedRectangle(cornerRadius: 8))
         }.buttonStyle(.plain).disabled(model.writing).keyboardShortcut(key)
@@ -209,45 +211,60 @@ struct WorkspaceView: View {
             if model.mode != "history" { reviewProgress }
         }.frame(maxHeight: .infinity).captureLayout("files-column")
     }
+    private var visibleTreeRows: [ChangesTreeRow] {
+        changesTreeRows(files: model.changes?.files ?? [], scope: "all", search: model.search, tree: true, collapsed: collapsed)
+    }
     private var changedFiles: some View {
-        List(selection: Binding<String?>(get: { model.selectedFile }, set: { selection in
-            if selection == nil, model.selectedFile != nil { model.cancelRead() }
-            model.selectedFile = selection
-        })) {
-            ForEach(changesTreeRows(files: model.changes?.files ?? [], scope: "all", search: model.search, tree: true, collapsed: collapsed)) { row in
-                if let file = row.file {
-                    changedFileRow(file, depth: row.depth).tag(file.id)
-                        .listRowBackground(RoundedRectangle(cornerRadius: 7).fill(model.selectedFile == file.id ? Color(nsColor: WorkbenchPalette.selection) : .clear))
-                        .listRowSeparator(.hidden).listRowInsets(EdgeInsets(top: 0, leading: 3, bottom: 0, trailing: 3))
-                } else {
-                    Button {
-                        if collapsed.contains(row.id) { collapsed.remove(row.id) } else { collapsed.insert(row.id) }
-                    } label: {
-                        HStack(spacing: 7) {
-                            Image(systemName: row.isExpanded ? "chevron.down" : "chevron.right").font(.system(size: 8))
-                            if !row.isGroup { Image(systemName: "folder").font(.system(size: 11)) }
-                            Text(row.isGroup ? (row.label == "Staged" ? "已暂存" : "未暂存") : row.label).lineLimit(1).truncationMode(.middle)
-                            if row.isGroup { Text("\(row.count)").font(.system(size: 10)) }
-                            Spacer(minLength: 0)
-                        }.font(.system(size: 11)).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
-                            .padding(.leading, CGFloat(row.depth) * 10).frame(height: row.isGroup ? 34 : 28).contentShape(Rectangle())
-                    }.buttonStyle(.plain).tag(Optional<String>.none)
-                        .accessibilityLabel("\(row.label)，\(row.count) 个文件，\(row.isExpanded ? "展开" : "折叠")")
-                        .listRowSeparator(.hidden).listRowInsets(EdgeInsets(top: 0, leading: 3, bottom: 0, trailing: 3))
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 2) {
+                    ForEach(visibleTreeRows) { row in
+                        if let file = row.file {
+                            Button { model.selectedFile = file.id; fileListFocused = true } label: {
+                                changedFileRow(file, depth: row.depth)
+                                    .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                            }.buttonStyle(.plain).id(file.id)
+                                .background(model.selectedFile == file.id ? Color(nsColor: WorkbenchPalette.selection) : .clear,
+                                            in: RoundedRectangle(cornerRadius: 7))
+                                .accessibilityAddTraits(model.selectedFile == file.id ? .isSelected : [])
+                        } else {
+                            Button {
+                                if collapsed.contains(row.id) { collapsed.remove(row.id) } else { collapsed.insert(row.id) }
+                            } label: {
+                                HStack(spacing: 7) {
+                                    Image(systemName: row.isExpanded ? "chevron.down" : "chevron.right").font(.system(size: 8))
+                                    if !row.isGroup { Image(systemName: "folder").font(.system(size: 11)) }
+                                    Text(row.isGroup ? (row.label == "Staged" ? "已暂存" : "未暂存") : row.label).lineLimit(1).truncationMode(.middle)
+                                    if row.isGroup { Text("\(row.count)").font(.system(size: 10)) }
+                                    Spacer(minLength: 0)
+                                }.font(.system(size: 11)).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
+                                    .padding(.leading, CGFloat(row.depth) * 10 + 6).frame(height: row.isGroup ? 34 : 28).contentShape(Rectangle())
+                            }.buttonStyle(.plain)
+                                .accessibilityLabel("\(row.label)，\(row.count) 个文件，\(row.isExpanded ? "展开" : "折叠")")
+                        }
+                    }
+                }.padding(.horizontal, 8)
+            }.focusable().focused($fileListFocused)
+                .onMoveCommand { direction in
+                    guard !model.writing, direction == .up || direction == .down else { return }
+                    let files = visibleTreeRows.compactMap(\.file)
+                    guard !files.isEmpty else { return }
+                    let current = files.firstIndex { $0.id == model.selectedFile }
+                    let next = current.map { min(files.count - 1, max(0, $0 + (direction == .down ? 1 : -1))) } ?? 0
+                    model.selectedFile = files[next].id
+                    proxy.scrollTo(files[next].id)
                 }
-            }
-        }.listStyle(.plain).scrollContentBackground(.hidden).environment(\.defaultMinListRowHeight, 34)
-            .frame(minHeight: 0, maxHeight: .infinity).disabled(model.writing)
+        }.frame(minHeight: 0, maxHeight: .infinity).disabled(model.writing)
             .overlay {
                 if model.changes?.files.isEmpty == true { Text("工作区干净").foregroundStyle(.secondary) }
-                else if !model.search.isEmpty && !(model.changes?.files.contains { $0.path.localizedCaseInsensitiveContains(model.search) } ?? false) { Text("没有匹配的文件").foregroundStyle(.secondary) }
+                else if !model.search.isEmpty && visibleTreeRows.isEmpty { Text("没有匹配的文件").foregroundStyle(.secondary) }
             }
     }
     private func changedFileRow(_ file: ChangedFile, depth: Int) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "doc.text").font(.system(size: 12)).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
             VStack(alignment: .leading, spacing: 4) {
-                Text((file.path as NSString).lastPathComponent).font(.system(size: 13)).lineLimit(1).truncationMode(.middle)
+                Text((file.path as NSString).lastPathComponent).font(.system(size: 14)).lineLimit(1).truncationMode(.middle)
                 if model.selectedFile == file.id, let snapshot = model.loadedDiffs[file.id] {
                     Text("+\(snapshot.additions)   −\(snapshot.deletions)").font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary)
                 }
@@ -282,7 +299,6 @@ struct WorkspaceView: View {
                     .buttonStyle(.plain).disabled(model.busy || !(model.changes?.files.contains { model.loadedDiffs[$0.id]?.reviewed != true } ?? false))
                     .help("下一个待评审文件（含未加载文件）").accessibilityLabel("下一个待评审文件")
             }.padding(.top, 7)
-            Text("先审阅差异，再选择暂存范围。")
         }.font(.system(size: 10)).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
             .padding(.horizontal, 18).padding(.bottom, 14).padding(.top, 5)
     }
@@ -330,7 +346,7 @@ struct WorkspaceView: View {
                 Button("原始补丁") { rawPatch = true }
             } label: { Text(rawPatch ? "补丁" : splitDiff ? "左右对照" : "统一差异") }
                 .menuStyle(.borderlessButton).fixedSize()
-            Button { model.review() } label: { Image(systemName: diff.reviewed ? "checkmark.circle" : "circle") }
+            Button { model.review() } label: { Text(diff.reviewed ? "已评审" : "待评审") }
                 .accessibilityLabel(diff.reviewed ? "已评审，切换评审状态" : "待评审，切换评审状态")
                 .disabled(model.busy).help("切换此内容快照的人工评审状态，不改变暂存区")
             Button(diff.side == "staged" ? "取消暂存" : "暂存文件") { stageConfirmation = true }
@@ -355,9 +371,9 @@ struct WorkspaceView: View {
             Button { model.prepareCommit() } label: {
                 Text("检查并提交 \(model.stagedFileCount) 个文件…").frame(maxWidth: .infinity)
             }.buttonStyle(WorkbenchButtonStyle(prominent: true))
+                .help("仅提交暂存区，下一步确认范围。")
                 .disabled(!model.canPrepareCommit).keyboardShortcut(.return, modifiers: .command)
-            Text("仅提交暂存区，下一步确认范围。")
-                .font(.system(size: 9)).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
+
         }.padding(12)
     }
     private var statusBar: some View {

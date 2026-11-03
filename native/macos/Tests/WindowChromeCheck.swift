@@ -1,0 +1,32 @@
+import AppKit
+import SwiftUI
+
+@main
+@MainActor
+enum WindowChromeCheck {
+    static func main() {
+        _ = NSApplication.shared
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 700),
+                              styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.isMovableByWindowBackground = true
+        for height: CGFloat in [700, 600, 760] {
+            window.setFrame(NSRect(x: 0, y: 0, width: 1100, height: height), display: false)
+            let controls = [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton].compactMap(window.standardWindowButton)
+            let actions = controls.map(\.action)
+            alignNativeWindowButtons(window)
+            for (index, button) in controls.enumerated() {
+                let parent = button.superview!
+                let center = parent.convert(NSPoint(x: button.frame.midX, y: button.frame.midY), to: nil)
+                assert(abs(center.y - (window.frame.height - 27)) < 0.5)
+                assert(parent.bounds.contains(button.frame), "Native traffic-light hit region must stay inside its parent")
+                assert(button.action == actions[index] && !button.isHidden && button.isEnabled)
+            }
+        }
+        window.close()
+        print("Native window chrome checks passed: real controls retain actions and hit regions aligned after resize")
+    }
+}

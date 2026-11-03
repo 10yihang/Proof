@@ -172,6 +172,7 @@ enum ScreenshotPreview {
             window.makeFirstResponder(nil)
             guard let view = window.contentView?.superview else { throw CaptureError.noView }
             view.layoutSubtreeIfNeeded()
+            alignNativeWindowButtons(window)
             view.displayIfNeeded()
             dumpNativeLayout(window)
             var layoutError: Error?

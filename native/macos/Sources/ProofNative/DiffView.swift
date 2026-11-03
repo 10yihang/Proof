@@ -41,7 +41,7 @@ struct SplitNativeDiffView: View {
             .background(Color(nsColor: WorkbenchPalette.panel))
             Divider()
             CodeTextView(identity: diff.id, rows: rows, numbered: true,
-                         lineNumbers: lineNumbers, scrollPair: scrollPair)
+                         lineNumbers: lineNumbers, scrollPair: scrollPair).clipped()
         }
         .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -371,6 +371,9 @@ final class DiffRuler: NSRulerView {
     @objc private func viewportDidChange(_ notification: Notification) { needsDisplay = true }
 
     override func drawHashMarksAndLabels(in rect: NSRect) {
+        NSGraphicsContext.saveGraphicsState()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        NSBezierPath(rect: bounds.intersection(rect)).addClip()
         WorkbenchPalette.canvas.setFill()
         bounds.fill()
         guard let text = scrollView?.documentView as? DiffTextView else { return }

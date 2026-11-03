@@ -65,11 +65,54 @@ struct WorkbenchButtonStyle: ButtonStyle {
     var prominent = false
     @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label.font(.system(size: 12, weight: prominent ? .medium : .regular))
-            .padding(.horizontal, 12).frame(height: 30)
+        configuration.label.font(.system(size: prominent ? 14 : 12, weight: prominent ? .medium : .regular))
+            .padding(.horizontal, 12).frame(height: prominent ? 40 : 30)
             .foregroundStyle(prominent ? Color.white : Color(nsColor: WorkbenchPalette.text))
             .background(prominent ? Color(nsColor: NSColor.systemBlue) : Color(nsColor: WorkbenchPalette.panel), in: RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(nsColor: WorkbenchPalette.border), lineWidth: prominent ? 0 : 0.7))
             .opacity(isEnabled ? (configuration.isPressed ? 0.72 : 1) : 0.4)
     }
+}
+
+/// Move the real AppKit controls, including their hit regions, onto the custom
+/// title row. No replacement traffic lights or synthetic close actions.
+@MainActor
+func alignNativeWindowButtons(_ window: NSWindow) {
+    for type: NSWindow.ButtonType in [.closeButton, .miniaturizeButton, .zoomButton] {
+        guard let button = window.standardWindowButton(type), let parent = button.superview else { continue }
+        let desired = NSPoint(x: 0, y: window.frame.height - 27)
+        let initialY = parent.convert(desired, from: nil).y - button.frame.height / 2
+        if initialY < parent.bounds.minY {
+            // Extend the native container downward so the moved controls remain
+            // inside their parent's real hit-test and clipping bounds.
+            let extra = parent.bounds.minY - initialY
+            var frame = parent.frame
+            frame.origin.y -= extra
+            frame.size.height += extra
+            parent.frame = frame
+        }
+        let center = parent.convert(desired, from: nil)
+        let y = center.y - button.frame.height / 2
+        if abs(button.frame.origin.y - y) > 0.5 {
+            button.setFrameOrigin(NSPoint(x: button.frame.origin.x, y: y))
+        }
+    }
+}
+struct NativeWindowChrome: NSViewRepresentable {
+    func makeNSView(context: Context) -> NativeWindowChromeView { NativeWindowChromeView() }
+    func updateNSView(_ view: NativeWindowChromeView, context: Context) { view.align() }
+}
+final class NativeWindowChromeView: NSView {
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        NotificationCenter.default.removeObserver(self)
+        if let window {
+            NotificationCenter.default.addObserver(self, selector: #selector(resized), name: NSWindow.didResizeNotification, object: window)
+            align()
+        }
+    }
+    deinit { NotificationCenter.default.removeObserver(self) }
+    @objc private func resized() { align() }
+    override func layout() { super.layout(); align() }
+    func align() { if let window { alignNativeWindowButtons(window) } }
 }

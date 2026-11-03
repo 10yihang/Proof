@@ -45,6 +45,8 @@ jobs:
           /tmp/proof-navigation-check
           swiftc native/macos/Sources/ProofNative/Models.swift native/macos/Sources/ProofNative/WorkbenchPalette.swift native/macos/Sources/ProofNative/DiffView.swift native/macos/Tests/SplitDiffCheck.swift -o /tmp/proof-split-check
           /tmp/proof-split-check
+          swiftc native/macos/Sources/ProofNative/WorkbenchPalette.swift native/macos/Tests/WindowChromeCheck.swift -o /tmp/proof-chrome-check
+          /tmp/proof-chrome-check
       - name: Build native app
         run: ./native/macos/build.sh
       - name: Verify local bundle signature and bridge protocol
