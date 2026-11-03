@@ -35,12 +35,14 @@ jobs:
           git --version
       - name: Rust bridge real-Git tests
         run: cargo test --locked -p proof-swift-bridge
-      - name: Check native change-tree behavior
+      - name: Check native tree, navigation, and commit guards (model-level)
         run: |
           swiftc native/macos/Sources/ProofNative/Models.swift native/macos/Sources/ProofNative/ChangesTree.swift native/macos/Tests/ChangesTreeCheck.swift -o /tmp/proof-tree-check
           /tmp/proof-tree-check
           swiftc native/macos/Sources/ProofNative/Models.swift native/macos/Sources/ProofNative/Bridge.swift native/macos/Sources/ProofNative/WorkspaceModel.swift native/macos/Tests/ReviewNavigationCheck.swift -o /tmp/proof-review-check
           /tmp/proof-review-check
+          swiftc native/macos/Sources/ProofNative/Models.swift native/macos/Sources/ProofNative/Bridge.swift native/macos/Sources/ProofNative/WorkspaceModel.swift native/macos/Tests/WorkspaceNavigationCheck.swift -o /tmp/proof-navigation-check
+          /tmp/proof-navigation-check
       - name: Build native app
         run: ./native/macos/build.sh
       - name: Verify local bundle signature and bridge protocol
@@ -58,32 +60,57 @@ jobs:
               p.stdin.close()
               assert p.wait(timeout=10) == 0
           PY
-      - name: Render actual SwiftUI Changes previews
-        timeout-minutes: 2
+      - name: Render actual SwiftUI pages (fixture rendering, not interaction tests)
+        timeout-minutes: 5
         run: |
-          for theme in light dark; do
-            for size in compact wide; do
-              args=()
-              if [[ "$size" == wide ]]; then args+=(--preview-wide); fi
-              "native/macos/build/Proof Native.app/Contents/MacOS/ProofNative" --capture-preview "$PWD/native/macos/build/screenshots" --preview-theme "$theme" "${args[@]}"
+          capture_failed=0
+          for page in changes history branches repositories settings; do
+            for theme in light dark; do
+              for size in compact wide; do
+                args=()
+                if [[ "$size" == wide ]]; then args+=(--preview-wide); fi
+                "native/macos/build/Proof Native.app/Contents/MacOS/ProofNative" --capture-preview "$PWD/native/macos/build/screenshots" --preview-page "$page" --preview-theme "$theme" "${args[@]}" || capture_failed=1
+                if [[ "$page" == changes ]]; then
+                  "native/macos/build/Proof Native.app/Contents/MacOS/ProofNative" --capture-preview "$PWD/native/macos/build/screenshots" --preview-page changes --preview-theme "$theme" --preview-collapsed "${args[@]}" || capture_failed=1
+                fi
+              done
             done
           done
           python3 - <<'PYVERIFY'
-          import pathlib, struct
-          for name in ('light-compact', 'dark-compact', 'light-wide', 'dark-wide'):
-              path = pathlib.Path(f'native/macos/build/screenshots/changes-{name}.png')
-              data = path.read_bytes()
-              assert data[:8] == b'\x89PNG\r\n\x1a\n', path
-              width, height = struct.unpack('>II', data[16:24])
-              assert width >= 1000 and height >= 600, (width, height)
-              assert len(data) > 20000, 'Capture suspiciously empty'
-              print(path, width, height, len(data))
+          import itertools, json, pathlib, struct
+          directory = pathlib.Path('native/macos/build/screenshots')
+          evidence = []
+          geometry_failures = []
+          for page, theme, size in itertools.product(('changes', 'history', 'branches', 'repositories', 'settings'), ('light', 'dark'), ('compact', 'wide')):
+              for collapsed in ((False, True) if page == 'changes' else (False,)):
+                  name = f'{page}-{theme}-{size}' + ('-collapsed' if collapsed else '')
+                  metadata = json.loads((directory / f'{name}.json').read_text())
+                  assert metadata['page'] == page and metadata['theme'] == theme and metadata['size'] == size
+                  assert metadata['sidebar'] == ('collapsed' if collapsed else 'expanded')
+                  assert metadata['fixtureData'] and not metadata['bridgeStarted'] and not metadata['gitOperations']
+                  for prefix in ('', 'sck-'):
+                      path = directory / f'{prefix}{name}.png'
+                      data = path.read_bytes()
+                      assert data[:8] == b'\x89PNG\r\n\x1a\n', path
+                      width, height = struct.unpack('>II', data[16:24])
+                      assert width >= 1000 and height >= 600, (path, width, height)
+                      assert len(data) > 20000, f'Capture suspiciously empty: {path}'
+                      print(path, width, height, len(data))
+                  evidence.append(metadata)
+                  if not metadata['geometryPassed']:
+                      geometry_failures.append(metadata['geometryError'])
+          assert len(evidence) == 24
+          (directory / 'evidence-index.json').write_text(json.dumps(evidence, indent=2))
+          assert not geometry_failures, '\n'.join(geometry_failures)
           PYVERIFY
+          test "$capture_failed" -eq 0
       - uses: actions/upload-artifact@v4
         if: ${{ always() && hashFiles('native/macos/build/screenshots/*.png') != '' }}
         with:
           name: Proof-Native-Screenshots-${{ github.sha }}
-          path: native/macos/build/screenshots/*.png
+          path: |
+            native/macos/build/screenshots/*.png
+            native/macos/build/screenshots/*.json
           if-no-files-found: error
           retention-days: 7
       - name: Package local-build artifact

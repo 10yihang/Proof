@@ -48,6 +48,22 @@ struct FileDiff: Decodable, Identifiable {
     let canStage: Bool
     var reviewed: Bool { !hunks.isEmpty && hunks.allSatisfy { $0.reviewState == "reviewed" } }
 }
+struct BranchEntry: Decodable, Identifiable, Hashable {
+    let name: String
+    let current: Bool
+    let oid: String
+    let remote: Bool
+    var id: String { (remote ? "refs/remotes/" : "refs/heads/") + name }
+}
+
+enum NativePreferences {
+    static let appearance = "proof.native.appearance"
+    static let compact = "proof.native.compact"
+    static let restoreSidebar = "proof.native.restoreSidebar"
+    static let sidebarVisible = "proof.native.sidebarVisible"
+    static let codeFontSize = "proof.native.codeFontSize"
+}
+
 struct CommitEntry: Decodable, Identifiable {
     let oid: String
     let parents: [String]

@@ -5,11 +5,12 @@ import SwiftUI
 @MainActor
 struct ProofNativeApp: App {
     @StateObject private var model = ScreenshotPreview.makeModel()
+    @AppStorage("proof.native.appearance") private var appearance = "system"
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     var body: some Scene {
         Window("Proof Native", id: "main") {
             WorkspaceView(model: model)
-                .preferredColorScheme(ScreenshotPreview.colorScheme)
+                .preferredColorScheme(ScreenshotPreview.colorScheme ?? (appearance == "light" ? .light : appearance == "dark" ? .dark : nil))
                 .frame(minWidth: 1000, minHeight: 560, alignment: .topLeading)
                 .task {
                     // Preserve the window title for accessibility and Window menus;

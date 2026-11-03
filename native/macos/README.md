@@ -2,7 +2,7 @@
 
 An independent macOS frontend for the existing `proof-core`, not a replacement
 for the Tauri app. No web view, copied Git implementation, agent CLI or new Rust
-runtime dependency. Requires macOS 13+, Swift 5.9+ (Xcode 15+), Rust and system Git.
+runtime dependency. Runs on macOS 13+. Building requires Xcode 26+ (the preview CI uses Xcode 27), Rust and system Git. New material APIs are availability-guarded for older macOS versions.
 
 ## Build and run on a Mac
 

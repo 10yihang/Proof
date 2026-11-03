@@ -42,12 +42,14 @@ struct CodeRow: Equatable {
 
 /// Real AppKit text selection and find, with a separate non-copying line-number ruler.
 struct CodeTextView: NSViewRepresentable {
+    @AppStorage("proof.native.codeFontSize") private var codeFontSize = 13.0
     let identity: String
     let rows: [CodeRow]
     let numbered: Bool
     final class Coordinator {
         var identity: String?
         var appearance: String?
+        var fontSize: Double?
         var rows: [CodeRow] = []
     }
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -89,17 +91,18 @@ struct CodeTextView: NSViewRepresentable {
 
     func updateNSView(_ scroll: DiffScrollView, context: Context) {
         let appearance = scroll.effectiveAppearance.name.rawValue
-        guard context.coordinator.identity != identity || context.coordinator.appearance != appearance || context.coordinator.rows != rows,
+        guard context.coordinator.identity != identity || context.coordinator.appearance != appearance || context.coordinator.rows != rows || context.coordinator.fontSize != codeFontSize,
               let text = scroll.documentView as? DiffTextView else { return }
         let changed = context.coordinator.identity != identity
         context.coordinator.identity = identity
         context.coordinator.appearance = appearance
         context.coordinator.rows = rows
+        context.coordinator.fontSize = codeFontSize
         let result = NSMutableAttributedString(string: "")
         var laidOut: [CodeRow] = []
         for var row in rows {
             row.range = NSRange(location: result.length, length: (row.text as NSString).length + 1)
-            result.append(Self.attributedLine(row))
+            result.append(Self.attributedLine(row, fontSize: max(11, min(18, codeFontSize))))
             laidOut.append(row)
         }
         text.rows = laidOut
@@ -110,14 +113,14 @@ struct CodeTextView: NSViewRepresentable {
         if changed { scroll.scrollToDocumentStartOnNextLayout() }
     }
 
-    private static func attributedLine(_ row: CodeRow) -> NSAttributedString {
+    private static func attributedLine(_ row: CodeRow, fontSize: Double) -> NSAttributedString {
         let paragraph = NSMutableParagraphStyle()
-        paragraph.minimumLineHeight = 22
-        paragraph.maximumLineHeight = 22
+        paragraph.minimumLineHeight = CGFloat(fontSize + 9)
+        paragraph.maximumLineHeight = CGFloat(fontSize + 9)
         paragraph.tabStops = []
-        paragraph.defaultTabInterval = 31.2
+        paragraph.defaultTabInterval = CGFloat(fontSize * 2.4)
         let result = NSMutableAttributedString(string: row.text + "\n", attributes: [
-            .font: NSFont.monospacedSystemFont(ofSize: 13, weight: .regular),
+            .font: NSFont.monospacedSystemFont(ofSize: CGFloat(fontSize), weight: .regular),
             .foregroundColor: row.kind == "header" ? WorkbenchPalette.secondary : WorkbenchPalette.text,
             .paragraphStyle: paragraph
         ])

@@ -3,46 +3,44 @@ import SwiftUI
 
 struct WorkspaceView: View {
     @ObservedObject var model: WorkspaceModel
-    @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    @AppStorage("proof.native.compact") private var compact = true
     @State private var trustConfirmation = false
     @State private var stageConfirmation = false
     @State private var rawPatch = false
     @State private var collapsed: Set<String> = []
     @State private var contextPopover = false
 
+    private var activeMode: String { model.workspace == nil && model.mode != "settings" ? "repositories" : model.mode }
+
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
+        NavigationSplitView(columnVisibility: Binding(
+            get: { model.sidebarVisible ? .all : .detailOnly },
+            set: { model.setSidebarVisible($0 != .detailOnly, persist: ScreenshotPreview.outputDirectory == nil) }
+        )) {
             GeometryReader { column in
                 repositoryNavigation
                     .frame(width: column.size.width, height: column.size.height, alignment: .topLeading)
             }
-            .navigationSplitViewColumnWidth(min: 168, ideal: 208, max: 240)
+            .navigationSplitViewColumnWidth(min: 176, ideal: 208, max: 250)
         } detail: {
             GeometryReader { viewport in
                 VStack(spacing: 0) {
                     branchBar.captureLayout("branch-header")
-                    HStack(spacing: 0) {
-                        filesPanel.frame(width: viewport.size.width < 1000 ? 250 : 310)
-                        rule
-                        VStack(spacing: 0) {
-                            if model.workspace == nil { welcome }
-                            else { selectedContent }
-                            if model.workspace != nil && model.mode != "history" {
-                                inlineCommit.captureLayout("commit-editor")
-                            }
-                        }.frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    pageContent(size: viewport.size)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .captureLayout("page-content")
                     statusBar
                 }.frame(width: viewport.size.width, height: viewport.size.height, alignment: .topLeading)
-                    .background(Color(nsColor: WorkbenchPalette.canvas))
+                    .background(Color(nsColor: WorkbenchPalette.navigation).opacity(0.55))
+                    .background(WorkbenchBackdrop())
             }
         }
         .navigationSplitViewStyle(.balanced)
         .navigationTitle(model.workspace?.name ?? "Proof")
         .toolbar { workbenchToolbar }
-        .toolbarBackground(Color(nsColor: WorkbenchPalette.panel), for: .windowToolbar)
         .toolbarBackground(.visible, for: .windowToolbar)
         .hideAutomaticToolbarTitle()
+        .hideAutomaticSidebarToggle()
         .tint(Color(nsColor: WorkbenchPalette.accent))
         .foregroundStyle(Color(nsColor: WorkbenchPalette.text))
         .font(.system(size: 12))
@@ -70,92 +68,137 @@ struct WorkspaceView: View {
     private var rule: some View { Rectangle().fill(Color(nsColor: WorkbenchPalette.border)).frame(width: 1) }
     private var horizontalRule: some View { Rectangle().fill(Color(nsColor: WorkbenchPalette.border)).frame(height: 1) }
 
-    @ToolbarContentBuilder private var workbenchToolbar: some ToolbarContent {
-        if #available(macOS 26.0, *) {
-            ToolbarItem(placement: .navigation) { repositoryTab }.sharedBackgroundVisibility(.hidden)
-            ToolbarItem(placement: .primaryAction) { openRepositoryButton }.sharedBackgroundVisibility(.hidden)
+    @ViewBuilder private func pageContent(size: CGSize) -> some View {
+        if model.mode == "settings" {
+            NativeSettingsView(model: model).padding(12)
+        } else if model.mode == "repositories" || model.workspace == nil {
+            RepositoryHomeView(model: model).padding(12)
+        } else if model.mode == "branches" {
+            BranchesView(model: model).padding(12)
+        } else if model.mode == "history" {
+            HistoryWorkbench(model: model, size: size).padding(12)
         } else {
-            ToolbarItem(placement: .navigation) { repositoryTab }
-            ToolbarItem(placement: .primaryAction) { openRepositoryButton }
+            HStack(alignment: .top, spacing: 12) {
+                VStack(spacing: 12) {
+                    filesPanel.workbenchCard()
+                    inlineCommit.captureLayout("commit-editor").workbenchCard()
+                }.frame(width: size.width < 1000 ? 248 : 292)
+                selectedContent.workbenchCard()
+            }.padding(12)
         }
     }
-    private var repositoryTab: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "folder")
-            Text(model.workspace?.name ?? "Proof").fontWeight(.semibold).lineLimit(1)
-            if model.workspace != nil {
-                Text("\(model.changes?.files.count ?? 0)").foregroundStyle(.secondary).font(.system(size: 10))
-                Spacer(minLength: 12)
-                Button { model.closeRepository() } label: { Image(systemName: "xmark").font(.system(size: 9)) }
-                    .buttonStyle(.plain).disabled(model.writing).help("关闭仓库").accessibilityLabel("关闭仓库")
+    @ToolbarContentBuilder private var workbenchToolbar: some ToolbarContent {
+        ToolbarItem(placement: .navigation) {
+            HStack(spacing: 12) {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.seal.fill").foregroundStyle(Color(nsColor: WorkbenchPalette.accent))
+                    Text("Proof").font(.system(size: 14, weight: .semibold))
+                }
+                Button { model.toggleSidebar() } label: {
+                    Image(systemName: "sidebar.left").frame(width: 28, height: 28)
+                }.buttonStyle(.plain).airyControlSurface()
+                    .help(model.sidebarVisible ? "收起侧边栏 ⌘⌥S" : "展开侧边栏 ⌘⌥S")
+                    .accessibilityLabel(model.sidebarVisible ? "收起侧边栏" : "展开侧边栏")
+                    .keyboardShortcut("s", modifiers: [.command, .option])
             }
-        }.font(.system(size: 12)).frame(width: 186, alignment: .leading).padding(.horizontal, 10).padding(.vertical, 6)
-            .background(Color(nsColor: WorkbenchPalette.raised), in: RoundedRectangle(cornerRadius: 5))
-            .help(model.workspace?.path ?? "Proof")
+        }
+        ToolbarItem(placement: .navigation) { repositoryTab }
+        ToolbarItem(placement: .primaryAction) { openRepositoryButton }
+    }
+    private var repositoryTab: some View {
+        Menu {
+            Button("所有仓库") { model.mode = "repositories" }
+            Divider()
+            ForEach(model.recent) { workspace in Button(workspace.name) { model.open(workspace.path) } }
+            Divider()
+            Button("打开仓库…") { model.pickRepository() }
+            if model.workspace != nil { Button("关闭当前仓库") { model.closeRepository() } }
+        } label: {
+            Label(model.mode == "settings" ? "设置" : model.mode == "repositories" || model.workspace == nil ? "仓库" : model.workspace!.name,
+                  systemImage: model.mode == "settings" ? "gearshape" : "shippingbox")
+                .font(.system(size: 12, weight: .medium)).lineLimit(1)
+                .frame(minWidth: 80, maxWidth: 210, alignment: .leading)
+        }.menuStyle(.borderlessButton).fixedSize().disabled(model.writing)
+            .help(model.workspace?.path ?? "本地仓库")
     }
     private var openRepositoryButton: some View {
-        Button { model.pickRepository() } label: { Image(systemName: "plus") }
-            .buttonStyle(.plain).disabled(model.writing).help("打开仓库（替换当前仓库）").accessibilityLabel("打开仓库")
+        Button { model.pickRepository() } label: { Label("打开仓库", systemImage: "folder.badge.plus") }
+            .disabled(model.writing).help("打开仓库 ⌘O")
     }
     private var repositoryNavigation: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text(model.workspace?.name ?? "Proof").font(.system(size: 18, weight: .semibold)).lineLimit(1)
-                Spacer(minLength: 6)
-                Menu {
-                    Button("打开仓库…") { model.pickRepository() }
-                    ForEach(model.recent) { workspace in Button(workspace.name) { model.open(workspace.path) } }
-                } label: { Image(systemName: "chevron.down") }
-                    .menuStyle(.borderlessButton).fixedSize().disabled(model.writing).help("仓库")
-            }.padding(.top, 19).padding(.bottom, 10)
-            HStack { Text("本地仓库"); Spacer(); Image(systemName: "folder") }
-                .font(.system(size: 11)).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary)).padding(.bottom, 18)
-            navigationButton("本地更改", icon: "doc.badge.plus", mode: "changes", key: "1", count: model.changes?.files.count)
+            Text("工作空间").font(.system(size: 11)).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
+                .padding(.horizontal, 10).padding(.top, 20).padding(.bottom, 12)
+            navigationButton("所有仓库", icon: "square.stack.3d.up", mode: "repositories", key: "0", count: model.recent.count)
+            navigationButton("工作区", icon: "tray", mode: "changes", key: "1", count: model.changes?.files.count)
             navigationButton("提交历史", icon: "clock.arrow.circlepath", mode: "history", key: "2", count: nil)
-            VStack(alignment: .leading, spacing: 10) {
-                Text("当前分支").font(.system(size: 11)).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
-                Label(model.changes?.branch ?? (model.workspace == nil ? "未打开仓库" : "分离的 HEAD"), systemImage: "arrow.triangle.branch")
-                    .font(.system(size: 11)).lineLimit(2).padding(8).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color(nsColor: WorkbenchPalette.raised), in: RoundedRectangle(cornerRadius: 5))
-                if let head = model.changes?.head { Text(String(head.prefix(10))).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary).textSelection(.enabled) }
-            }.padding(.top, 30)
+            navigationButton("分支", icon: "arrow.triangle.branch", mode: "branches", key: "3", count: nil)
+            if let branch = model.changes?.branch {
+                Label(branch, systemImage: "arrow.triangle.branch")
+                    .font(.system(size: 11)).foregroundStyle(Color(nsColor: WorkbenchPalette.accent))
+                    .lineLimit(2).padding(.leading, 28).padding(.vertical, 12).help(branch)
+            }
+            Divider().padding(.horizontal, 10).padding(.vertical, 14)
+            VStack(alignment: .leading, spacing: 16) {
+                unavailableNavigation("远程仓库", icon: "network")
+                unavailableNavigation("标签", icon: "tag")
+                unavailableNavigation("储藏", icon: "archivebox")
+            }.padding(.horizontal, 10)
             Spacer(minLength: 12)
-            VStack(alignment: .leading, spacing: 8) {
-                if model.busy {
-                    HStack { ProgressView().controlSize(.mini); Text(model.activity).lineLimit(2) }
-                    if !model.writing { Button("取消读取") { model.cancelRead() }.buttonStyle(.plain) }
-                }
-                if let workspace = model.workspace {
-                    if workspace.trusted { Label("已信任仓库", systemImage: "checkmark.shield").help(workspace.path) }
+            if model.busy {
+                HStack(spacing: 6) { ProgressView().controlSize(.mini); Text(model.activity).lineLimit(2) }
+                    .font(.caption).padding(.horizontal, 10)
+                if !model.writing { Button("取消读取") { model.cancelRead() }.buttonStyle(.plain).padding(10) }
+            }
+            if let workspace = model.workspace {
+                Group {
+                    if workspace.trusted { Label("已信任仓库", systemImage: "checkmark.shield") }
                     else { Button { trustConfirmation = true } label: { Label("只读 · 信任仓库…", systemImage: "lock") }.buttonStyle(.plain).disabled(model.busy) }
-                }
-                Text("评审、暂存与提交相互独立")
-            }.font(.system(size: 10)).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
-                .padding(.bottom, 14).captureLayout("sidebar-footer")
-        }.padding(.horizontal, 12).background(Color(nsColor: WorkbenchPalette.navigation))
+                }.font(.system(size: 10)).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
+                    .padding(.horizontal, 10).padding(.bottom, 16)
+            }
+            navigationButton("设置", icon: "gearshape", mode: "settings", key: ",", count: nil)
+                .padding(.bottom, 12).captureLayout("sidebar-footer")
+        }.padding(.horizontal, 12)
+            .background(Color(nsColor: WorkbenchPalette.navigation).opacity(0.35))
+            .background(.ultraThinMaterial)
+    }
+    private func unavailableNavigation(_ title: String, icon: String) -> some View {
+        HStack(spacing: 9) {
+            Image(systemName: icon).frame(width: 16)
+            Text(title)
+            Spacer()
+            Text("未接入").font(.system(size: 9))
+        }.foregroundStyle(Color(nsColor: WorkbenchPalette.secondary).opacity(0.7))
+            .help("此原生版本尚未接入该功能，请使用现有 Git 工具。")
+            .accessibilityLabel("\(title)，此原生版本未接入")
     }
     private func navigationButton(_ title: String, icon: String, mode: String, key: KeyEquivalent, count: Int?) -> some View {
         Button { model.mode = mode } label: {
             HStack(spacing: 9) { Image(systemName: icon).frame(width: 16); Text(title); Spacer(minLength: 2); if let count { Text("\(count)").font(.system(size: 11)) } }
-                .padding(.horizontal, 10).frame(height: 34).contentShape(Rectangle())
-                .background(model.mode == mode ? Color(nsColor: WorkbenchPalette.selection) : .clear, in: RoundedRectangle(cornerRadius: 5))
+                .padding(.horizontal, 10).frame(height: compact ? 36 : 42).contentShape(Rectangle())
+                .background(activeMode == mode ? Color(nsColor: WorkbenchPalette.selection) : .clear, in: RoundedRectangle(cornerRadius: 8))
         }.buttonStyle(.plain).disabled(model.writing).keyboardShortcut(key)
-            .accessibilityAddTraits(model.mode == mode ? .isSelected : []).padding(.bottom, 3)
+            .accessibilityAddTraits(activeMode == mode ? .isSelected : []).padding(.bottom, 3)
     }
     private var branchBar: some View {
         HStack(spacing: 18) {
-            Label(model.changes?.branch ?? "本地仓库", systemImage: "arrow.triangle.branch")
-                .lineLimit(1).font(.system(size: 11)).help(model.changes?.branch ?? "")
-            Button { model.refresh() } label: { Label("刷新", systemImage: "arrow.clockwise") }
-                .buttonStyle(.plain).disabled(model.workspace == nil || model.busy).help("刷新仓库 ⌘R")
+            if let workspace = model.workspace {
+                Label(model.changes?.branch ?? "分离的 HEAD", systemImage: "arrow.triangle.branch")
+                    .lineLimit(1).help(workspace.path)
+                Button { model.refresh() } label: { Label("刷新", systemImage: "arrow.clockwise") }
+                    .buttonStyle(.plain).disabled(model.busy).help("刷新仓库 ⌘R")
+            } else {
+                Text(model.mode == "settings" ? "偏好设置" : "本地 Git 仓库").fontWeight(.medium)
+            }
             Spacer(minLength: 4)
-            Button { contextPopover.toggle() } label: { Label("上下文", systemImage: "sidebar.right") }
-                .buttonStyle(.plain).help("当前快照与人工评审状态")
-                .popover(isPresented: $contextPopover) { ProofContextInspector(model: model).frame(width: 300, height: 470) }
+            if model.workspace != nil {
+                Button { contextPopover.toggle() } label: { Label("上下文", systemImage: "sidebar.right") }
+                    .buttonStyle(.plain).help("当前快照与人工评审状态")
+                    .popover(isPresented: $contextPopover) { ProofContextInspector(model: model).frame(width: 300, height: 470) }
+            }
         }.font(.system(size: 11)).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
-            .padding(.horizontal, 20).frame(height: 42)
-            .background(Color(nsColor: WorkbenchPalette.canvas))
-            .overlay(alignment: .bottom) { horizontalRule }
+            .padding(.horizontal, 20).frame(height: 38)
     }
     private var filesPanel: some View {
         VStack(spacing: 0) {
@@ -169,12 +212,12 @@ struct WorkspaceView: View {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 TextField(model.mode == "history" ? "筛选已加载提交…" : "筛选文件…", text: $model.search)
                     .textFieldStyle(.plain).font(.system(size: 11))
-            }.padding(8).background(Color(nsColor: WorkbenchPalette.raised), in: RoundedRectangle(cornerRadius: 5))
+            }.padding(8).background(Color(nsColor: WorkbenchPalette.raised), in: RoundedRectangle(cornerRadius: 8))
                 .padding(.horizontal, 12).padding(.bottom, 10)
             if model.mode == "history" { historyList }
             else { changedFiles }
             if model.mode != "history" { reviewProgress }
-        }.frame(maxHeight: .infinity).background(Color(nsColor: WorkbenchPalette.panel)).captureLayout("files-column")
+        }.frame(maxHeight: .infinity).captureLayout("files-column")
     }
     private var changedFiles: some View {
         List(selection: Binding<String?>(get: { model.selectedFile }, set: { selection in
@@ -306,27 +349,26 @@ struct WorkspaceView: View {
             .overlay(alignment: .bottom) { horizontalRule }
     }
     private var inlineCommit: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("提交").fontWeight(.semibold)
-                Text("仅提交已暂存的 \(model.stagedFileCount) 个文件").foregroundStyle(.secondary)
+                Text("提交").font(.system(size: 12, weight: .semibold))
                 Spacer()
-            }.font(.system(size: 10))
+                Text("已暂存 \(model.stagedFileCount) 个文件").font(.system(size: 10)).foregroundStyle(.secondary)
+            }
             ZStack(alignment: .topLeading) {
-                if model.message.isEmpty { Text("填写提交信息…").foregroundStyle(.secondary).padding(.horizontal, 7).padding(.top, 7).allowsHitTesting(false) }
-                TextEditor(text: $model.message).font(.system(size: 11)).scrollContentBackground(.hidden)
-                    .padding(3).disabled(model.writing).accessibilityLabel("提交信息")
-            }.frame(height: 54).background(Color(nsColor: WorkbenchPalette.raised), in: RoundedRectangle(cornerRadius: 5))
-                .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color(nsColor: WorkbenchPalette.border), lineWidth: 1))
-            HStack {
-                Text("先检查范围，再确认提交").foregroundStyle(.secondary)
-                Spacer()
-                Button("检查提交…") { model.prepareCommit() }.buttonStyle(WorkbenchButtonStyle(prominent: true))
-                    .disabled(!model.canPrepareCommit).keyboardShortcut(.return, modifiers: .command)
-            }.font(.system(size: 10))
-        }.padding(.horizontal, 18).padding(.vertical, 12)
-            .background(Color(nsColor: WorkbenchPalette.panel))
-            .overlay(alignment: .top) { horizontalRule }
+                if model.message.isEmpty { Text("填写提交说明…").foregroundStyle(.secondary).padding(8).allowsHitTesting(false) }
+                TextEditor(text: $model.message).font(.system(size: 12)).scrollContentBackground(.hidden)
+                    .padding(4).disabled(model.writing).accessibilityLabel("提交信息")
+            }.frame(height: compact ? 76 : 94)
+                .background(Color(nsColor: WorkbenchPalette.panel), in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(nsColor: WorkbenchPalette.border), lineWidth: 0.7))
+            Button { model.prepareCommit() } label: {
+                Text("检查并提交 \(model.stagedFileCount) 个文件…").frame(maxWidth: .infinity)
+            }.buttonStyle(WorkbenchButtonStyle(prominent: true))
+                .disabled(!model.canPrepareCommit).keyboardShortcut(.return, modifiers: .command)
+            Text("仅提交暂存区，下一步确认范围。")
+                .font(.system(size: 9)).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
+        }.padding(12)
     }
     private var statusBar: some View {
         HStack {
@@ -334,7 +376,7 @@ struct WorkspaceView: View {
             Spacer()
             if model.diff != nil { Text("只读 Diff") }
         }.font(.system(size: 9)).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
-            .padding(.horizontal, 18).frame(height: 24).background(Color(nsColor: WorkbenchPalette.navigation))
+            .padding(.horizontal, 18).frame(height: 24)
             .overlay(alignment: .top) { horizontalRule }.captureLayout("status-bar")
     }
     private var welcome: some View {
@@ -358,18 +400,12 @@ struct WorkspaceView: View {
     }
 }
 
-private struct WorkbenchButtonStyle: ButtonStyle {
-    var prominent = false
-    @Environment(\.isEnabled) private var isEnabled
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label.font(.system(size: 11)).padding(.horizontal, 11).frame(height: 27)
-            .foregroundStyle(prominent ? Color(nsColor: WorkbenchPalette.canvas) : Color(nsColor: WorkbenchPalette.text))
-            .background(prominent ? Color(nsColor: WorkbenchPalette.accent) : Color(nsColor: WorkbenchPalette.raised), in: RoundedRectangle(cornerRadius: 5))
-            .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color(nsColor: WorkbenchPalette.border), lineWidth: prominent ? 0 : 1))
-            .opacity(isEnabled ? (configuration.isPressed ? 0.7 : 1) : 0.4)
-    }
-}
 private extension View {
+    @ViewBuilder func hideAutomaticSidebarToggle() -> some View {
+        if #available(macOS 14.0, *) { self.toolbar(removing: .sidebarToggle) }
+        else { self }
+    }
+
     @ViewBuilder func hideAutomaticToolbarTitle() -> some View {
         if #available(macOS 15.0, *) { self.toolbar(removing: .title) }
         else { self }

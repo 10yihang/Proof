@@ -11,6 +11,10 @@ final class WorkspaceModel: ObservableObject {
     // Only bridge-returned snapshots count toward loaded review coverage.
     @Published var loadedDiffs: [String: FileDiff] = [:]
     @Published var commits: [CommitEntry] = []
+    @Published var branches: [BranchEntry] = []
+    @Published var selectedBranch: String?
+    @Published var branchesLoaded = false
+    @Published var sidebarVisible: Bool
     @Published var commitPatch: String?
     @Published var selectedFile: String?
     @Published var selectedCommit: String?
@@ -26,6 +30,22 @@ final class WorkspaceModel: ObservableObject {
     @Published var hasMoreHistory = false
     private var task: Task<Void, Never>?
     private var generation = 0
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        let restore = defaults.object(forKey: NativePreferences.restoreSidebar) as? Bool ?? true
+        sidebarVisible = restore ? (defaults.object(forKey: NativePreferences.sidebarVisible) as? Bool ?? true) : true
+    }
+
+    func setSidebarVisible(_ visible: Bool, persist: Bool = true) {
+        sidebarVisible = visible
+        if persist, defaults.object(forKey: NativePreferences.restoreSidebar) as? Bool ?? true {
+            defaults.set(visible, forKey: NativePreferences.sidebarVisible)
+        }
+    }
+
+    func toggleSidebar() { setSidebarVisible(!sidebarVisible) }
 
     var stagedFileCount: Int { changes?.files.filter { $0.side == "staged" }.count ?? 0 }
     var canPrepareCommit: Bool {
@@ -81,7 +101,8 @@ final class WorkspaceModel: ObservableObject {
         cancelRead()
         workspace = nil; changes = nil; diff = nil; loadedDiffs = [:]
         selectedFile = nil; selectedCommit = nil; commitPatch = nil
-        commits = []; preview = nil; message = ""; search = ""; status = ""
+        commits = []; branches = []; selectedBranch = nil; branchesLoaded = false
+        preview = nil; message = ""; search = ""; status = ""
         mode = "changes"
     }
     func requiresDraftConfirmation(for path: String) -> Bool {
@@ -106,6 +127,7 @@ final class WorkspaceModel: ObservableObject {
             if self.workspace?.id != workspace.id { self.message = "" }
             self.workspace = changes.workspace; self.changes = changes
             self.loadedDiffs = [:]
+            self.branches = []; self.selectedBranch = nil; self.branchesLoaded = false
             self.diff = nil; self.selectedFile = nil; self.selectedCommit = nil
             self.commitPatch = nil; self.commits = []; self.preview = nil; self.mode = "changes"
             self.status = "仓库已载入"
@@ -113,7 +135,7 @@ final class WorkspaceModel: ObservableObject {
         }
     }
     func refresh() {
-        guard let workspace else { return }
+        guard let workspace, !writing else { return }
         preview = nil
         run("正在刷新仓库") { try await self.reload(workspace.id) }
     }
@@ -127,6 +149,8 @@ final class WorkspaceModel: ObservableObject {
             let rows: [CommitEntry] = try await bridge.call("history", ["workspace": id, "offset": 0], cancellable: !writing)
             try Task.checkCancellation()
             commits = rows; hasMoreHistory = !rows.isEmpty
+        } else if mode == "branches" {
+            try await reloadBranches(id)
         }
     }
     func changeMode() {
@@ -136,6 +160,21 @@ final class WorkspaceModel: ObservableObject {
         loadedDiffs = [:]
         diff = nil; selectedFile = nil; commitPatch = nil; selectedCommit = nil; preview = nil
         if mode == "history" { loadHistory(reset: true) }
+        if mode == "branches" { loadBranches() }
+    }
+    func loadBranches() {
+        guard let workspace, !writing else { return }
+        branchesLoaded = false
+        run("正在读取分支") { try await self.reloadBranches(workspace.id) }
+    }
+    private func reloadBranches(_ id: String) async throws {
+        let rows: [BranchEntry] = try await bridge.call("branches", ["workspace": id], cancellable: !writing)
+        try Task.checkCancellation()
+        branches = rows
+        branchesLoaded = true
+        if !rows.contains(where: { $0.id == selectedBranch }) {
+            selectedBranch = rows.first(where: \.current)?.id ?? rows.first?.id
+        }
     }
     func loadHistory(reset: Bool) {
         guard let workspace else { return }
@@ -170,7 +209,7 @@ final class WorkspaceModel: ObservableObject {
         }
     }
     func loadCommit() {
-        guard let workspace, let oid = selectedCommit else { return }
+        guard !writing, let workspace, let oid = selectedCommit else { return }
         commitPatch = nil
         run("正在读取提交") {
             let patch: String = try await self.bridge.call("commit_diff", ["workspace": workspace.id, "oid": oid, "parent": 0])

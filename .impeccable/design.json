@@ -1,8 +1,8 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-11-02T10:19:00Z",
-  "title": "Proof Native — Fork layout / Linear visual workbench",
-  "surface": "native/macos/Changes",
+  "generatedAt": "2026-11-03T04:02:00Z",
+  "title": "Proof Native — airy card workbench",
+  "surface": "native/macos",
   "mode": "operate",
   "extensions": {
     "nativeImplementation": {
@@ -14,22 +14,24 @@
         "native/macos/Sources/ProofNative/ChangesTree.swift",
         "native/macos/Sources/ProofNative/WorkspaceModel.swift",
         "native/macos/Sources/ProofNative/ContextInspector.swift",
-        "native/macos/Sources/ProofNative/LayoutDiagnostics.swift"
+        "native/macos/Sources/ProofNative/LayoutDiagnostics.swift",
+        "native/macos/Sources/ProofNative/RepositoryPages.swift",
+        "native/macos/Sources/ProofNative/HistoryWorkbench.swift"
       ],
       "units": "pt",
       "tokens": {
-        "navigationMin": 168,
+        "navigationMin": 176,
         "navigationIdeal": 208,
-        "navigationMax": 240,
-        "filesWide": 310,
-        "filesCompact": 250,
+        "navigationMax": 250,
+        "filesWide": 292,
+        "filesCompact": 248,
         "filesBreakpointDetailWidth": 1000,
-        "branchBarHeight": 42,
+        "branchBarHeight": 38,
         "filesTitleHeight": 44,
         "fileHeaderHeight": 50,
         "comparisonHeight": 34,
         "statusHeight": 24,
-        "commitTextHeight": 54,
+        "commitTextHeight": 76,
         "contextPopoverWidth": 300,
         "contextPopoverHeight": 470,
         "fileRowHeight": 34,
@@ -41,76 +43,78 @@
         "codeFontSize": 13,
         "codeLineHeight": 22,
         "gutterWidth": 105,
-        "controlRadius": 5,
-        "separatorWidth": 1
+        "controlRadius": 8,
+        "separatorWidth": 1,
+        "cardRadius": 14,
+        "cardGap": 12
       },
       "colors": {
         "canvas": {
           "light": "#FFFFFF",
-          "dark": "#1B1B1E"
+          "dark": "#1B2230"
         },
         "navigation": {
-          "light": "#F4F4F6",
-          "dark": "#19191C"
+          "light": "#EAF1FC",
+          "dark": "#151E2D"
         },
         "panel": {
-          "light": "#F8F8FA",
-          "dark": "#202023"
+          "light": "#F9FBFF",
+          "dark": "#202A3A"
         },
         "raised": {
-          "light": "#EEEEF1",
-          "dark": "#29292E"
+          "light": "#F1F5FD",
+          "dark": "#29364A"
         },
         "selection": {
-          "light": "#E3E1EA",
-          "dark": "#34323B"
+          "light": "#D9E8FF",
+          "dark": "#254777"
         },
         "border": {
-          "light": "#DDDDE3",
-          "dark": "#303036"
+          "light": "#D6DFEF",
+          "dark": "#3A4960"
         },
         "text": {
-          "light": "#292830",
-          "dark": "#D3D1DB"
+          "light": "#17243D",
+          "dark": "#EDF3FF"
         },
         "secondary": {
-          "light": "#65626F",
-          "dark": "#A6A3B0"
+          "light": "#536582",
+          "dark": "#B1C1DA"
         },
         "accent": {
-          "light": "#655779",
-          "dark": "#D8D2EC"
+          "light": "#0964EC",
+          "dark": "#7BB2FF"
         },
         "addition": {
-          "light": "#E8F1EB",
-          "dark": "#21342B"
+          "light": "#ECF9EF",
+          "dark": "#213B30"
         },
         "deletion": {
-          "light": "#F6E9EC",
-          "dark": "#38282D"
+          "light": "#FFF0F1",
+          "dark": "#442B35"
         },
         "hunk": {
-          "light": "#EFECF5",
-          "dark": "#27232F"
+          "light": "#ECF2FD",
+          "dark": "#29374D"
         },
         "additionInk": {
-          "light": "#3A6C4C",
-          "dark": "#A4CBB0"
+          "light": "#23733D",
+          "dark": "#9DDDAD"
         },
         "deletionInk": {
-          "light": "#985662",
-          "dark": "#D5A5AF"
+          "light": "#B2384B",
+          "dark": "#FFACB8"
         }
       },
-      "navigation": "Native root NavigationSplitView; repository navigation plus detail-owned files/Diff/inline checked commit. Both native columns use local viewport size boundaries. No root inset overlay or guessed titlebar padding.",
-      "windowToolbar": "unifiedCompact; single real active repository tab in navigation placement, open in primaryAction; no principal title badge. Native toolbar uses panel color preference. macOS26+ tab item shared background hidden; automatic title removal availability guarded.",
-      "fonts": "SF system / Chinese system fallback; AppKit monospaced code13pt,22pt lines; offline",
+      "navigation": "Five-page native NavigationSplitView with always-available toolbar collapse/restore and persisted optional visibility. Left files/composer cards; flexible opaque code.",
+      "windowToolbar": "Native unifiedCompact; Proof, guarded macOS26 glass sidebar control with material fallback, repository menu, open action.",
+      "fonts": "System UI/Chinese fallback; native monospaced code11–18pt, default13 with font+9 line height.",
       "icons": "SF Symbols",
       "language": "Chinese app-owned UI; source code, repository metadata and backend diagnostics retain original values.",
       "treeBehavior": {
         "scope": "Both staged and unstaged groups; compressed folders, search and collapse",
         "identity": "side + path",
-        "selection": "Soft neutral-purple row; not a review approval",
+        "selection": "Blue row, independent of human review",
         "metadata": "Status letter, manual review check for loaded content, known selected snapshot additions/deletions"
       },
       "reviewCoverage": {
@@ -135,84 +139,39 @@
       },
       "inlineCommit": "Real staged count and shared canPrepareCommit guard; preview/confirmation remains mandatory; no implicit push or amend.",
       "scope": {
-        "included": "Approved Fork-layout/Linear-visual native Changes and history reading; inline checked local commit",
-        "unchanged": "Original Web/Tauri guidance and Rust backend",
+        "included": "Airy card Changes, History, read-only Branches, recent Repositories, working local Settings.",
+        "unchanged": "Web/Tauri and core Git implementations; bridge adds only read-only branches dispatch.",
         "notImplemented": [
-          "Multi-repository tabs/state",
+          "Multi-repository state",
           "Fetch/pull/push",
-          "Branch switching, stash, tags and remotes navigation",
-          "Files editor",
-          "Full History graph/comparison tabs",
-          "AI/session context or reported validation",
+          "Branch creation/switch/merge/delete",
+          "Stash/tags/remote actions",
+          "Complete history graph",
           "Split diff",
-          "Hunk staging/navigation and expanded context",
+          "Hunk actions",
+          "AI/observer",
           "Amend"
         ]
       },
       "validation": {
-        "status": "SHIP scoped to resolved visual fixes and captured layout; not user aesthetic acceptance, full interaction or accessibility validation",
-        "reference": "User-approved full synthetic Fork-layout/Linear-visual concept; supersedes CodeEdit and B-topbar",
-        "required": "Four actual native light/dark captures verified at1440x677 and1024x674; geometry and state checks pass",
+        "status": "Pending current CI and native screenshot review",
+        "reference": "Five user-approved airy card concepts, superseding gray Linear native direction",
+        "required": "24 native light/dark compact/wide page and sidebar captures, model and real-Git tests",
         "olderSystemRuntimeTested": false,
-        "deploymentTarget": "macOS13; final Swift minos13.0, Rust sidecar minos11.0, Info.plist13.0 verified; older runtime untested",
         "fixture": "演示数据 · 不执行 Git 操作",
-        "pixelIdenticalClaim": false,
-        "sourceSHA": "c6be5fadf7c8d19e7fb9ddcb7bb742da1354f865",
-        "ciRun": "https://github.com/10yihang/Proof/actions/runs/41432134236",
-        "ciJob": 125233030388,
-        "runtime": "macOS27.0.1 / Xcode27.1 / SDK27.0",
-        "checks": [
-          "4 Rust bridge real-Git tests",
-          "Swift tree/state/draft/write guard checks",
-          "Release build",
-          "Bundle signature and bridge protocol",
-          "Four native captures and geometry assertions"
-        ],
-        "captureSizes": {
-          "wide": "1440x677",
-          "compact": "1024x674"
-        },
-        "geometryEvidence": {
-          "nativeTitlebarHeight": 40,
-          "branchBarBottom": 82,
-          "fileHeaderTop": 82,
-          "diffHeightCompact": 350,
-          "diffHeightWide": 353,
-          "inlineCommitHeight": 134,
-          "statusHeight": 24
-        },
-        "initialScroll": "Native clip insets respected after layout on content identity changes only; all four captures startsVisible=true",
-        "deploymentEvidence": {
-          "Swift": "13.0",
-          "Rust": "11.0",
-          "Info.plist": "13.0",
-          "SDK": "27.0"
-        }
+        "pixelIdenticalClaim": false
       }
     }
   },
   "narrative": {
-    "northStar": "Fork’s repository/files/diff workflow, Linear’s quiet gray hierarchy; preserve real Proof safety.",
-    "overview": "Full approved concept supersedes prior native directions, not original Web/Tauri. Compact repository tab chrome, navigation, partitioned files, solid code and inline checked commit. Unavailable concept features are omitted honestly.",
+    "northStar": "Light translucent shell, crisp independent cards and practical dense Git reading.",
+    "overview": "Approved five-page airy direction, truthful real capabilities and existing safety.",
     "keyCharacteristics": [
-      "Native compact single-repository tab",
-      "Ideal208pt repository navigation",
-      "310/250pt files and flexible Diff",
-      "Muted adaptive gray/purple palette",
-      "Chinese app-owned UI",
-      "Inline checked commit and independent human review"
-    ],
-    "dos": [
-      "Follow current approved full concept hierarchy.",
-      "Use actual repository metadata and loaded snapshot coverage.",
-      "Keep trust/draft/stale-write/confirmation guards.",
-      "Verify new native captures rather than reusing prior acceptance."
-    ],
-    "donts": [
-      "Do not fake unavailable Git controls.",
-      "Do not imply unknown content was reviewed.",
-      "Do not reintroduce large empty titlebar or title capsule.",
-      "Do not treat concept approval as runtime or aesthetic acceptance."
+      "Native foldable navigation",
+      "Separate files/composer/code cards",
+      "Blue semantic emphasis",
+      "Chinese UI",
+      "Read-only branch browsing and real local preferences"
     ]
   }
 }

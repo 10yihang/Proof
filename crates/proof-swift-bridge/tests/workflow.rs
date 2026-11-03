@@ -157,6 +157,10 @@ fn protocol_is_a_closed_whitelist() {
         "push",
         "discard",
         "set_preferences",
+        "checkout",
+        "create_branch",
+        "delete_branch",
+        "fetch",
     ] {
         assert!(
             serde_json::from_value::<Request>(json!({"id":1,"command":{"method":method}})).is_err()
@@ -168,4 +172,51 @@ fn protocol_is_a_closed_whitelist() {
     .is_err());
     let _: Command =
         serde_json::from_value(json!({"method":"open", "path":"/tmp/a\n\"b"})).unwrap();
+}
+
+#[test]
+fn branches_are_read_only_and_include_local_and_cached_remote_refs() {
+    let repo = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    git(repo.path(), &["init", "-q"]);
+    git(repo.path(), &["config", "user.name", "Bridge Test"]);
+    git(repo.path(), &["config", "user.email", "test@example.invalid"]);
+    let mut core = Proof::open(data.path()).unwrap();
+    let workspace = call(&mut core, json!({"method":"open", "path":repo.path()})).unwrap();
+    let id = workspace["id"].as_str().unwrap();
+    let request = json!({"method":"branches", "workspace":id});
+    let command: Command = serde_json::from_value(request.clone()).unwrap();
+    assert!(command.cancellable());
+    assert_eq!(call(&mut core, request.clone()).unwrap(), json!([]));
+
+    fs::write(repo.path().join("a"), "one\n").unwrap();
+    git(repo.path(), &["add", "a"]);
+    git(repo.path(), &["commit", "-qm", "initial"]);
+    git(repo.path(), &["branch", "feature/native"]);
+    let head = git(repo.path(), &["rev-parse", "HEAD"]);
+    let current = git(repo.path(), &["branch", "--show-current"]);
+    git(repo.path(), &["update-ref", "refs/remotes/origin/main", &head]);
+    fs::write(repo.path().join("a"), "two\n").unwrap();
+    git(repo.path(), &["add", "a"]);
+    let status_before = git(repo.path(), &["status", "--porcelain"]);
+    let index_before = fs::read(repo.path().join(".git/index")).unwrap();
+
+    let rows = call(&mut core, request).unwrap();
+    let rows = rows.as_array().unwrap();
+    assert_eq!(rows.len(), 3);
+    assert!(rows.iter().any(|row| row["name"] == current
+        && row["current"] == true
+        && row["remote"] == false));
+    assert!(rows.iter().any(|row| row["name"] == "feature/native"
+        && row["current"] == false
+        && row["remote"] == false));
+    assert!(rows
+        .iter()
+        .any(|row| row["name"] == "origin/main" && row["remote"] == true));
+    assert!(rows.iter().all(|row| row["oid"] == head));
+    assert_eq!(fs::read(repo.path().join(".git/index")).unwrap(), index_before);
+    assert_eq!(git(repo.path(), &["status", "--porcelain"]), status_before);
+    assert_eq!(git(repo.path(), &["rev-parse", "HEAD"]), head);
+    assert_eq!(git(repo.path(), &["branch", "--show-current"]), current);
+    assert_eq!(workspace["trusted"], false);
 }

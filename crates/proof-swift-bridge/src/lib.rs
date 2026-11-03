@@ -33,6 +33,9 @@ pub enum Command {
         path: String,
         side: Side,
     },
+    Branches {
+        workspace: String,
+    },
     History {
         workspace: String,
         offset: usize,
@@ -67,6 +70,7 @@ impl Command {
                 | Self::Open { .. }
                 | Self::Changes { .. }
                 | Self::Diff { .. }
+                | Self::Branches { .. }
                 | Self::History { .. }
                 | Self::CommitDiff { .. }
                 | Self::PrepareCommit { .. }
@@ -117,6 +121,7 @@ pub fn dispatch(core: &mut Proof, command: Command) -> Result<Value> {
             path,
             side,
         } => value(core.file_diff(&workspace, &path, side)?),
+        Command::Branches { workspace } => value(core.branches(&workspace)?),
         Command::History { workspace, offset } => value(core.history(&workspace, offset, None)?),
         Command::CommitDiff {
             workspace,
