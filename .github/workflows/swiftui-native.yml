@@ -77,7 +77,7 @@ jobs:
           # Ordinary future builds keep the runner's accessibility settings intact.
           state="$PWD/native/macos/build/screenshots/material-system-setting.json"
           helper="$RUNNER_TEMP/proof-transparency-state"
-          if [[ "$(git rev-parse HEAD^)" == d8cb00e8bbb6702a42ab6b887d04a3aab7dc34e2 && "$(git log -1 --format=%s)" == "Verify native translucency in one approved disposable CI run" ]]; then
+          if [[ "${{ github.run_attempt }}" == 1 && "$(git rev-parse HEAD^)" == 9dda0b06dc031b5d961b7f693d496cc728091133 && "$(git log -1 --format=%s)" == "Verify glass workspace translucency in one approved CI run" ]]; then
             printf 'import AppKit; print(NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency ? "true" : "false")\n' > "$helper.swift"
             swiftc "$helper.swift" -o "$helper"
             restore_transparency() {
