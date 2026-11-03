@@ -505,9 +505,13 @@ fn ai_settings_mock_cli_and_task_guards_do_not_invoke_real_agents() {
         }
         let token = core.changes(&id).unwrap().token;
         let request = json!({"method":"run_ai_task", "request":{"provider":"codex", "task":task, "scope":{"kind":"local", "workspaceId":id,"expectedToken":token}}});
-        // The mock cannot meet the sandbox capability contract. It never calls
-        // a model; Linux also correctly refuses unverified read-only sandboxes.
+        // Capability probes cannot exec the shell interpreter on macOS. That
+        // denial is intentional; the compiled fixture below tests successful AI.
+        // Other platforms refuse an unverified read-only sandbox.
         let error = scope.run(|| call(&mut core, request)).unwrap_err();
+        #[cfg(target_os = "macos")]
+        assert_eq!(error.code, "AI_STARTUP_PERMISSION", "{}", error.detail);
+        #[cfg(not(target_os = "macos"))]
         assert!(
             matches!(
                 error.code.as_str(),
