@@ -24,6 +24,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       - uses: dtolnay/rust-toolchain@stable
       - name: Toolchain versions
         run: |
@@ -67,6 +69,26 @@ jobs:
       - name: Render actual SwiftUI pages (fixture rendering, not interaction tests)
         timeout-minutes: 5
         run: |
+          # Scope this approved setting change to this direct child commit only.
+          # Ordinary future builds keep the runner's accessibility settings intact.
+          state="$PWD/native/macos/build/screenshots/material-system-setting.json"
+          helper="$RUNNER_TEMP/proof-transparency-state"
+          if [[ "$(git rev-parse HEAD^)" == d8cb00e8bbb6702a42ab6b887d04a3aab7dc34e2 && "$(git log -1 --format=%s)" == "Verify native translucency in one approved disposable CI run" ]]; then
+            printf 'import AppKit; print(NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency ? "true" : "false")\n' > "$helper.swift"
+            swiftc "$helper.swift" -o "$helper"
+            restore_transparency() {
+              status=$?
+              trap - EXIT
+              set +e
+              python3 native/macos/ci-transparency.py restore "$state" "$helper"
+              restored=$?
+              if [[ "$restored" != 0 ]]; then exit "$restored"; fi
+              exit "$status"
+            }
+            trap restore_transparency EXIT
+            trap 'exit 130' INT TERM HUP
+            python3 native/macos/ci-transparency.py begin "$state" "$helper"
+          fi
           capture_failed=0
           for page in changes history branches repositories settings; do
             for theme in light dark; do
@@ -86,6 +108,10 @@ jobs:
           python3 - <<'PYVERIFY'
           import itertools, json, pathlib, struct
           directory = pathlib.Path('native/macos/build/screenshots')
+          state_file = directory / 'material-system-setting.json'
+          material_check = json.loads(state_file.read_text()) if state_file.exists() else None
+          if material_check:
+              assert material_check['status'] == 'applied' and material_check['captureEffective'] is False
           evidence = []
           geometry_failures = []
           for page, theme, size in itertools.product(('changes', 'history', 'branches', 'repositories', 'settings'), ('light', 'dark'), ('compact', 'wide')):
@@ -95,6 +121,7 @@ jobs:
                   assert metadata['page'] == page and metadata['theme'] == theme and metadata['size'] == size
                   assert metadata['sidebar'] == ('collapsed' if collapsed else 'expanded')
                   assert metadata['fixtureData'] and not metadata['bridgeStarted'] and not metadata['gitOperations']
+                  if material_check: assert metadata['systemReduceTransparency'] is False
                   for prefix in ('', 'sck-'):
                       path = directory / f'{prefix}{name}.png'
                       data = path.read_bytes()
@@ -121,6 +148,13 @@ jobs:
           assert not geometry_failures, '\n'.join(geometry_failures)
           PYVERIFY
           test "$capture_failed" -eq 0
+      - name: Restore authorized temporary accessibility preference
+        if: ${{ always() }}
+        run: |
+          state="$PWD/native/macos/build/screenshots/material-system-setting.json"
+          if [[ -f "$state" ]]; then
+            python3 native/macos/ci-transparency.py restore "$state" "$RUNNER_TEMP/proof-transparency-state"
+          fi
       - uses: actions/upload-artifact@v4
         if: ${{ always() && hashFiles('native/macos/build/screenshots/*.png') != '' }}
         with:
