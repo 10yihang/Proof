@@ -52,17 +52,15 @@ enum WindowChromeCheck {
         host.rootView = AnyView(WorkbenchChromeSurface(reduced: true))
         layout()
         assert(effects(host).isEmpty, "Reduced transparency must use the opaque fallback without live blur")
-        // Inject environment values only into this isolated test host. The app
-        // never forces transparency and no system preference is changed here.
-        host.rootView = AnyView(WorkbenchChromeBackground(glass: true).environment(\.accessibilityReduceTransparency, false))
-        layout()
-        assert(effects(host).count == 1)
-        host.rootView = AnyView(WorkbenchChromeBackground(glass: true).environment(\.accessibilityReduceTransparency, true))
-        layout()
-        assert(effects(host).isEmpty, "The live accessibility environment must disable the backdrop")
-        host.rootView = AnyView(WorkbenchChromeBackground(glass: true).environment(\.accessibilityReduceTransparency, false))
+        // The system accessibility environment is read-only. Exercise the
+        // resolved surface's false → true → false transition without changing it.
+        host.rootView = AnyView(WorkbenchChromeSurface(reduced: false))
         layout()
         assert(effects(host).count == 1, "Restoring transparency must recreate the native material")
+        host.rootView = AnyView(WorkbenchChromeBackground(glass: true))
+        layout()
+        assert(effects(host).count == (NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency ? 0 : 1),
+               "The production wrapper must follow the current system preference")
         host.rootView = AnyView(WorkbenchChromeBackground(glass: true).environment(\.workbenchOpaqueSurfaces, true))
         layout()
         assert(effects(host).isEmpty, "The opaque screenshot option must never enable blur")
