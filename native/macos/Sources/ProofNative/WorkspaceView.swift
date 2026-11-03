@@ -22,6 +22,7 @@ struct WorkspaceView: View {
                     .frame(width: column.size.width, height: column.size.height, alignment: .topLeading)
             }
             .navigationSplitViewColumnWidth(min: 176, ideal: 208, max: 250)
+            .hideAutomaticSidebarToggle()
         } detail: {
             GeometryReader { viewport in
                 VStack(spacing: 0) {

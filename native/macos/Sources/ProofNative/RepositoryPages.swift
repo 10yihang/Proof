@@ -149,7 +149,7 @@ struct BranchesView: View {
                 if geometry.size.width >= 740 {
                     HStack(alignment: .top, spacing: 16) {
                         branchList.frame(maxWidth: .infinity, maxHeight: .infinity)
-                        branchDetails.frame(width: 280)
+                        ScrollView { branchDetails }.frame(width: 280)
                     }
                 } else {
                     ScrollView {
@@ -287,14 +287,14 @@ struct NativeSettingsView: View {
                             Text("跟随系统").tag("system")
                             Text("浅色").tag("light")
                             Text("深色").tag("dark")
-                        }.pickerStyle(.segmented).frame(width: 250)
+                        }.labelsHidden().pickerStyle(.segmented).frame(width: 250)
                     }
                     Divider()
                     settingRow("界面密度", detail: "调整导航与列表的留白。") {
                         Picker("界面密度", selection: $compact) {
                             Text("舒适").tag(false)
                             Text("紧凑").tag(true)
-                        }.pickerStyle(.segmented).frame(width: 190)
+                        }.labelsHidden().pickerStyle(.segmented).frame(width: 190)
                     }
                 }.padding(20).workbenchCard()
 
