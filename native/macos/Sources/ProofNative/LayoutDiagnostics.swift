@@ -70,7 +70,7 @@ func validatePreviewChrome(_ window: NSWindow) throws {
     visit(root)
     guard let branch = frames["branch-header"], let page = frames["page-content"],
           let status = frames["status-bar"],
-          branch.minY >= root.safeAreaInsets.top - 1,
+          branch.minY >= -1, branch.width >= root.bounds.width - 1,
           page.minY >= branch.maxY - 1,
           page.width >= 600, page.height >= 300,
           page.maxY <= status.minY + 1,

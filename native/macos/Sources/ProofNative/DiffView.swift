@@ -13,6 +13,89 @@ struct NativeDiffView: View {
     }
 }
 
+/// Both panes use the same native text surface as unified mode. Only hunk rows
+/// supplied by core are shown; padding aligns changes without inventing context.
+@MainActor
+struct SplitNativeDiffView: View {
+    let diff: FileDiff
+    @State private var scrollPair = DiffScrollPair()
+
+    var body: some View {
+        let rows = splitDiffRows(hunks: diff.hunks)
+        HStack(spacing: 0) {
+            pane(title: "修改前", rows: rows.before, lineNumbers: .before)
+            Divider()
+            pane(title: "修改后", rows: rows.after, lineNumbers: .after)
+        }
+    }
+
+    private func pane(title: String, rows: [CodeRow], lineNumbers: DiffLineNumbers) -> some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(title).font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 29)
+            .background(Color(nsColor: WorkbenchPalette.panel))
+            Divider()
+            CodeTextView(identity: diff.id, rows: rows, numbered: true,
+                         lineNumbers: lineNumbers, scrollPair: scrollPair)
+        }
+        .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// Keep each changed line with its optional "No newline" annotation. This lets
+/// unequal replacement runs align their code without shifting later code rows.
+func splitDiffRows(hunks: [Hunk]) -> (before: [CodeRow], after: [CodeRow]) {
+    var before: [CodeRow] = []
+    var after: [CodeRow] = []
+    let spacer = CodeRow(text: "", kind: "spacer")
+    for hunk in hunks {
+        let header = CodeRow(text: hunk.header + "   ·   " + (hunk.reviewState == "reviewed" ? "已评阅" : "待评阅"), kind: "header")
+        before.append(header)
+        after.append(header)
+        var deletions: [[CodeRow]] = []
+        var additions: [[CodeRow]] = []
+        var previousKind: String?
+
+        func flushChanges() {
+            for index in 0..<max(deletions.count, additions.count) {
+                let old = index < deletions.count ? deletions[index] : []
+                let new = index < additions.count ? additions[index] : []
+                for annotation in 0..<max(old.count, new.count) {
+                    before.append(annotation < old.count ? old[annotation] : spacer)
+                    after.append(annotation < new.count ? new[annotation] : spacer)
+                }
+            }
+            deletions.removeAll(keepingCapacity: true)
+            additions.removeAll(keepingCapacity: true)
+        }
+
+        for line in hunk.lines {
+            let row = CodeRow(text: line.content.replacingOccurrences(of: "\r", with: "␍"), kind: line.kind,
+                              oldLine: line.oldLine, newLine: line.newLine)
+            switch line.kind {
+            case "delete": deletions.append([row])
+            case "add": additions.append([row])
+            case "note" where previousKind == "delete" && !deletions.isEmpty:
+                deletions[deletions.count - 1].append(row)
+            case "note" where previousKind == "add" && !additions.isEmpty:
+                additions[additions.count - 1].append(row)
+            default:
+                flushChanges()
+                before.append(row)
+                after.append(row)
+            }
+            if line.kind != "note" { previousKind = line.kind }
+        }
+        flushChanges()
+    }
+    return (before, after)
+}
+
 struct PatchView: View {
     let patch: String
     var body: some View {
@@ -40,12 +123,35 @@ struct CodeRow: Equatable {
     }
 }
 
+enum DiffLineNumbers {
+    case unified, before, after
+}
+
+/// Weak links avoid retaining a pane after leaving split mode or changing files.
+@MainActor
+final class DiffScrollPair {
+    private weak var before: DiffScrollView?
+    private weak var after: DiffScrollView?
+
+    func connect(_ scroll: DiffScrollView, side: DiffLineNumbers) {
+        switch side {
+        case .before: before = scroll
+        case .after: after = scroll
+        case .unified: return
+        }
+        before?.synchronizedScrollView = after
+        after?.synchronizedScrollView = before
+    }
+}
+
 /// Real AppKit text selection and find, with a separate non-copying line-number ruler.
 struct CodeTextView: NSViewRepresentable {
-    @AppStorage("proof.native.codeFontSize") private var codeFontSize = 13.0
+    @AppStorage("proof.native.codeFontSize") private var codeFontSize = 14.0
     let identity: String
     let rows: [CodeRow]
     let numbered: Bool
+    var lineNumbers: DiffLineNumbers = .unified
+    var scrollPair: DiffScrollPair? = nil
     final class Coordinator {
         var identity: String?
         var appearance: String?
@@ -80,13 +186,25 @@ struct CodeTextView: NSViewRepresentable {
         text.backgroundColor = WorkbenchPalette.canvas
         text.selectedTextAttributes = [.backgroundColor: WorkbenchPalette.selection, .foregroundColor: WorkbenchPalette.text]
         text.setAccessibilityLabel("只读 Git 差异。按 Command F 查找文本，左侧显示行号。")
+        if lineNumbers == .before { text.setAccessibilityLabel("修改前，只读 Git 差异。按 Command F 查找文本，左侧显示原始行号。") }
+        if lineNumbers == .after { text.setAccessibilityLabel("修改后，只读 Git 差异。按 Command F 查找文本，左侧显示修改后的行号。") }
         scroll.documentView = text
         if numbered {
             scroll.hasVerticalRuler = true
-            scroll.verticalRulerView = DiffRuler(scrollView: scroll, orientation: .verticalRuler)
+            let ruler = DiffRuler(scrollView: scroll, orientation: .verticalRuler)
+            ruler.lineNumbers = lineNumbers
+            scroll.verticalRulerView = ruler
             scroll.rulersVisible = true
         }
+        scrollPair?.connect(scroll, side: lineNumbers)
         return scroll
+    }
+
+    static func dismantleNSView(_ scroll: DiffScrollView, coordinator: Coordinator) {
+        if scroll.synchronizedScrollView?.synchronizedScrollView === scroll {
+            scroll.synchronizedScrollView?.synchronizedScrollView = nil
+        }
+        scroll.synchronizedScrollView = nil
     }
 
     func updateNSView(_ scroll: DiffScrollView, context: Context) {
@@ -148,6 +266,23 @@ struct CodeTextView: NSViewRepresentable {
 /// user's scroll position because only an identity change requests a reset.
 final class DiffScrollView: NSScrollView {
     private var needsInitialScroll = false
+    weak var synchronizedScrollView: DiffScrollView?
+    private var synchronizingScroll = false
+
+    override func reflectScrolledClipView(_ clipView: NSClipView) {
+        super.reflectScrolledClipView(clipView)
+        guard !synchronizingScroll, clipView === contentView,
+              let peer = synchronizedScrollView,
+              abs(peer.contentView.bounds.minY - clipView.bounds.minY) > 0.5 else { return }
+        // Match vertical document coordinates, leaving each pane's horizontal
+        // scroll and native find bar independent. Suppress the reciprocal call.
+        peer.synchronizingScroll = true
+        var proposed = peer.contentView.bounds
+        proposed.origin.y = clipView.bounds.minY
+        peer.contentView.scroll(to: peer.contentView.constrainBoundsRect(proposed).origin)
+        peer.reflectScrolledClipView(peer.contentView)
+        peer.synchronizingScroll = false
+    }
 
     func scrollToDocumentStartOnNextLayout() {
         needsInitialScroll = true
@@ -213,6 +348,13 @@ final class DiffTextView: NSTextView {
 }
 
 final class DiffRuler: NSRulerView {
+    var lineNumbers: DiffLineNumbers = .unified {
+        didSet {
+            ruleThickness = lineNumbers == .unified ? 105 : 66
+            setAccessibilityLabel(lineNumbers == .unified ? "原始与修改后的行号" : lineNumbers == .before ? "原始行号" : "修改后的行号")
+            needsDisplay = true
+        }
+    }
     override init(scrollView: NSScrollView?, orientation: NSRulerView.Orientation) {
         super.init(scrollView: scrollView, orientation: orientation)
         ruleThickness = 105
@@ -250,12 +392,17 @@ final class DiffRuler: NSRulerView {
                 NSRect(x: 0, y: local.minY, width: bounds.width, height: local.height).fill()
             }
             let y = local.minY + 3
-            (row.oldLine.map(String.init) ?? "").draw(in: NSRect(x: 4, y: y, width: 34, height: 18), withAttributes: attrs)
-            (row.newLine.map(String.init) ?? "").draw(in: NSRect(x: 43, y: y, width: 34, height: 18), withAttributes: attrs)
+            if lineNumbers == .unified {
+                (row.oldLine.map(String.init) ?? "").draw(in: NSRect(x: 4, y: y, width: 34, height: 18), withAttributes: attrs)
+                (row.newLine.map(String.init) ?? "").draw(in: NSRect(x: 43, y: y, width: 34, height: 18), withAttributes: attrs)
+            } else {
+                let number = lineNumbers == .before ? row.oldLine : row.newLine
+                (number.map(String.init) ?? "").draw(in: NSRect(x: 4, y: y, width: 34, height: 18), withAttributes: attrs)
+            }
             let sign = row.kind == "add" ? "+" : row.kind == "delete" ? "−" : ""
             var signAttrs = attrs
             signAttrs[.foregroundColor] = row.kind == "add" ? WorkbenchPalette.additionInk : WorkbenchPalette.deletionInk
-            sign.draw(in: NSRect(x: 82, y: y, width: 13, height: 18), withAttributes: signAttrs)
+            sign.draw(in: NSRect(x: lineNumbers == .unified ? 82 : 43, y: y, width: 13, height: 18), withAttributes: signAttrs)
         }
         WorkbenchPalette.border.setFill()
         NSRect(x: bounds.maxX - 1, y: bounds.minY, width: 1, height: bounds.height).fill()

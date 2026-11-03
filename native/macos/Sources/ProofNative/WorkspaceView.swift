@@ -3,49 +3,42 @@ import SwiftUI
 
 struct WorkspaceView: View {
     @ObservedObject var model: WorkspaceModel
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @AppStorage("proof.native.compact") private var compact = true
     @State private var trustConfirmation = false
     @State private var stageConfirmation = false
     @State private var rawPatch = false
+    @State private var splitDiff = true
     @State private var collapsed: Set<String> = []
     @State private var contextPopover = false
 
     private var activeMode: String { model.workspace == nil && model.mode != "settings" ? "repositories" : model.mode }
 
     var body: some View {
-        NavigationSplitView(columnVisibility: Binding(
-            get: { model.sidebarVisible ? .all : .detailOnly },
-            set: { model.setSidebarVisible($0 != .detailOnly, persist: ScreenshotPreview.outputDirectory == nil) }
-        )) {
-            GeometryReader { column in
-                repositoryNavigation
-                    .frame(width: column.size.width, height: column.size.height, alignment: .topLeading)
-            }
-            .frame(minWidth: 208, idealWidth: 208, maxWidth: 250)
-            .navigationSplitViewColumnWidth(min: 208, ideal: 208, max: 250)
-            .hideAutomaticSidebarToggle()
-        } detail: {
-            GeometryReader { viewport in
-                VStack(spacing: 0) {
-                    branchBar.captureLayout("branch-header")
-                    pageContent(size: viewport.size)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .captureLayout("page-content")
-                    statusBar
-                }.frame(width: viewport.size.width, height: viewport.size.height, alignment: .topLeading)
-                    .background(Color(nsColor: WorkbenchPalette.navigation).opacity(0.55))
-                    .background(WorkbenchBackdrop())
-            }
+        GeometryReader { window in
+            VStack(spacing: 0) {
+                titleBar(width: window.size.width).captureLayout("branch-header")
+                HStack(spacing: 0) {
+                    if model.sidebarVisible {
+                        repositoryNavigation.frame(width: window.size.width >= 1250 ? 236 : 208)
+                    }
+                    GeometryReader { viewport in
+                        VStack(spacing: 0) {
+                            pageContent(size: viewport.size)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .captureLayout("page-content")
+                            statusBar
+                        }
+                    }
+                }
+            }.frame(width: window.size.width, height: window.size.height)
         }
-        .navigationSplitViewStyle(.balanced)
-        .navigationTitle(model.workspace?.name ?? "Proof")
-        .toolbar { workbenchToolbar }
-        .toolbarBackground(.visible, for: .windowToolbar)
-        .hideAutomaticToolbarTitle()
-        .hideAutomaticSidebarToggle()
+        .background(Color(nsColor: WorkbenchPalette.navigation).opacity(reduceTransparency ? 1 : 0.22))
+        .background(WorkbenchBackdrop())
+        .ignoresSafeArea(.container, edges: .top)
         .tint(Color(nsColor: WorkbenchPalette.accent))
         .foregroundStyle(Color(nsColor: WorkbenchPalette.text))
-        .font(.system(size: 12))
+        .font(.system(size: 13))
         .alert("信任此仓库？", isPresented: $trustConfirmation) {
             Button("取消", role: .cancel) {}
             Button("信任仓库") { model.trust() }
@@ -83,29 +76,43 @@ struct WorkspaceView: View {
             HStack(alignment: .top, spacing: 12) {
                 VStack(spacing: 12) {
                     filesPanel.workbenchCard()
+                        .frame(maxHeight: .infinity)
                     inlineCommit.captureLayout("commit-editor").workbenchCard()
-                }.frame(width: size.width < 1000 ? 248 : 292)
+                        .frame(height: max(175, min(240, size.height * 0.27)))
+                }.frame(width: size.width < 1000 ? 260 : 282)
                 selectedContent.workbenchCard()
             }.padding(12)
         }
     }
-    @ToolbarContentBuilder private var workbenchToolbar: some ToolbarContent {
-        ToolbarItem(placement: .navigation) {
-            HStack(spacing: 12) {
-                HStack(spacing: 6) {
-                    Image(systemName: "checkmark.seal.fill").foregroundStyle(Color(nsColor: WorkbenchPalette.accent))
-                    Text("Proof").font(.system(size: 14, weight: .semibold))
-                }
-                Button { model.toggleSidebar() } label: {
-                    Image(systemName: "sidebar.left").frame(width: 28, height: 28)
-                }.buttonStyle(.plain).airyControlSurface()
-                    .help(model.sidebarVisible ? "收起侧边栏 ⌘⌥S" : "展开侧边栏 ⌘⌥S")
-                    .accessibilityLabel(model.sidebarVisible ? "收起侧边栏" : "展开侧边栏")
-                    .keyboardShortcut("s", modifiers: [.command, .option])
+    private func titleBar(width: CGFloat) -> some View {
+        HStack(spacing: 18) {
+            Color.clear.frame(width: 72).accessibilityHidden(true)
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.seal.fill").foregroundStyle(Color(nsColor: WorkbenchPalette.accent))
+                Text("Proof").font(.system(size: 16, weight: .semibold))
             }
-        }
-        ToolbarItem(placement: .navigation) { repositoryTab }
-        ToolbarItem(placement: .primaryAction) { openRepositoryButton }
+            Button { model.setSidebarVisible(!model.sidebarVisible, persist: ScreenshotPreview.outputDirectory == nil) } label: {
+                Image(systemName: "sidebar.left").font(.system(size: 17)).frame(width: 30, height: 30)
+            }.buttonStyle(.plain).help("展开或收起侧边栏 ⌘⌥S").keyboardShortcut("s", modifiers: [.command, .option])
+            Divider().frame(height: 24)
+            repositoryTab
+            if model.workspace != nil {
+                Divider().frame(height: 24)
+                Button { model.mode = "branches" } label: {
+                    Label(model.changes?.branch ?? "分离的 HEAD", systemImage: "arrow.triangle.branch")
+                        .lineLimit(1).truncationMode(.middle).frame(maxWidth: 215, alignment: .leading)
+                }.buttonStyle(.plain).disabled(model.writing).help("查看当前仓库分支")
+                Button { model.refresh() } label: { Label("刷新", systemImage: "arrow.clockwise") }
+                    .buttonStyle(.plain).disabled(model.busy)
+            }
+            Spacer(minLength: 4)
+            Button { contextPopover.toggle() } label: { Image(systemName: "info.circle") }
+                .buttonStyle(.plain).help("仓库与评审状态")
+                .popover(isPresented: $contextPopover) { ProofContextInspector(model: model).frame(width: 300, height: 470) }
+            openRepositoryButton
+        }.font(.system(size: 13)).padding(.horizontal, 16).frame(height: 54)
+            .background(Color(nsColor: WorkbenchPalette.navigation).opacity(0.18))
+            .overlay(alignment: .bottom) { horizontalRule.opacity(0.45) }
     }
     private var repositoryTab: some View {
         Menu {
@@ -120,8 +127,8 @@ struct WorkspaceView: View {
                 Image(systemName: "shippingbox")
                 Text(model.workspace?.name ?? "选择仓库")
             }
-                .font(.system(size: 12, weight: .medium)).lineLimit(1)
-                .frame(minWidth: 80, maxWidth: 210, alignment: .leading)
+                .font(.system(size: 13, weight: .medium)).lineLimit(1)
+                .frame(minWidth: 110, maxWidth: 180, alignment: .leading)
         }.menuStyle(.borderlessButton).fixedSize().disabled(model.writing)
             .help(model.workspace?.path ?? "本地仓库")
     }
@@ -131,9 +138,8 @@ struct WorkspaceView: View {
     }
     private var repositoryNavigation: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("工作空间").font(.system(size: 11)).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
+            Text("工作空间").font(.system(size: 12)).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
                 .padding(.horizontal, 10).padding(.top, 20).padding(.bottom, 12)
-            navigationButton("所有仓库", icon: "square.stack.3d.up", mode: "repositories", key: "0", count: model.recent.count)
             navigationButton("工作区", icon: "tray", mode: "changes", key: "1", count: model.changes?.files.count)
             navigationButton("提交历史", icon: "clock.arrow.circlepath", mode: "history", key: "2", count: nil)
             navigationButton("分支", icon: "arrow.triangle.branch", mode: "branches", key: "3", count: nil)
@@ -163,9 +169,8 @@ struct WorkspaceView: View {
             }
             navigationButton("设置", icon: "gearshape", mode: "settings", key: ",", count: nil)
                 .padding(.bottom, 12).captureLayout("sidebar-footer")
-        }.padding(.horizontal, 12)
-            .background(Color(nsColor: WorkbenchPalette.navigation).opacity(0.35))
-            .background(.ultraThinMaterial)
+        }.padding(.horizontal, 14)
+            .background(Color(nsColor: WorkbenchPalette.navigation).opacity(0.12))
     }
     private func unavailableNavigation(_ title: String, icon: String) -> some View {
         HStack(spacing: 9) {
@@ -180,34 +185,15 @@ struct WorkspaceView: View {
     private func navigationButton(_ title: String, icon: String, mode: String, key: KeyEquivalent, count: Int?) -> some View {
         Button { model.mode = mode } label: {
             HStack(spacing: 9) { Image(systemName: icon).frame(width: 16); Text(title); Spacer(minLength: 2); if let count { Text("\(count)").font(.system(size: 11)) } }
-                .padding(.horizontal, 10).frame(height: compact ? 36 : 42).contentShape(Rectangle())
+                .padding(.horizontal, 10).frame(height: compact ? 38 : 44).contentShape(Rectangle())
                 .background(activeMode == mode ? Color(nsColor: WorkbenchPalette.selection) : .clear, in: RoundedRectangle(cornerRadius: 8))
         }.buttonStyle(.plain).disabled(model.writing).keyboardShortcut(key)
             .accessibilityAddTraits(activeMode == mode ? .isSelected : []).padding(.bottom, 3)
     }
-    private var branchBar: some View {
-        HStack(spacing: 18) {
-            if let workspace = model.workspace {
-                Label(model.changes?.branch ?? "分离的 HEAD", systemImage: "arrow.triangle.branch")
-                    .lineLimit(1).help(workspace.path)
-                Button { model.refresh() } label: { Label("刷新", systemImage: "arrow.clockwise") }
-                    .buttonStyle(.plain).disabled(model.busy).help("刷新仓库 ⌘R")
-            } else {
-                Text(model.mode == "settings" ? "偏好设置" : "本地 Git 仓库").fontWeight(.medium)
-            }
-            Spacer(minLength: 4)
-            if model.workspace != nil {
-                Button { contextPopover.toggle() } label: { Label("上下文", systemImage: "sidebar.right") }
-                    .buttonStyle(.plain).help("当前快照与人工评审状态")
-                    .popover(isPresented: $contextPopover) { ProofContextInspector(model: model).frame(width: 300, height: 470) }
-            }
-        }.font(.system(size: 11)).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
-            .padding(.horizontal, 20).frame(height: 38)
-    }
     private var filesPanel: some View {
         VStack(spacing: 0) {
             HStack {
-                Text(model.mode == "history" ? "历史" : "更改").font(.system(size: 13, weight: .semibold))
+                Text(model.mode == "history" ? "历史" : "更改").font(.system(size: 17, weight: .semibold))
                 Text(model.mode == "history" ? "\(model.commits.count) 条提交" : "\(model.changes?.files.count ?? 0) 个文件")
                     .font(.system(size: 10)).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
                 Spacer()
@@ -215,7 +201,7 @@ struct WorkspaceView: View {
             HStack(spacing: 7) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 TextField(model.mode == "history" ? "筛选已加载提交…" : "筛选文件…", text: $model.search)
-                    .textFieldStyle(.plain).font(.system(size: 11))
+                    .textFieldStyle(.plain).font(.system(size: 13))
             }.padding(8).background(Color(nsColor: WorkbenchPalette.raised), in: RoundedRectangle(cornerRadius: 8))
                 .padding(.horizontal, 12).padding(.bottom, 10)
             if model.mode == "history" { historyList }
@@ -231,8 +217,8 @@ struct WorkspaceView: View {
             ForEach(changesTreeRows(files: model.changes?.files ?? [], scope: "all", search: model.search, tree: true, collapsed: collapsed)) { row in
                 if let file = row.file {
                     changedFileRow(file, depth: row.depth).tag(file.id)
-                        .listRowBackground(model.selectedFile == file.id ? Color(nsColor: WorkbenchPalette.selection) : .clear)
-                        .listRowInsets(EdgeInsets(top: 0, leading: 3, bottom: 0, trailing: 3))
+                        .listRowBackground(RoundedRectangle(cornerRadius: 7).fill(model.selectedFile == file.id ? Color(nsColor: WorkbenchPalette.selection) : .clear))
+                        .listRowSeparator(.hidden).listRowInsets(EdgeInsets(top: 0, leading: 3, bottom: 0, trailing: 3))
                 } else {
                     Button {
                         if collapsed.contains(row.id) { collapsed.remove(row.id) } else { collapsed.insert(row.id) }
@@ -247,10 +233,10 @@ struct WorkspaceView: View {
                             .padding(.leading, CGFloat(row.depth) * 10).frame(height: row.isGroup ? 34 : 28).contentShape(Rectangle())
                     }.buttonStyle(.plain).tag(Optional<String>.none)
                         .accessibilityLabel("\(row.label)，\(row.count) 个文件，\(row.isExpanded ? "展开" : "折叠")")
-                        .listRowInsets(EdgeInsets(top: 0, leading: 3, bottom: 0, trailing: 3))
+                        .listRowSeparator(.hidden).listRowInsets(EdgeInsets(top: 0, leading: 3, bottom: 0, trailing: 3))
                 }
             }
-        }.listStyle(.plain).scrollContentBackground(.hidden).environment(\.defaultMinListRowHeight, 32)
+        }.listStyle(.plain).scrollContentBackground(.hidden).environment(\.defaultMinListRowHeight, 34)
             .frame(minHeight: 0, maxHeight: .infinity).disabled(model.writing)
             .overlay {
                 if model.changes?.files.isEmpty == true { Text("工作区干净").foregroundStyle(.secondary) }
@@ -261,7 +247,7 @@ struct WorkspaceView: View {
         HStack(spacing: 8) {
             Image(systemName: "doc.text").font(.system(size: 12)).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
             VStack(alignment: .leading, spacing: 4) {
-                Text((file.path as NSString).lastPathComponent).font(.system(size: 11)).lineLimit(1).truncationMode(.middle)
+                Text((file.path as NSString).lastPathComponent).font(.system(size: 13)).lineLimit(1).truncationMode(.middle)
                 if model.selectedFile == file.id, let snapshot = model.loadedDiffs[file.id] {
                     Text("+\(snapshot.additions)   −\(snapshot.deletions)").font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary)
                 }
@@ -314,19 +300,10 @@ struct WorkspaceView: View {
         } else if let diff = model.diff, model.mode != "history" {
             VStack(spacing: 0) {
                 fileHeader(diff).captureLayout("file-header")
-                HStack {
-                    Text(diff.side == "staged" ? "暂存区" : "工作区")
-                    Text(diff.side == "staged" ? "与 HEAD 比较" : "与暂存区比较").foregroundStyle(.secondary)
-                    Spacer()
-                    Text("+\(diff.additions)").foregroundStyle(Color(nsColor: WorkbenchPalette.additionInk))
-                    Text("−\(diff.deletions)").foregroundStyle(Color(nsColor: WorkbenchPalette.deletionInk))
-                    Menu { Toggle("显示原始补丁", isOn: $rawPatch) } label: { Text(rawPatch ? "补丁" : "统一 Diff") }
-                        .menuStyle(.borderlessButton).fixedSize().padding(.leading, 12)
-                }.font(.system(size: 10)).padding(.horizontal, 18).frame(height: 34)
-                    .overlay(alignment: .bottom) { horizontalRule }
                 if let notice = diff.notice { Text(notice).font(.caption).foregroundStyle(.secondary).padding(8) }
                 Group {
                     if rawPatch || diff.hunks.allSatisfy({ $0.lines.isEmpty }) { PatchView(patch: diff.patch) }
+                    else if splitDiff { SplitNativeDiffView(diff: diff) }
                     else { NativeDiffView(diff: diff) }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity).captureLayout("diff-viewport")
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -341,15 +318,24 @@ struct WorkspaceView: View {
         HStack(spacing: 10) {
             Image(systemName: "doc.text").foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 4) {
-                Text((diff.path as NSString).lastPathComponent).font(.system(size: 12, weight: .semibold)).lineLimit(1).truncationMode(.middle)
+                Text((diff.path as NSString).lastPathComponent).font(.system(size: 14, weight: .semibold)).lineLimit(1).truncationMode(.middle)
                 Text((diff.path as NSString).deletingLastPathComponent).font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
             }.help(diff.path)
+            Text("+\(diff.additions)").foregroundStyle(Color(nsColor: WorkbenchPalette.additionInk))
+            Text("−\(diff.deletions)").foregroundStyle(Color(nsColor: WorkbenchPalette.deletionInk))
             Spacer(minLength: 8)
-            Button { model.review() } label: { Label(diff.reviewed ? "已评审" : "待评审", systemImage: diff.reviewed ? "checkmark.circle" : "circle") }
+            Menu {
+                Button("左右对照") { rawPatch = false; splitDiff = true }
+                Button("统一差异") { rawPatch = false; splitDiff = false }
+                Button("原始补丁") { rawPatch = true }
+            } label: { Text(rawPatch ? "补丁" : splitDiff ? "左右对照" : "统一差异") }
+                .menuStyle(.borderlessButton).fixedSize()
+            Button { model.review() } label: { Image(systemName: diff.reviewed ? "checkmark.circle" : "circle") }
+                .accessibilityLabel(diff.reviewed ? "已评审，切换评审状态" : "待评审，切换评审状态")
                 .disabled(model.busy).help("切换此内容快照的人工评审状态，不改变暂存区")
-            Button(diff.side == "staged" ? "取消暂存" : "暂存此文件") { stageConfirmation = true }
+            Button(diff.side == "staged" ? "取消暂存" : "暂存文件") { stageConfirmation = true }
                 .disabled(model.busy || !diff.canStage)
-        }.buttonStyle(WorkbenchButtonStyle()).padding(.horizontal, 18).frame(height: 50)
+        }.buttonStyle(WorkbenchButtonStyle()).padding(.horizontal, 18).frame(height: 54)
             .overlay(alignment: .bottom) { horizontalRule }
     }
     private var inlineCommit: some View {
@@ -361,9 +347,9 @@ struct WorkspaceView: View {
             }
             ZStack(alignment: .topLeading) {
                 if model.message.isEmpty { Text("填写提交说明…").foregroundStyle(.secondary).padding(8).allowsHitTesting(false) }
-                TextEditor(text: $model.message).font(.system(size: 12)).scrollContentBackground(.hidden)
+                TextEditor(text: $model.message).font(.system(size: 13)).scrollContentBackground(.hidden)
                     .padding(4).disabled(model.writing).accessibilityLabel("提交信息")
-            }.frame(height: compact ? 76 : 94)
+            }.frame(minHeight: 56, maxHeight: .infinity)
                 .background(Color(nsColor: WorkbenchPalette.panel), in: RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(nsColor: WorkbenchPalette.border), lineWidth: 0.7))
             Button { model.prepareCommit() } label: {

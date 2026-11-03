@@ -31,9 +31,9 @@ enum WorkbenchPalette {
 struct WorkbenchBackdrop: NSViewRepresentable {
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
-        view.material = .underWindowBackground
+        view.material = .sidebar
         view.blendingMode = .behindWindow
-        view.state = .followsWindowActiveState
+        view.state = .active
         return view
     }
     func updateNSView(_ view: NSVisualEffectView, context: Context) {}

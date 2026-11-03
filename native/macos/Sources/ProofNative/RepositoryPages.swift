@@ -274,7 +274,7 @@ struct NativeSettingsView: View {
     @AppStorage(NativePreferences.appearance) private var appearance = "system"
     @AppStorage(NativePreferences.compact) private var compact = true
     @AppStorage(NativePreferences.restoreSidebar) private var restoreSidebar = true
-    @AppStorage(NativePreferences.codeFontSize) private var codeFontSize = 13.0
+    @AppStorage(NativePreferences.codeFontSize) private var codeFontSize = 14.0
 
     var body: some View {
         ScrollView {

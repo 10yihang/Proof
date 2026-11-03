@@ -15,7 +15,13 @@ struct ProofNativeApp: App {
                 .task {
                     // Preserve the window title for accessibility and Window menus;
                     // the unified toolbar already presents repository identity.
-                    NSApp.windows.first?.titleVisibility = .hidden
+                    if let window = NSApp.windows.first {
+                        window.titleVisibility = .hidden
+                        window.titlebarAppearsTransparent = true
+                        window.isOpaque = false
+                        window.backgroundColor = .clear
+                        window.isMovableByWindowBackground = true
+                    }
                     if ScreenshotPreview.outputDirectory != nil {
                         if let window = NSApp.windows.first {
                             // Capture outlives the view task when its hosting view moves windows.
@@ -29,7 +35,7 @@ struct ProofNativeApp: App {
                 }
         }
         .defaultSize(width: 1440, height: 900)
-        .windowToolbarStyle(.unifiedCompact)
+        .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("打开仓库…") { model.pickRepository() }.keyboardShortcut("o")

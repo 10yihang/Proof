@@ -143,13 +143,25 @@ enum ScreenshotPreview {
             // Let SwiftUI finish installing its scene, safe areas and toolbar.
             try await Task.sleep(nanoseconds: 1_000_000_000)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            // Keep the scene-owned window: moving its toolbar into another window
-            // breaks SwiftUI validation and loses the system's glass integration.
-            let window = sourceWindow
-            window.appearance = NSAppearance(named: themeAppearance)
-            // One capture-only request. Never change display configuration or normal app sizing.
+            // Capture the same live SwiftUI view in a real native window whose frame
+            // is not constrained to the runner's short desktop. No scaling or image
+            // rendering substitution; ScreenCaptureKit captures off-screen extents.
+            // The production scene uses the same hidden-titlebar window styling.
             let requested = sizeName == "wide" ? NSSize(width: 1440, height: 900) : NSSize(width: 1024, height: 674)
-            window.setFrame(NSRect(origin: window.frame.origin, size: requested), display: true)
+            let window = PreviewWindow(contentRect: NSRect(origin: .zero, size: requested),
+                                       styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                                       backing: .buffered, defer: false)
+            window.titleVisibility = .hidden
+            window.titlebarAppearsTransparent = true
+            window.isOpaque = false
+            window.backgroundColor = .clear
+            window.isMovableByWindowBackground = true
+            window.appearance = NSAppearance(named: themeAppearance)
+            let liveContent = sourceWindow.contentView
+            sourceWindow.contentView = nil
+            window.contentView = liveContent
+            sourceWindow.orderOut(nil)
+            window.setFrame(NSRect(origin: NSPoint(x: 0, y: 0), size: requested), display: true)
             print("Requested preview size: \(requested); actual frame: \(window.frame)")
             NSApp.setActivationPolicy(.regular)
             window.makeKeyAndOrderFront(nil)
@@ -221,3 +233,9 @@ enum ScreenshotPreview {
 }
 
 
+
+/// Only preview framing differs from the normal window. Its live native views,
+/// material compositing, titlebar controls, and pixel density remain unchanged.
+private final class PreviewWindow: NSWindow {
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
+}
