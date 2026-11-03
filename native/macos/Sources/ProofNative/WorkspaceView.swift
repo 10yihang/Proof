@@ -39,7 +39,7 @@ struct WorkspaceView: View {
                 }
             }.frame(width: window.size.width, height: window.size.height)
         }
-        .background(WorkbenchChromeBackground())
+        .background(WorkbenchChromeBackground(glass: activeMode == "changes"))
         .background(NativeWindowChrome())
         .ignoresSafeArea(.container, edges: .top)
         .tint(Color(nsColor: WorkbenchPalette.accent))
@@ -156,6 +156,24 @@ struct WorkspaceView: View {
             .disabled(model.writing).help("打开仓库 ⌘O")
     }
     private var repositoryNavigation: some View {
+        VStack(spacing: activeMode == "changes" ? 12 : 0) {
+            navigationPrimary
+                .frame(maxWidth: .infinity, maxHeight: activeMode == "changes" ? .infinity : nil, alignment: .topLeading)
+                .background { if activeMode == "changes" { sidebarCard } }
+            if activeMode != "changes" { Divider().padding(.horizontal, 10).padding(.vertical, 14) }
+            navigationUtilities
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .background { if activeMode == "changes" { sidebarCard } }
+        }.padding(.horizontal, activeMode == "changes" ? 10 : 14)
+            .padding(.vertical, activeMode == "changes" ? 12 : 0)
+    }
+    private var sidebarCard: some View {
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .fill(Color(nsColor: WorkbenchPalette.canvas).opacity(0.24))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color(nsColor: WorkbenchPalette.border).opacity(0.45), lineWidth: 0.65))
+    }
+    private var navigationPrimary: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("工作空间").font(.system(size: 12)).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
                 .padding(.horizontal, 10).padding(.top, 20).padding(.bottom, 12)
@@ -167,7 +185,10 @@ struct WorkspaceView: View {
                     .font(.system(size: 11)).foregroundStyle(Color(nsColor: WorkbenchPalette.accent))
                     .lineLimit(2).padding(.leading, 28).padding(.vertical, 12).help(branch)
             }
-            Divider().padding(.horizontal, 10).padding(.vertical, 14)
+        }.padding(.horizontal, activeMode == "changes" ? 6 : 0)
+    }
+    private var navigationUtilities: some View {
+        VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 16) {
                 RepositorySyncControls(model: model)
                 unavailableNavigation("标签", icon: "tag")
@@ -188,7 +209,8 @@ struct WorkspaceView: View {
             }
             navigationButton("设置", icon: "gearshape", mode: "settings", key: ",", count: nil)
                 .padding(.bottom, 12).captureLayout("sidebar-footer")
-        }.padding(.horizontal, 14)
+        }.padding(.horizontal, activeMode == "changes" ? 6 : 0)
+            .padding(.top, activeMode == "changes" ? 18 : 0)
     }
     private func unavailableNavigation(_ title: String, icon: String) -> some View {
         HStack(spacing: 9) {

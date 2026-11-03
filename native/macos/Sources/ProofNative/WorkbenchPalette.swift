@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Flat native workbench: quiet solid surfaces, one border, no decorative depth.
+/// Flat content cards with a native translucent shell only in the workspace.
 enum WorkbenchPalette {
     static let canvas = adaptive(light: 0xFFFFFF, dark: 0x1B2230)
     static let navigation = adaptive(light: 0xF0F3F8, dark: 0x191E27)
@@ -29,24 +29,51 @@ enum WorkbenchPalette {
     }
 }
 
-// Capture compatibility: opaque mode is already the normal flat design.
 private struct WorkbenchOpaqueSurfacesKey: EnvironmentKey {
     static let defaultValue = false
 }
 extension EnvironmentValues {
-    /// Additive opaque-surface preview only; never turns off the user's setting.
+    /// Additive opaque preview; never overrides the user's reduced-transparency setting.
     var workbenchOpaqueSurfaces: Bool {
         get { self[WorkbenchOpaqueSurfacesKey.self] }
         set { self[WorkbenchOpaqueSurfacesKey.self] = newValue }
     }
 }
 struct WorkbenchChromeBackground: View {
-    var body: some View { WorkbenchChromeSurface(reduced: true) }
+    var glass = false
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.workbenchOpaqueSurfaces) private var opaquePreview
+    var body: some View {
+        if glass {
+            WorkbenchChromeSurface(reduced: reduceTransparency || opaquePreview)
+        } else {
+            Color(nsColor: WorkbenchPalette.navigation)
+        }
+    }
 }
 struct WorkbenchChromeSurface: View {
-    // Kept for existing screenshot variants; both accessibility states are solid.
     let reduced: Bool
-    var body: some View { Color(nsColor: WorkbenchPalette.navigation) }
+    @Environment(\.colorScheme) private var colorScheme
+    var body: some View {
+        if reduced {
+            Color(nsColor: WorkbenchPalette.raised)
+        } else {
+            NativeWorkbenchMaterial()
+                .overlay(Color(nsColor: WorkbenchPalette.selection).opacity(colorScheme == .dark ? 0.24 : 0.22))
+        }
+    }
+}
+/// One shared behind-window material keeps the titlebar, sidebar and card gaps
+/// continuous. AppKit supplies the real backdrop; no wallpaper or blur texture.
+private struct NativeWorkbenchMaterial: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .underWindowBackground
+        view.blendingMode = .behindWindow
+        view.state = .followsWindowActiveState
+        return view
+    }
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
 }
 
 private struct WorkbenchCard: ViewModifier {

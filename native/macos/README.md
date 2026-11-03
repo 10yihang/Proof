@@ -2,7 +2,7 @@
 
 An independent macOS frontend for the existing `proof-core`, not a replacement
 for the Tauri app. No web view, copied Git implementation or new Rust runtime dependency.
-Optional AI uses the existing Core adapters for user-installed Agent CLIs. Runs on macOS 13+. Building requires Xcode 26+ (the preview CI uses Xcode 27), Rust and system Git. The flat surface system needs no newer material APIs.
+Optional AI uses the existing Core adapters for user-installed Agent CLIs. Runs on macOS 13+. Building requires Xcode 26+ (the preview CI uses Xcode 27), Rust and system Git. The workspace shell uses NSVisualEffectView available on macOS 13; no newer glass APIs are required.
 
 ## Build and run on a Mac
 
@@ -35,7 +35,7 @@ Git hooks is intentional. Trust remains explicit and initially off.
 ## Implemented workflow
 
 - Local repository picker/recent repositories, Changes, History, Branches and Settings.
-- Collapsible native shell, light/dark appearances, solid flat surfaces respecting accessibility preferences, compact density, system file-type icons and code size.
+- Collapsible native shell, light/dark appearances, a native translucent workspace shell with opaque accessibility fallback and flat content cards, compact density, system file-type icons and code size.
 - Selectable AppKit unified/split diff, aligned change rows, separate gutters,
   synchronized vertical scrolling, independent horizontal scrolling, raw patch,
   lightweight lexical coloring and Cmd-F. Not a full parser/editor.
@@ -171,8 +171,15 @@ They prove layout/rendering only, not interactive acceptance or release readines
 
 ## Native visual refinement (2026-11-03)
 
-The latest user direction is simple and flat, superseding the glass concept.
-The title now uses the same production blue branching PNG as `src/App.tsx`;
-archived branding candidates are not substituted. Cards retain the established
-layout/density but use one fine edge, solid surfaces and no shadow, gradient or
-blur. Code, confirmations and Git/AI behavior are unchanged.
+The user selected a workspace trial combining a continuous native glass shell
+with simple flat cards. The title uses the same production blue branching PNG
+as `src/App.tsx`; archived candidates are not substituted. Only Changes uses the
+behind-window AppKit material with a subtle uniform blue tint. Sidebar navigation
+and utilities form two quiet groups; file, commit and Diff cards remain opaque,
+shadow-free and unchanged in layout/density. Other pages keep the flat shell.
+
+Reduce Transparency changes are respected through SwiftUI's live accessibility
+environment, with an opaque blue-gray fallback. Native materials reflect the
+actual desktop behind the window, not the scenery in the concept image. CI
+screenshots report the effective system preference and any additive opaque
+preview override. Code, confirmations and Git/AI behavior are unchanged.

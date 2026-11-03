@@ -46,11 +46,30 @@ enum WindowChromeCheck {
         }
         layout()
         let materials = effects(host)
-        assert(materials.isEmpty, "Flat chrome must not add decorative native blur")
+        assert(materials.count == 1, "Workspace must use one continuous native material")
+        assert(materials[0].material == .underWindowBackground && materials[0].blendingMode == .behindWindow)
+        assert(materials[0].state == .followsWindowActiveState)
         host.rootView = AnyView(WorkbenchChromeSurface(reduced: true))
         layout()
         assert(effects(host).isEmpty, "Reduced transparency must use the opaque fallback without live blur")
-        print("Native surface checks passed: solid flat chrome in both transparency preference states; systemReduceTransparency=\(NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency)")
+        // Inject environment values only into this isolated test host. The app
+        // never forces transparency and no system preference is changed here.
+        host.rootView = AnyView(WorkbenchChromeBackground(glass: true).environment(\.accessibilityReduceTransparency, false))
+        layout()
+        assert(effects(host).count == 1)
+        host.rootView = AnyView(WorkbenchChromeBackground(glass: true).environment(\.accessibilityReduceTransparency, true))
+        layout()
+        assert(effects(host).isEmpty, "The live accessibility environment must disable the backdrop")
+        host.rootView = AnyView(WorkbenchChromeBackground(glass: true).environment(\.accessibilityReduceTransparency, false))
+        layout()
+        assert(effects(host).count == 1, "Restoring transparency must recreate the native material")
+        host.rootView = AnyView(WorkbenchChromeBackground(glass: true).environment(\.workbenchOpaqueSurfaces, true))
+        layout()
+        assert(effects(host).isEmpty, "The opaque screenshot option must never enable blur")
+        host.rootView = AnyView(WorkbenchChromeBackground(glass: false))
+        layout()
+        assert(effects(host).isEmpty, "Other pages must retain the flat shell")
+        print("Native surface checks passed: one native workspace backdrop, opaque fallback and flat other pages; systemReduceTransparency=\(NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency)")
         window.close()
     }
 
