@@ -95,7 +95,7 @@ struct WorkspaceView: View {
                     filesPanel.workbenchCard()
                         .frame(maxHeight: .infinity)
                     inlineCommit.captureLayout("commit-editor").workbenchCard()
-                        .frame(height: max(220, min(280, size.height * 0.31)))
+                        .frame(height: max(220, min(300, size.height * 0.34)))
                 }.frame(width: size.width < 1000 ? 260 : 282)
                 selectedContent.workbenchCard()
             }.padding(12)
@@ -156,9 +156,11 @@ struct WorkspaceView: View {
             .disabled(model.writing).help("打开仓库 ⌘O")
     }
     private var repositoryNavigation: some View {
+        GeometryReader { sidebar in
         VStack(spacing: activeMode == "changes" ? 12 : 0) {
             navigationPrimary
-                .frame(maxWidth: .infinity, maxHeight: activeMode == "changes" ? .infinity : nil, alignment: .topLeading)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .frame(height: activeMode == "changes" ? max(compact ? 230 : 254, (sidebar.size.height - 24) * 0.46) : nil, alignment: .topLeading)
                 .background { if activeMode == "changes" { sidebarCard } }
             if activeMode != "changes" { Divider().padding(.horizontal, 10).padding(.vertical, 14) }
             navigationUtilities
@@ -166,6 +168,7 @@ struct WorkspaceView: View {
                 .background { if activeMode == "changes" { sidebarCard } }
         }.padding(.horizontal, activeMode == "changes" ? 10 : 14)
             .padding(.vertical, activeMode == "changes" ? 12 : 0)
+        }
     }
     private var sidebarCard: some View {
         RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -175,14 +178,14 @@ struct WorkspaceView: View {
     }
     private var navigationPrimary: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("工作空间").font(.system(size: 12)).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
+            Text("工作空间").font(.system(size: activeMode == "changes" ? 15 : 12, weight: activeMode == "changes" ? .semibold : .regular)).foregroundStyle(Color(nsColor: activeMode == "changes" ? WorkbenchPalette.text : WorkbenchPalette.secondary))
                 .padding(.horizontal, 10).padding(.top, 20).padding(.bottom, 12)
             navigationButton("工作区", icon: "tray", mode: "changes", key: "1", count: model.changes?.files.count)
             navigationButton("提交历史", icon: "clock.arrow.circlepath", mode: "history", key: "2", count: nil)
             navigationButton("分支", icon: "arrow.triangle.branch", mode: "branches", key: "3", count: nil)
             if let branch = model.changes?.branch {
                 Label(branch, systemImage: "arrow.triangle.branch")
-                    .font(.system(size: 11)).foregroundStyle(Color(nsColor: WorkbenchPalette.accent))
+                    .font(.system(size: activeMode == "changes" ? 12 : 11)).foregroundStyle(Color(nsColor: WorkbenchPalette.accent))
                     .lineLimit(2).padding(.leading, 28).padding(.vertical, 12).help(branch)
             }
         }.padding(.horizontal, activeMode == "changes" ? 6 : 0)
@@ -403,9 +406,9 @@ struct WorkspaceView: View {
     private var inlineCommit: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("提交").font(.system(size: 12, weight: .semibold))
+                Text("提交").font(.system(size: 16, weight: .semibold))
                 Spacer()
-                Text("已暂存 \(model.stagedFileCount) 个文件").font(.system(size: 10)).foregroundStyle(.secondary)
+                Text("已暂存 \(model.stagedFileCount) 个文件").font(.system(size: 11)).foregroundStyle(.secondary)
             }
             TextField("提交标题", text: commitSubject, axis: .vertical)
                 .lineLimit(2...2).textFieldStyle(.plain).font(.system(size: 13))

@@ -183,3 +183,9 @@ environment, with an opaque blue-gray fallback. Native materials reflect the
 actual desktop behind the window, not the scenery in the concept image. CI
 screenshots report the effective system preference and any additive opaque
 preview override. Code, confirmations and Git/AI behavior are unchanged.
+
+The workspace refinement uses a stronger uniform blue material tint and an
+explicit blue-gray opaque fallback, rather than relying on desktop wallpaper
+for color. The commit card gets a little more height and a clearer heading;
+sidebar navigation is slightly shorter. Default CI captures preserve the
+runner's accessibility setting and do not prove the live translucency colors.

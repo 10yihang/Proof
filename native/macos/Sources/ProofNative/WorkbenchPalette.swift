@@ -4,6 +4,8 @@ import SwiftUI
 /// Flat content cards with a native translucent shell only in the workspace.
 enum WorkbenchPalette {
     static let canvas = adaptive(light: 0xFFFFFF, dark: 0x1B2230)
+    static let glassTint = adaptive(light: 0xC5DBFA, dark: 0x243D64)
+    static let glassFallback = adaptive(light: 0xE5EFFC, dark: 0x223149)
     static let navigation = adaptive(light: 0xF0F3F8, dark: 0x191E27)
     static let panel = adaptive(light: 0xF7F8FA, dark: 0x222A36)
     static let raised = adaptive(light: 0xF4F7FC, dark: 0x283448)
@@ -56,10 +58,10 @@ struct WorkbenchChromeSurface: View {
     @Environment(\.colorScheme) private var colorScheme
     var body: some View {
         if reduced {
-            Color(nsColor: WorkbenchPalette.raised)
+            Color(nsColor: WorkbenchPalette.glassFallback)
         } else {
             NativeWorkbenchMaterial()
-                .overlay(Color(nsColor: WorkbenchPalette.selection).opacity(colorScheme == .dark ? 0.24 : 0.22))
+                .overlay(Color(nsColor: WorkbenchPalette.glassTint).opacity(colorScheme == .dark ? 0.38 : 0.48))
         }
     }
 }
