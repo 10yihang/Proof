@@ -115,8 +115,10 @@ struct WorkspaceView: View {
             Button("打开仓库…") { model.pickRepository() }
             if model.workspace != nil { Button("关闭当前仓库") { model.closeRepository() } }
         } label: {
-            Label(model.mode == "settings" ? "设置" : model.mode == "repositories" || model.workspace == nil ? "仓库" : model.workspace!.name,
-                  systemImage: model.mode == "settings" ? "gearshape" : "shippingbox")
+            HStack(spacing: 6) {
+                Image(systemName: "shippingbox")
+                Text(model.workspace?.name ?? "选择仓库")
+            }
                 .font(.system(size: 12, weight: .medium)).lineLimit(1)
                 .frame(minWidth: 80, maxWidth: 210, alignment: .leading)
         }.menuStyle(.borderlessButton).fixedSize().disabled(model.writing)
