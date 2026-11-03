@@ -21,7 +21,8 @@ struct WorkspaceView: View {
                 repositoryNavigation
                     .frame(width: column.size.width, height: column.size.height, alignment: .topLeading)
             }
-            .navigationSplitViewColumnWidth(min: 176, ideal: 208, max: 250)
+            .frame(minWidth: 208, idealWidth: 208, maxWidth: 250)
+            .navigationSplitViewColumnWidth(min: 208, ideal: 208, max: 250)
             .hideAutomaticSidebarToggle()
         } detail: {
             GeometryReader { viewport in
