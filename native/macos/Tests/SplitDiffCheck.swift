@@ -66,9 +66,13 @@ enum SplitDiffCheck {
 
     private static func fixture(id: String) -> FileDiff {
         let longLine = String(repeating: "selectable_text ", count: 80)
-        let lines = (1...180).map { line("context", "\($0) \(longLine)", old: $0, new: $0) }
+        let lines = [line("delete", "old \(longLine)", old: 1),
+                     line("add", "new \(longLine)", new: 1),
+                     line("add", "extra \(longLine)", new: 2)]
+            + (2...180).map { line("context", "\($0) \(longLine)", old: $0, new: $0 + 1) }
         return FileDiff(id: id, path: "scroll-check.swift", side: "unstaged", base: "HEAD", patch: "",
-                        hunks: [hunk(lines)], additions: 0, deletions: 0, kind: "text", notice: nil, canStage: false)
+                        hunks: [Hunk(id: "scroll", header: "@@ -1,180 +1,181 @@", lines: lines, reviewState: "unreviewed")],
+                        additions: 2, deletions: 1, kind: "text", notice: nil, canStage: false)
     }
 
     private static func descendants<T: NSView>(_ view: NSView, of type: T.Type) -> [T] {
@@ -92,6 +96,7 @@ enum SplitDiffCheck {
         _ = NSApplication.shared
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 340),
                               styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
         let host = NSHostingView(rootView: SplitNativeDiffView(diff: fixture(id: "first")))
         window.contentView = host
         layout(host)
@@ -101,6 +106,13 @@ enum SplitDiffCheck {
         assert(panes.count == 2)
         let before = panes[0], after = panes[1]
         assert(before.synchronizedScrollView === after && after.synchronizedScrollView === before)
+        let oldText = before.documentView as! DiffTextView
+        let newText = after.documentView as! DiffTextView
+        assert(oldText.rows.count == newText.rows.count)
+        for (old, new) in zip(oldText.rows, newText.rows) {
+            let oldRect = oldText.rowRect(old)!, newRect = newText.rowRect(new)!
+            assert(abs(oldRect.minY - newRect.minY) < 1 && abs(oldRect.height - newRect.height) < 1)
+        }
         for pane in panes {
             let text = pane.documentView as! DiffTextView
             assert(text.isSelectable && !text.isEditable && text.usesFindBar && text.isIncrementalSearchingEnabled)
