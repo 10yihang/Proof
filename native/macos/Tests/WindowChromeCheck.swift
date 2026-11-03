@@ -46,14 +46,11 @@ enum WindowChromeCheck {
         }
         layout()
         let materials = effects(host)
-        assert(materials.count == 1)
-        assert(materials[0].material == .underWindowBackground)
-        assert(materials[0].blendingMode == .behindWindow)
-        assert(materials[0].state == .followsWindowActiveState)
+        assert(materials.isEmpty, "Flat chrome must not add decorative native blur")
         host.rootView = AnyView(WorkbenchChromeSurface(reduced: true))
         layout()
         assert(effects(host).isEmpty, "Reduced transparency must use the opaque fallback without live blur")
-        print("Native material checks passed: single behind-window effect, follows activation, opaque reduce-transparency fallback; systemReduceTransparency=\(NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency)")
+        print("Native surface checks passed: solid flat chrome in both transparency preference states; systemReduceTransparency=\(NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency)")
         window.close()
     }
 

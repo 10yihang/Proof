@@ -105,7 +105,7 @@ struct WorkspaceView: View {
         HStack(spacing: width < 1250 ? 12 : 18) {
             Color.clear.frame(width: 72).accessibilityHidden(true)
             HStack(spacing: 8) {
-                Image(systemName: "checkmark.seal.fill").foregroundStyle(Color(nsColor: WorkbenchPalette.accent))
+                Image(nsImage: ProofBrand.image).resizable().interpolation(.high).frame(width: 24, height: 24).accessibilityHidden(true)
                 Text("Proof").font(.system(size: 16, weight: .semibold))
             }
             Button { model.setSidebarVisible(!model.sidebarVisible, persist: ScreenshotPreview.outputDirectory == nil) } label: {

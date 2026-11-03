@@ -2,7 +2,7 @@
 
 An independent macOS frontend for the existing `proof-core`, not a replacement
 for the Tauri app. No web view, copied Git implementation or new Rust runtime dependency.
-Optional AI uses the existing Core adapters for user-installed Agent CLIs. Runs on macOS 13+. Building requires Xcode 26+ (the preview CI uses Xcode 27), Rust and system Git. New material APIs are availability-guarded for older macOS versions.
+Optional AI uses the existing Core adapters for user-installed Agent CLIs. Runs on macOS 13+. Building requires Xcode 26+ (the preview CI uses Xcode 27), Rust and system Git. The flat surface system needs no newer material APIs.
 
 ## Build and run on a Mac
 
@@ -35,8 +35,7 @@ Git hooks is intentional. Trust remains explicit and initially off.
 ## Implemented workflow
 
 - Local repository picker/recent repositories, Changes, History, Branches and Settings.
-- Collapsible native shell, light/dark appearances, native materials with opaque
-  accessibility fallback, compact density, system file-type icons and code size.
+- Collapsible native shell, light/dark appearances, solid flat surfaces respecting accessibility preferences, compact density, system file-type icons and code size.
 - Selectable AppKit unified/split diff, aligned change rows, separate gutters,
   synchronized vertical scrolling, independent horizontal scrolling, raw patch,
   lightweight lexical coloring and Cmd-F. Not a full parser/editor.
@@ -169,3 +168,11 @@ done
 This explicit mode uses illustrative data labeled Preview, starts no bridge, and
 opens no Git repository. The PNGs are native AppKit captures, not browser mockups.
 They prove layout/rendering only, not interactive acceptance or release readiness.
+
+## Native visual refinement (2026-11-03)
+
+The latest user direction is simple and flat, superseding the glass concept.
+The title now uses the same production blue branching PNG as `src/App.tsx`;
+archived branding candidates are not substituted. Cards retain the established
+layout/density but use one fine edge, solid surfaces and no shadow, gradient or
+blur. Code, confirmations and Git/AI behavior are unchanged.

@@ -222,7 +222,7 @@ enum ScreenshotPreview {
                 "screenCaptureKitWidth": bitmap.pixelsWide, "screenCaptureKitHeight": bitmap.pixelsHigh,
                 "systemReduceTransparency": NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency,
                 "forcedReducedTransparency": forceReducedTransparency,
-                "materialScope": "Native behind-window material; appearance depends on desktop and accessibility settings",
+                "materialScope": "Solid flat native surfaces; no decorative blur, gradient or card shadow",
                 "operatingSystem": ProcessInfo.processInfo.operatingSystemVersionString
             ]
             try JSONSerialization.data(withJSONObject: evidence, options: [.prettyPrinted, .sortedKeys])

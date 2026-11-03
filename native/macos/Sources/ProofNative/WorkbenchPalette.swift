@@ -1,17 +1,18 @@
 import AppKit
 import SwiftUI
 
-/// Airy native surfaces: blue-tinted chrome, independent light cards, opaque code.
+/// Flat native workbench: quiet solid surfaces, one border, no decorative depth.
 enum WorkbenchPalette {
     static let canvas = adaptive(light: 0xFFFFFF, dark: 0x1B2230)
-    static let navigation = adaptive(light: 0xE0EBFC, dark: 0x141D2B)
-    static let panel = adaptive(light: 0xF9FBFF, dark: 0x202A3A)
+    static let navigation = adaptive(light: 0xF0F3F8, dark: 0x191E27)
+    static let panel = adaptive(light: 0xF7F8FA, dark: 0x222A36)
     static let raised = adaptive(light: 0xF4F7FC, dark: 0x283448)
-    static let selection = adaptive(light: 0xD6E6FF, dark: 0x294B78)
-    static let border = adaptive(light: 0xDCE4F0, dark: 0x3C4A5D)
+    static let selection = adaptive(light: 0xE0EAFE, dark: 0x2D4365)
+    static let border = adaptive(light: 0xDCE2EB, dark: 0x384251)
     static let text = adaptive(light: 0x17243D, dark: 0xEDF3FF)
     static let secondary = adaptive(light: 0x536582, dark: 0xB1C1DA)
     static let accent = adaptive(light: 0x0964EC, dark: 0x7BB2FF)
+    static let primaryAction = adaptive(light: 0x1559C5, dark: 0x2469CE)
     static let addition = adaptive(light: 0xECF9EF, dark: 0x213B30)
     static let deletion = adaptive(light: 0xFFF0F1, dark: 0x442B35)
     static let hunk = adaptive(light: 0xECF2FD, dark: 0x29374D)
@@ -28,19 +29,7 @@ enum WorkbenchPalette {
     }
 }
 
-struct WorkbenchBackdrop: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = .underWindowBackground
-        view.blendingMode = .behindWindow
-        view.state = .followsWindowActiveState
-        return view
-    }
-    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
-}
-
-/// One native backdrop, with a quiet highlight on the surface itself. No image,
-/// artificial wallpaper, or decorative color blobs are used for translucency.
+// Capture compatibility: opaque mode is already the normal flat design.
 private struct WorkbenchOpaqueSurfacesKey: EnvironmentKey {
     static let defaultValue = false
 }
@@ -52,51 +41,28 @@ extension EnvironmentValues {
     }
 }
 struct WorkbenchChromeBackground: View {
-    @Environment(\.accessibilityReduceTransparency) private var systemReduceTransparency
-    @Environment(\.workbenchOpaqueSurfaces) private var opaqueSurfaces
-    var body: some View {
-        WorkbenchChromeSurface(reduced: systemReduceTransparency || opaqueSurfaces)
-    }
+    var body: some View { WorkbenchChromeSurface(reduced: true) }
 }
 struct WorkbenchChromeSurface: View {
+    // Kept for existing screenshot variants; both accessibility states are solid.
     let reduced: Bool
-    @Environment(\.colorScheme) private var colorScheme
-    var body: some View {
-        ZStack {
-            if reduced { Color(nsColor: WorkbenchPalette.navigation) }
-            else {
-                WorkbenchBackdrop()
-                // A substantial native tint keeps the chrome blue even over neutral
-                // or warm desktops, while retaining a small amount of real material.
-                Color(nsColor: WorkbenchPalette.navigation).opacity(0.88)
-            }
-            LinearGradient(colors: [.white.opacity(colorScheme == .dark ? 0.025 : 0.18), .clear],
-                           startPoint: .top, endPoint: .bottom)
-        }
-    }
+    var body: some View { Color(nsColor: WorkbenchPalette.navigation) }
 }
 
 private struct WorkbenchCard: ViewModifier {
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityReduceTransparency) private var systemReduceTransparency
-    @Environment(\.workbenchOpaqueSurfaces) private var opaqueSurfaces
-    private var reduceTransparency: Bool { systemReduceTransparency || opaqueSurfaces }
     func body(content: Content) -> some View {
         content
-            .background(Color(nsColor: WorkbenchPalette.canvas).opacity(reduceTransparency ? 1 : (colorScheme == .dark ? 0.86 : 0.78)))
-            .background { if !reduceTransparency { Rectangle().fill(.thinMaterial) } }
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .shadow(color: .black.opacity(colorScheme == .dark ? 0.22 : 0.065), radius: 10, x: 0, y: 4)
+            .background(Color(nsColor: WorkbenchPalette.canvas))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color(nsColor: WorkbenchPalette.border), lineWidth: 0.75))
     }
 }
 private struct WorkbenchInputSurface: ViewModifier {
-    @Environment(\.accessibilityReduceTransparency) private var systemReduceTransparency
-    @Environment(\.workbenchOpaqueSurfaces) private var opaqueSurfaces
-    private var reduceTransparency: Bool { systemReduceTransparency || opaqueSurfaces }
     func body(content: Content) -> some View {
         content
-            .background(Color(nsColor: WorkbenchPalette.panel).opacity(reduceTransparency ? 1 : 0.75), in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color(nsColor: WorkbenchPalette.border), lineWidth: 0.75))
+            .background(Color(nsColor: WorkbenchPalette.panel), in: RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(nsColor: WorkbenchPalette.border), lineWidth: 0.65))
     }
 }
 private struct WorkbenchSelection: ViewModifier {
@@ -116,27 +82,22 @@ extension View {
     func airyControlSurface() -> some View { modifier(AiryControlSurface()) }
 }
 private struct AiryControlSurface: ViewModifier {
-    @Environment(\.accessibilityReduceTransparency) private var reduced
-    @Environment(\.workbenchOpaqueSurfaces) private var opaque
-    @ViewBuilder func body(content: Content) -> some View {
-        if reduced || opaque { content.background(Color(nsColor: WorkbenchPalette.panel), in: RoundedRectangle(cornerRadius: 8)) }
-        else if #available(macOS 26.0, *) {
-            content.glassEffect(.regular, in: RoundedRectangle(cornerRadius: 8))
-        } else {
-            content.background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
-        }
+    func body(content: Content) -> some View {
+        content.background(Color(nsColor: WorkbenchPalette.canvas), in: RoundedRectangle(cornerRadius: 6))
     }
 }
 
 struct WorkbenchButtonStyle: ButtonStyle {
     var prominent = false
     @Environment(\.isEnabled) private var isEnabled
+    @State private var hovered = false
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.font(.system(size: prominent ? 14 : 12, weight: prominent ? .medium : .regular))
             .padding(.horizontal, 12).frame(height: prominent ? 40 : 30)
+            .contentShape(RoundedRectangle(cornerRadius: 6))
             .foregroundStyle(prominent ? Color.white : Color(nsColor: WorkbenchPalette.text))
-            .background(prominent ? Color(nsColor: NSColor.systemBlue) : Color(nsColor: WorkbenchPalette.panel), in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(nsColor: WorkbenchPalette.border), lineWidth: prominent ? 0 : 0.7))
+            .background(prominent ? Color(nsColor: WorkbenchPalette.primaryAction) : hovered || configuration.isPressed ? Color(nsColor: WorkbenchPalette.selection) : .clear, in: RoundedRectangle(cornerRadius: 6))
+            .onHover { hovered = $0 }
             .opacity(isEnabled ? (configuration.isPressed ? 0.72 : 1) : 0.4)
     }
 }

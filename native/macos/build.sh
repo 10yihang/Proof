@@ -16,6 +16,8 @@ APP="$PWD/native/macos/build/Proof Native.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/ProofNative" "$APP/Contents/MacOS/ProofNative"
 cp target/release/proof-swift-bridge "$APP/Contents/MacOS/proof-swift-bridge"
+cmp src-tauri/icons/128x128@2x.png native/macos/Sources/ProofNative/Resources/ProofMark.png
+cp src-tauri/icons/128x128@2x.png "$APP/Contents/Resources/ProofMark.png"
 cp native/macos/Info.plist "$APP/Contents/Info.plist"
 if [[ -f src-tauri/icons/icon.icns ]]; then cp src-tauri/icons/icon.icns "$APP/Contents/Resources/Proof.icns"; fi
 codesign --force --sign - "$APP/Contents/MacOS/proof-swift-bridge"
