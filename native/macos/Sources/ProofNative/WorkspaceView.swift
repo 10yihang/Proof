@@ -271,7 +271,7 @@ struct WorkspaceView: View {
                     Text("全部 \(model.changes?.files.count ?? 0)").tag("all")
                     Text("未暂存 \(fileCount("unstaged"))").tag("unstaged")
                     Text("已暂存 \(fileCount("staged"))").tag("staged")
-                }.pickerStyle(.segmented).controlSize(.small)
+                }.pickerStyle(.segmented).labelsHidden().accessibilityLabel("文件范围").controlSize(.small)
                     .padding(.horizontal, 12).padding(.bottom, 8).disabled(model.writing)
                     .help("只筛选文件列表；不改变当前 Diff、暂存状态或提交范围")
                 changedFiles
