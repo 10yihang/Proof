@@ -5,14 +5,14 @@ import SwiftUI
 enum WorkbenchPalette {
     static let canvas = adaptive(light: 0xFFFFFF, dark: 0x1B2230)
     static let glassTint = adaptive(light: 0xC5DBFA, dark: 0x243D64)
-    static let glassFallback = adaptive(light: 0xE5EFFC, dark: 0x223149)
+    static let glassFallback = adaptive(light: 0xEDF3FC, dark: 0x1E2B40)
     static let navigation = adaptive(light: 0xF0F3F8, dark: 0x191E27)
-    static let panel = adaptive(light: 0xF7F8FA, dark: 0x222A36)
+    static let panel = adaptive(light: 0xF8FAFE, dark: 0x222A36)
     static let raised = adaptive(light: 0xF4F7FC, dark: 0x283448)
     static let selection = adaptive(light: 0xE0EAFE, dark: 0x2D4365)
     static let border = adaptive(light: 0xDCE2EB, dark: 0x384251)
     static let text = adaptive(light: 0x17243D, dark: 0xEDF3FF)
-    static let secondary = adaptive(light: 0x536582, dark: 0xB1C1DA)
+    static let secondary = adaptive(light: 0x526078, dark: 0xB9C6DA)
     static let accent = adaptive(light: 0x0964EC, dark: 0x7BB2FF)
     static let primaryAction = adaptive(light: 0x1559C5, dark: 0x2469CE)
     static let addition = adaptive(light: 0xECF9EF, dark: 0x213B30)
@@ -121,7 +121,7 @@ struct WorkbenchButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     @State private var hovered = false
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label.font(.system(size: prominent ? 14 : 12, weight: prominent ? .medium : .regular))
+        configuration.label.font(.system(size: prominent ? 14 : 13, weight: prominent ? .medium : .regular))
             .padding(.horizontal, 12).frame(height: prominent ? 40 : 30)
             .contentShape(RoundedRectangle(cornerRadius: 6))
             .foregroundStyle(prominent ? Color.white : Color(nsColor: WorkbenchPalette.text))
@@ -137,7 +137,7 @@ struct WorkbenchButtonStyle: ButtonStyle {
 func alignNativeWindowButtons(_ window: NSWindow) {
     for type: NSWindow.ButtonType in [.closeButton, .miniaturizeButton, .zoomButton] {
         guard let button = window.standardWindowButton(type), let parent = button.superview else { continue }
-        let desired = NSPoint(x: 0, y: window.frame.height - 27)
+        let desired = NSPoint(x: 0, y: window.frame.height - 32)
         let initialY = parent.convert(desired, from: nil).y - button.frame.height / 2
         if initialY < parent.bounds.minY {
             // Extend the native container downward so the moved controls remain

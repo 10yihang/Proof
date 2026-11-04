@@ -21,7 +21,7 @@ enum WindowChromeCheck {
             for (index, button) in controls.enumerated() {
                 let parent = button.superview!
                 let center = parent.convert(NSPoint(x: button.frame.midX, y: button.frame.midY), to: nil)
-                assert(abs(center.y - (window.frame.height - 27)) < 0.5)
+                assert(abs(center.y - (window.frame.height - 32)) < 0.5)
                 assert(parent.bounds.contains(button.frame), "Native traffic-light hit region must stay inside its parent")
                 assert(button.action == actions[index] && !button.isHidden && button.isEnabled)
             }

@@ -195,3 +195,8 @@ list presentation. Filters only affect the file list: the open Diff remains
 visible with its explicit side, while commit and AI commit still use all staged
 changes. Flat rows include paths for duplicate filenames. Next unreviewed is
 workspace-wide and reveals its target by clearing filters and collapsed groups.
+
+The whole-composition trial uses a 64pt titlebar, an open navigation rail with one
+compact repository-context tile, and stronger card/filename typography. It removes
+unimplemented navigation placeholders and duplicate sync controls, while keeping
+the existing top-bar sync menu. This direction is awaiting user visual review.
