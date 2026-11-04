@@ -13,6 +13,8 @@ struct WorkspaceView: View {
     @State private var rawPatch = false
     @State private var splitDiff = true
     @State private var collapsed: Set<String> = []
+    @State private var fileScope = "all"
+    @State private var treeLayout = true
     @State private var contextPopover = false
     @State private var aiPanel = false
     @Environment(\.scenePhase) private var scenePhase
@@ -68,10 +70,14 @@ struct WorkspaceView: View {
         .sheet(item: $model.preview) { commitConfirmation($0) }
         .sheet(item: $model.operationPreview, onDismiss: { model.cancelOperation() }) { RepositoryOperationConfirmation(model: model, preview: $0) }
         .sheet(isPresented: $aiPanel) { AIAssistanceView(model: model) }
-        .onAppear { if ScreenshotPreview.outputDirectory == nil { model.startAutoRefresh() } }
+        .onAppear {
+            if ScreenshotPreview.outputDirectory == nil { model.startAutoRefresh() }
+            else { fileScope = ScreenshotPreview.fileScope; treeLayout = !ScreenshotPreview.fileList }
+        }
         .onDisappear { model.stopAutoRefresh() }
         .onChange(of: scenePhase) { model.setWorkspaceActive($0 == .active) }
         .onChange(of: stageConfirmation || trustConfirmation || hunkPopover || aiPanel) { model.dialogPresented = $0 }
+        .onChange(of: model.workspace?.id) { _ in fileScope = "all"; collapsed = [] }
         .onChange(of: model.mode) { _ in model.changeMode() }
         .onChange(of: model.selectedFile) { _ in model.loadFile() }
         .onChange(of: model.selectedCommit) { _ in model.loadCommit() }
@@ -227,8 +233,9 @@ struct WorkspaceView: View {
     }
     private func navigationButton(_ title: String, icon: String, mode: String, key: KeyEquivalent, count: Int?) -> some View {
         Button { model.mode = mode } label: {
-            HStack(spacing: 9) { Image(systemName: icon).frame(width: 16); Text(title).font(.system(size: 14)); Spacer(minLength: 2); if let count { Text("\(count)").font(.system(size: 11)) } }
+            HStack(spacing: 9) { Image(systemName: icon).frame(width: 16); Text(title).font(.system(size: 14, weight: activeMode == mode ? .medium : .regular)); Spacer(minLength: 2); if let count { Text("\(count)").font(.system(size: 11)) } }
                 .padding(.horizontal, 10).frame(height: compact ? 38 : 44).contentShape(Rectangle())
+                .foregroundStyle(Color(nsColor: activeMode == mode ? WorkbenchPalette.text : WorkbenchPalette.secondary))
                 .workbenchSelection(activeMode == mode)
         }.buttonStyle(.plain).disabled(model.writing).keyboardShortcut(key)
             .accessibilityAddTraits(activeMode == mode ? .isSelected : []).padding(.bottom, 3)
@@ -240,6 +247,17 @@ struct WorkspaceView: View {
                 Text(model.mode == "history" ? "\(model.commits.count) 条提交" : "\(model.changes?.files.count ?? 0) 个文件")
                     .font(.system(size: 10)).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
                 Spacer()
+                if model.mode != "history" {
+                    Menu {
+                        Picker("文件显示方式", selection: $treeLayout) {
+                            Text("目录树").tag(true)
+                            Text("文件列表").tag(false)
+                        }
+                    } label: { Image(systemName: treeLayout ? "list.bullet.indent" : "list.bullet") }
+                    .menuStyle(.borderlessButton).fixedSize().disabled(model.writing)
+                    .help("文件显示方式：目录树或文件列表")
+                    .accessibilityLabel("文件显示方式")
+                }
             }.padding(.horizontal, 18).frame(height: 44)
             HStack(spacing: 7) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
@@ -248,12 +266,27 @@ struct WorkspaceView: View {
             }.padding(9).workbenchInputSurface()
                 .padding(.horizontal, 12).padding(.bottom, 10)
             if model.mode == "history" { historyList }
-            else { changedFiles }
+            else {
+                Picker("文件范围", selection: $fileScope) {
+                    Text("全部 \(model.changes?.files.count ?? 0)").tag("all")
+                    Text("未暂存 \(fileCount("unstaged"))").tag("unstaged")
+                    Text("已暂存 \(fileCount("staged"))").tag("staged")
+                }.pickerStyle(.segmented).controlSize(.small)
+                    .padding(.horizontal, 12).padding(.bottom, 8).disabled(model.writing)
+                    .help("只筛选文件列表；不改变当前 Diff、暂存状态或提交范围")
+                changedFiles
+            }
             if model.mode != "history" { reviewProgress }
         }.frame(maxHeight: .infinity).captureLayout("files-column")
     }
+    private func fileCount(_ side: String) -> Int {
+        model.changes?.files.filter { $0.side == side }.count ?? 0
+    }
     private var visibleTreeRows: [ChangesTreeRow] {
-        changesTreeRows(files: model.changes?.files ?? [], scope: "all", search: model.search, tree: true, collapsed: collapsed)
+        changesTreeRows(files: model.changes?.files ?? [], scope: fileScope, search: model.search, tree: treeLayout, collapsed: collapsed)
+    }
+    private var matchingFileCount: Int {
+        visibleTreeRows.filter(\.isGroup).reduce(0) { $0 + $1.count }
     }
     private var changedFiles: some View {
         ScrollViewReader { proxy in
@@ -297,7 +330,13 @@ struct WorkspaceView: View {
         }.frame(minHeight: 0, maxHeight: .infinity).disabled(model.writing)
             .overlay {
                 if model.changes?.files.isEmpty == true { Text("工作区干净").foregroundStyle(.secondary) }
-                else if !model.search.isEmpty && visibleTreeRows.isEmpty { Text("没有匹配的文件").foregroundStyle(.secondary) }
+                else if matchingFileCount == 0 {
+                    VStack(spacing: 8) {
+                        Text(model.search.isEmpty ? "此范围暂无文件" : "没有匹配的文件").foregroundStyle(.secondary)
+                        Button("显示全部文件") { fileScope = "all"; model.search = ""; collapsed = [] }
+                            .buttonStyle(.plain).foregroundStyle(Color(nsColor: WorkbenchPalette.accent))
+                    }.font(.system(size: 12)).disabled(model.writing)
+                }
             }
     }
     private func changedFileRow(_ file: ChangedFile, depth: Int) -> some View {
@@ -305,13 +344,17 @@ struct WorkspaceView: View {
             FileTypeIcon(path: file.path)
             VStack(alignment: .leading, spacing: 4) {
                 Text((file.path as NSString).lastPathComponent).font(.system(size: 14)).lineLimit(1).truncationMode(.middle)
-
+                if !treeLayout {
+                    Text((file.path as NSString).deletingLastPathComponent.isEmpty ? "仓库根目录" : (file.path as NSString).deletingLastPathComponent)
+                        .font(.system(size: 11)).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
+                        .lineLimit(1).truncationMode(.middle)
+                }
             }
             Spacer(minLength: 2)
             if model.loadedDiffs[file.id]?.reviewed == true { Image(systemName: "checkmark").font(.system(size: 10)).accessibilityLabel("已人工评审此快照") }
             Text(file.conflicted ? "!" : file.status == "?" ? "U" : file.status).font(.system(size: 9, design: .monospaced)).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
         }.padding(.leading, CGFloat(depth) * 10 + 6).padding(.trailing, 6)
-            .frame(height: 36).help(file.path)
+            .frame(height: treeLayout ? 36 : 46).help(file.path)
     }
     private var historyList: some View {
         VStack(spacing: 0) {
@@ -333,9 +376,9 @@ struct WorkspaceView: View {
             HStack {
                 Label("已评审 \(snapshots.filter(\.reviewed).count) / \(snapshots.count) 个已加载文件", systemImage: "checkmark")
                 Spacer(minLength: 0)
-                Button { model.nextReviewFile() } label: { Image(systemName: "arrow.right") }
+                Button { fileScope = "all"; model.search = ""; collapsed = []; model.nextReviewFile() } label: { Image(systemName: "arrow.right") }
                     .buttonStyle(.plain).disabled(model.busy || !(model.changes?.files.contains { model.loadedDiffs[$0.id]?.reviewed != true } ?? false))
-                    .help("下一个待评审文件（含未加载文件）").accessibilityLabel("下一个待评审文件")
+                    .help("全工作区下一个待评审文件（显示全部文件，含未加载）").accessibilityLabel("下一个待评审文件")
             }.padding(.top, 7)
         }.font(.system(size: 11)).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
             .padding(.horizontal, 18).padding(.bottom, 14).padding(.top, 5)
@@ -373,7 +416,11 @@ struct WorkspaceView: View {
             FileTypeIcon(path: diff.path)
             VStack(alignment: .leading, spacing: 4) {
                 Text((diff.path as NSString).lastPathComponent).font(.system(size: 14, weight: .semibold)).lineLimit(1).truncationMode(.middle)
-                Text((diff.path as NSString).deletingLastPathComponent).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                HStack(spacing: 5) {
+                    Text(diff.side == "staged" ? "已暂存" : "未暂存").foregroundStyle(Color(nsColor: WorkbenchPalette.accent)).fixedSize()
+                    Text("·").foregroundStyle(.secondary)
+                    Text((diff.path as NSString).deletingLastPathComponent).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                }.font(.system(size: 11))
             }.help(diff.path)
             Text("+\(diff.additions)").foregroundStyle(Color(nsColor: WorkbenchPalette.additionInk))
             Text("−\(diff.deletions)").foregroundStyle(Color(nsColor: WorkbenchPalette.deletionInk))

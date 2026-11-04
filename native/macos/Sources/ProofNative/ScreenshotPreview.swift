@@ -28,8 +28,17 @@ enum ScreenshotPreview {
         ProcessInfo.processInfo.arguments.contains("--preview-reduced-transparency")
     }
 
+    static var fileList: Bool { ProcessInfo.processInfo.arguments.contains("--preview-file-list") }
+    static var fileScope: String {
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: "--preview-file-scope"), args.indices.contains(index + 1) else { return "all" }
+        let scope = args[index + 1]
+        precondition(["all", "unstaged", "staged"].contains(scope))
+        return scope
+    }
+
     static var captureName: String {
-        "\(pageName)-\(themeName)-\(sizeName)" + (sidebarCollapsed ? "-collapsed" : "") + (forceReducedTransparency ? "-reduced" : "")
+        "\(pageName)-\(themeName)-\(sizeName)" + (sidebarCollapsed ? "-collapsed" : "") + (forceReducedTransparency ? "-reduced" : "") + (fileList ? "-\(fileScope)-list" : "")
     }
 
     static var sizeName: String {
@@ -212,6 +221,7 @@ enum ScreenshotPreview {
             guard screenshot.terminationStatus == 0 else { throw CaptureError.noBitmap }
             let evidence: [String: Any] = [
                 "page": pageName, "theme": themeName, "size": sizeName,
+                "fileScope": fileScope, "fileLayout": fileList ? "list" : "tree",
                 "sidebar": sidebarCollapsed ? "collapsed" : "expanded",
                 "fixtureData": true, "bridgeStarted": false, "gitOperations": false,
                 "geometryPassed": layoutError == nil,
