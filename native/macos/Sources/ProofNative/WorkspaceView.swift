@@ -28,7 +28,7 @@ struct WorkspaceView: View {
                 titleBar(width: window.size.width).captureLayout("branch-header")
                 HStack(spacing: 0) {
                     if model.sidebarVisible {
-                        repositoryNavigation.frame(width: window.size.width >= 1250 ? 196 : 180)
+                        repositoryNavigation.frame(width: window.size.width >= 1250 ? 176 : 160)
                     }
                     GeometryReader { viewport in
                         VStack(spacing: 0) {
@@ -102,7 +102,7 @@ struct WorkspaceView: View {
                         .frame(maxHeight: .infinity)
                     inlineCommit.captureLayout("commit-editor").workbenchCard()
                         .frame(height: max(220, min(300, size.height * 0.34)))
-                }.frame(width: size.width < 1000 ? 258 : 280)
+                }.frame(width: size.width < 1000 ? 280 : 300)
                 selectedContent.workbenchCard()
             }.padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 10)
         }
@@ -217,9 +217,8 @@ struct WorkspaceView: View {
     private var filesPanel: some View {
         VStack(spacing: 0) {
             HStack {
-                Text(model.mode == "history" ? "历史" : "更改").font(.system(size: 20, weight: .semibold))
-                Text(model.mode == "history" ? "\(model.commits.count) 条提交" : "\(model.changes?.files.count ?? 0) 个文件")
-                    .font(.system(size: 10)).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
+                Text(model.mode == "history" ? "历史" : "更改").font(.system(size: 17, weight: .semibold))
+                countBadge(model.mode == "history" ? model.commits.count : model.changes?.files.count ?? 0)
                 Spacer()
                 if model.mode != "history" {
                     Menu {
@@ -232,13 +231,15 @@ struct WorkspaceView: View {
                     .help("文件显示方式：目录树或文件列表")
                     .accessibilityLabel("文件显示方式")
                 }
-            }.padding(.horizontal, 16).frame(height: 52)
+            }.padding(.horizontal, 14).frame(height: 46)
+                .background(Color(nsColor: WorkbenchPalette.cardHeader))
+                .overlay(alignment: .bottom) { horizontalRule }
             HStack(spacing: 7) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 TextField(model.mode == "history" ? "筛选已加载提交…" : "筛选文件…", text: $model.search)
                     .textFieldStyle(.plain).font(.system(size: 13))
             }.padding(9).workbenchInputSurface()
-                .padding(.horizontal, 12).padding(.bottom, 10)
+                .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 8)
             if model.mode == "history" { historyList }
             else {
                 HStack(spacing: 3) {
@@ -284,6 +285,7 @@ struct WorkspaceView: View {
                                     .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                             }.buttonStyle(.plain).id(file.id)
                                 .workbenchSelection(model.selectedFile == file.id)
+                                .overlay(alignment: .bottom) { horizontalRule.opacity(0.45).padding(.leading, 28) }
                                 .accessibilityAddTraits(model.selectedFile == file.id ? .isSelected : [])
                         } else {
                             Button {
@@ -343,7 +345,12 @@ struct WorkspaceView: View {
             }
             Spacer(minLength: 2)
             if model.loadedDiffs[file.id]?.reviewed == true { Image(systemName: "checkmark").font(.system(size: 10)).accessibilityLabel("已人工评审此快照") }
-            Text(file.conflicted ? "!" : file.status == "?" ? "U" : file.status).font(.system(size: 11, design: .monospaced)).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
+            Text(file.conflicted ? "!" : file.status == "?" ? "U" : file.status)
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .frame(width: 18, height: 18)
+                .foregroundStyle(Color(nsColor: file.conflicted || file.status == "D" ? WorkbenchPalette.deletionInk : file.status == "A" || file.status == "?" ? WorkbenchPalette.additionInk : WorkbenchPalette.modificationInk))
+                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color(nsColor: WorkbenchPalette.border)))
+                .accessibilityLabel(file.conflicted ? "冲突" : "Git 状态 \(file.status)")
         }.padding(.leading, CGFloat(depth) * 8 + 6).padding(.trailing, 6)
             .frame(height: treeLayout ? 38 : 48).help(file.path)
     }
@@ -387,9 +394,7 @@ struct WorkspaceView: View {
             }
         } else if let diff = model.diff, model.mode != "history" {
             VStack(spacing: 0) {
-                GeometryReader { bounds in
-                    fileHeader(diff, narrow: bounds.size.width < 680)
-                }.frame(height: 54).captureLayout("file-header")
+                fileHeader(diff).captureLayout("file-header")
                 if let notice = diff.notice { Text(notice).font(.caption).foregroundStyle(.secondary).padding(8) }
                 Group {
                     if rawPatch || diff.hunks.allSatisfy({ $0.lines.isEmpty }) { PatchView(patch: diff.patch) }
@@ -404,78 +409,96 @@ struct WorkspaceView: View {
             }.foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
-    private func fileHeader(_ diff: FileDiff, narrow: Bool) -> some View {
-        HStack(spacing: 10) {
-            FileTypeIcon(path: diff.path)
-            VStack(alignment: .leading, spacing: 4) {
-                Text((diff.path as NSString).lastPathComponent).font(.system(size: 16, weight: .semibold)).lineLimit(1).truncationMode(.middle)
-                HStack(spacing: 5) {
-                    Text(diff.side == "staged" ? "已暂存" : "未暂存").foregroundStyle(Color(nsColor: WorkbenchPalette.accent)).fixedSize()
-                    Text("·").foregroundStyle(.secondary)
-                    Text((diff.path as NSString).deletingLastPathComponent).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                }.font(.system(size: 11))
-            }.help(diff.path)
-            Text("+\(diff.additions)").foregroundStyle(Color(nsColor: WorkbenchPalette.additionInk))
-            Text("−\(diff.deletions)").foregroundStyle(Color(nsColor: WorkbenchPalette.deletionInk))
-            Spacer(minLength: 8)
-            Menu {
-                Button("左右对照") { rawPatch = false; splitDiff = true }
-                Button("统一差异") { rawPatch = false; splitDiff = false }
-                Button("原始补丁") { rawPatch = true }
-            } label: { Text(rawPatch ? "补丁" : splitDiff ? "左右对照" : "统一差异") }
-                .menuStyle(.borderlessButton).fixedSize()
-            Button { hunkPopover.toggle() } label: {
-                Label("\(diff.hunks.count)", systemImage: "line.3.horizontal.decrease")
-            }.help("逐块阅读、人工评审与暂存")
-                .accessibilityLabel("打开 \(diff.hunks.count) 个变更块")
-                .disabled(model.busy || diff.hunks.isEmpty)
-                .popover(isPresented: $hunkPopover) {
-                    HunkActionsView(model: model, diff: diff) { hunk in
-                        pendingStage = diff; pendingHunk = hunk
-                        hunkPopover = false; stageConfirmation = true
-                    }.id(diff.id)
-                }
-            Button { model.review() } label: {
-                if narrow { Image(systemName: diff.reviewed ? "checkmark.circle.fill" : "circle") }
-                else { Text(diff.reviewed ? "已评审" : "待评审") }
-            }
-                .accessibilityLabel(diff.reviewed ? "已评审，切换评审状态" : "待评审，切换评审状态")
-                .disabled(model.busy).help("切换此内容快照的人工评审状态，不改变暂存区")
-            Button { pendingStage = diff; pendingHunk = nil; stageConfirmation = true } label: {
-                if narrow { Image(systemName: diff.side == "staged" ? "minus.circle" : "plus.circle") }
-                else { Text(diff.side == "staged" ? "取消暂存" : "暂存文件") }
-            }.help(diff.side == "staged" ? "取消暂存文件…" : "暂存文件…")
-                .accessibilityLabel(diff.side == "staged" ? "取消暂存文件" : "暂存文件")
-                .disabled(model.busy || !diff.canStage)
-        }.buttonStyle(WorkbenchButtonStyle()).padding(.horizontal, 18).frame(height: 54)
-            .overlay(alignment: .bottom) { horizontalRule }
+    private func countBadge(_ count: Int) -> some View {
+        Text("\(count)").font(.system(size: 11, weight: .semibold)).monospacedDigit()
+            .foregroundStyle(Color(nsColor: WorkbenchPalette.canvas))
+            .padding(.horizontal, 6).frame(minWidth: 21, minHeight: 21)
+            .background(Color(nsColor: WorkbenchPalette.text), in: Capsule())
+    }
+    private func fileHeader(_ diff: FileDiff) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                FileTypeIcon(path: diff.path)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text((diff.path as NSString).lastPathComponent).font(.system(size: 16, weight: .semibold))
+                    Text((diff.path as NSString).deletingLastPathComponent)
+                        .font(.system(size: 12)).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
+                }.lineLimit(1).truncationMode(.middle).help(diff.path)
+                Spacer(minLength: 8)
+                Text("+\(diff.additions)").foregroundStyle(Color(nsColor: WorkbenchPalette.additionInk))
+                Text("−\(diff.deletions)").foregroundStyle(Color(nsColor: WorkbenchPalette.deletionInk))
+            }.padding(.horizontal, 16).frame(height: 48)
+                .background(Color(nsColor: WorkbenchPalette.cardHeader))
+            horizontalRule
+            HStack(spacing: 4) {
+                Text(diff.side == "staged" ? "已暂存" : "未暂存")
+                    .font(.system(size: 11, weight: .medium)).padding(.horizontal, 8).padding(.vertical, 4)
+                    .background(Color(nsColor: WorkbenchPalette.panel), in: RoundedRectangle(cornerRadius: 4))
+                    .help("当前 Diff 的 Git 侧别；人工评审不会改变暂存状态")
+                Menu {
+                    Button("左右对照") { rawPatch = false; splitDiff = true }
+                    Button("统一差异") { rawPatch = false; splitDiff = false }
+                    Button("原始补丁") { rawPatch = true }
+                } label: { Text(rawPatch ? "补丁" : splitDiff ? "左右对照" : "统一差异") }
+                    .menuStyle(.borderlessButton).fixedSize().padding(.leading, 6)
+                Button { hunkPopover.toggle() } label: {
+                    Label("\(diff.hunks.count)", systemImage: "line.3.horizontal.decrease")
+                }.help("逐块阅读、人工评审与暂存")
+                    .accessibilityLabel("打开 \(diff.hunks.count) 个变更块")
+                    .disabled(model.busy || diff.hunks.isEmpty)
+                    .popover(isPresented: $hunkPopover) {
+                        HunkActionsView(model: model, diff: diff) { hunk in
+                            pendingStage = diff; pendingHunk = hunk
+                            hunkPopover = false; stageConfirmation = true
+                        }.id(diff.id)
+                    }
+                Spacer(minLength: 0)
+                Button { model.review() } label: {
+                    Label(diff.reviewed ? "已评审" : "待评审", systemImage: diff.reviewed ? "checkmark.circle.fill" : "circle")
+                }.accessibilityLabel(diff.reviewed ? "已评审，切换评审状态" : "待评审，切换评审状态")
+                    .disabled(model.busy).help("切换此内容快照的人工评审状态，不改变暂存区")
+                Button { pendingStage = diff; pendingHunk = nil; stageConfirmation = true } label: {
+                    Text(diff.side == "staged" ? "取消暂存" : "暂存文件")
+                }.help(diff.side == "staged" ? "取消暂存文件…" : "暂存文件…")
+                    .disabled(model.busy || !diff.canStage)
+            }.buttonStyle(WorkbenchButtonStyle()).padding(.horizontal, 12).frame(height: 36)
+            horizontalRule
+        }
     }
     private var inlineCommit: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("提交").font(.system(size: 19, weight: .semibold))
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "square.and.pencil").foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
+                Text("提交").font(.system(size: 16, weight: .semibold))
                 Spacer()
-                Text("已暂存 \(model.stagedFileCount) 个文件").font(.system(size: 11)).foregroundStyle(.secondary)
-            }
+                Text("已暂存").font(.system(size: 11)).foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
+                countBadge(model.stagedFileCount)
+            }.padding(.horizontal, 14).frame(height: 42)
+                .background(Color(nsColor: WorkbenchPalette.cardHeader))
+            horizontalRule
             TextField("提交标题", text: commitSubject, axis: .vertical)
-                .lineLimit(2...2).textFieldStyle(.plain).font(.system(size: 13))
-                .padding(9).workbenchInputSurface()
+                .lineLimit(2...2).textFieldStyle(.plain).font(.system(size: 14, weight: .medium))
+                .padding(.horizontal, 14).padding(.vertical, 10)
                 .disabled(model.writing).accessibilityLabel("提交标题")
+            horizontalRule.padding(.horizontal, 14)
             ZStack(alignment: .topLeading) {
                 if commitBody.wrappedValue.isEmpty {
                     Text("补充说明（可选）…").foregroundStyle(Color(nsColor: WorkbenchPalette.secondary))
-                        .padding(8).allowsHitTesting(false)
+                        .padding(.horizontal, 14).padding(.top, 10).allowsHitTesting(false)
                 }
                 TextEditor(text: commitBody).font(.system(size: 13)).scrollContentBackground(.hidden)
-                    .padding(4).disabled(model.writing).accessibilityLabel("提交详细说明，可选")
-            }.frame(minHeight: 40, maxHeight: .infinity).workbenchInputSurface()
-            Button { model.prepareCommit() } label: {
-                Text("检查并提交 \(model.stagedFileCount) 个文件…").frame(maxWidth: .infinity)
-            }.buttonStyle(WorkbenchButtonStyle(prominent: true))
-                .help("仅提交暂存区，下一步确认范围。")
-                .disabled(!model.canPrepareCommit).keyboardShortcut(.return, modifiers: .command)
-
-        }.padding(12)
+                    .padding(.horizontal, 10).padding(.vertical, 6)
+                    .disabled(model.writing).accessibilityLabel("提交详细说明，可选")
+            }.frame(minHeight: 32, maxHeight: .infinity)
+            VStack(spacing: 0) {
+                horizontalRule
+                Button { model.prepareCommit() } label: {
+                    Text("检查并提交 \(model.stagedFileCount) 个文件…").frame(maxWidth: .infinity)
+                }.buttonStyle(WorkbenchButtonStyle(prominent: true)).padding(10)
+                    .help("仅提交暂存区，下一步确认范围。")
+                    .disabled(!model.canPrepareCommit).keyboardShortcut(.return, modifiers: .command)
+            }.background(Color(nsColor: WorkbenchPalette.panel))
+        }
     }
     // Both fields edit the same Git message; previews, AI drafts and repository
     // draft protection continue to use model.message as their single source.
