@@ -303,6 +303,12 @@ struct WorkspaceView: View {
                     }
                 }.padding(.horizontal, 8)
             }.focusable().focused($fileListFocused)
+                .task(id: model.selectedFile) {
+                    // Reveal the actual selection after lazy rows have laid out,
+                    // including restored selections in short windows.
+                    await Task.yield()
+                    if let selected = model.selectedFile { proxy.scrollTo(selected, anchor: .center) }
+                }
                 .onMoveCommand { direction in
                     guard !model.writing, direction == .up || direction == .down else { return }
                     let files = visibleTreeRows.compactMap(\.file)
@@ -381,7 +387,9 @@ struct WorkspaceView: View {
             }
         } else if let diff = model.diff, model.mode != "history" {
             VStack(spacing: 0) {
-                fileHeader(diff).captureLayout("file-header")
+                GeometryReader { bounds in
+                    fileHeader(diff, narrow: bounds.size.width < 680)
+                }.frame(height: 54).captureLayout("file-header")
                 if let notice = diff.notice { Text(notice).font(.caption).foregroundStyle(.secondary).padding(8) }
                 Group {
                     if rawPatch || diff.hunks.allSatisfy({ $0.lines.isEmpty }) { PatchView(patch: diff.patch) }
@@ -396,7 +404,7 @@ struct WorkspaceView: View {
             }.foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
-    private func fileHeader(_ diff: FileDiff) -> some View {
+    private func fileHeader(_ diff: FileDiff, narrow: Bool) -> some View {
         HStack(spacing: 10) {
             FileTypeIcon(path: diff.path)
             VStack(alignment: .leading, spacing: 4) {
@@ -427,10 +435,17 @@ struct WorkspaceView: View {
                         hunkPopover = false; stageConfirmation = true
                     }.id(diff.id)
                 }
-            Button { model.review() } label: { Text(diff.reviewed ? "已评审" : "待评审") }
+            Button { model.review() } label: {
+                if narrow { Image(systemName: diff.reviewed ? "checkmark.circle.fill" : "circle") }
+                else { Text(diff.reviewed ? "已评审" : "待评审") }
+            }
                 .accessibilityLabel(diff.reviewed ? "已评审，切换评审状态" : "待评审，切换评审状态")
                 .disabled(model.busy).help("切换此内容快照的人工评审状态，不改变暂存区")
-            Button(diff.side == "staged" ? "取消暂存" : "暂存文件") { pendingStage = diff; pendingHunk = nil; stageConfirmation = true }
+            Button { pendingStage = diff; pendingHunk = nil; stageConfirmation = true } label: {
+                if narrow { Image(systemName: diff.side == "staged" ? "minus.circle" : "plus.circle") }
+                else { Text(diff.side == "staged" ? "取消暂存" : "暂存文件") }
+            }.help(diff.side == "staged" ? "取消暂存文件…" : "暂存文件…")
+                .accessibilityLabel(diff.side == "staged" ? "取消暂存文件" : "暂存文件")
                 .disabled(model.busy || !diff.canStage)
         }.buttonStyle(WorkbenchButtonStyle()).padding(.horizontal, 18).frame(height: 54)
             .overlay(alignment: .bottom) { horizontalRule }
