@@ -47,7 +47,7 @@ enum WindowChromeCheck {
         layout()
         let materials = effects(host)
         assert(materials.count == 1, "Workspace must use one continuous native material")
-        assert(materials[0].material == .underWindowBackground && materials[0].blendingMode == .behindWindow)
+        assert(materials[0].material == .sidebar && materials[0].blendingMode == .behindWindow)
         assert(materials[0].state == .followsWindowActiveState)
         host.rootView = AnyView(WorkbenchChromeSurface(reduced: true))
         layout()

@@ -63,16 +63,17 @@ struct WorkbenchChromeSurface: View {
             Color(nsColor: WorkbenchPalette.glassFallback)
         } else {
             NativeWorkbenchMaterial()
-                .overlay(Color(nsColor: WorkbenchPalette.glassTint).opacity(colorScheme == .dark ? 0.38 : 0.48))
+                .overlay(Color(nsColor: WorkbenchPalette.glassTint).opacity(colorScheme == .dark ? 0.14 : 0.10))
         }
     }
 }
 /// One shared behind-window material keeps the titlebar, sidebar and card gaps
-/// continuous. AppKit supplies the real backdrop; no wallpaper or blur texture.
+/// continuous. The semantic sidebar material samples the real backdrop; the
+/// light tint must not obscure it. No wallpaper, private blur APIs or textures.
 private struct NativeWorkbenchMaterial: NSViewRepresentable {
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
-        view.material = .underWindowBackground
+        view.material = .sidebar
         view.blendingMode = .behindWindow
         view.state = .followsWindowActiveState
         return view

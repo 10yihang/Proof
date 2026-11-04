@@ -35,8 +35,6 @@ jobs:
           swift --version
           rustc --version
           git --version
-      - name: Verify unchanged application source for this capture
-        run: git diff --exit-code 3a1700649a5ec972f6176828bec7e505dfe540c0 -- native/macos crates Cargo.toml Cargo.lock
       - name: Rust bridge real-Git tests
         run: cargo test --locked -p proof-swift-bridge
       - name: Check native tree, navigation, and commit guards (model-level)
@@ -75,15 +73,6 @@ jobs:
       - name: Render actual SwiftUI pages (fixture rendering, not interaction tests)
         timeout-minutes: 5
         run: |
-          # Scope this approved setting change to this direct child commit only.
-          # Ordinary future builds keep the runner's accessibility settings intact.
-          state="$PWD/native/macos/build/screenshots/material-system-setting.json"
-          helper="$RUNNER_TEMP/proof-transparency-state"
-          if [[ "${{ github.run_attempt }}" == 1 && "$(git rev-parse HEAD^)" == 3a1700649a5ec972f6176828bec7e505dfe540c0 && "$(git log -1 --format=%s)" == "Capture current card design with native transparency" ]]; then
-            printf 'import AppKit; print(NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency ? "true" : "false")\n' > "$helper.swift"
-            swiftc "$helper.swift" -o "$helper"
-            python3 native/macos/ci-transparency.py begin "$state" "$helper"
-          fi
           capture_failed=0
           for page in changes history branches repositories settings; do
             for theme in light dark; do
@@ -102,6 +91,17 @@ jobs:
           done
           for theme in light dark; do
             "native/macos/build/Proof Native.app/Contents/MacOS/ProofNative" --capture-preview "$PWD/native/macos/build/screenshots" --preview-page changes --preview-theme "$theme" --preview-wide --preview-file-list --preview-file-scope staged || capture_failed=1
+          done
+          # Separate labeled native windows verify real behind-window sampling.
+          # These fixtures never enter the app UI or alter desktop preferences.
+          for theme in light dark; do
+            for backdrop in A B; do
+              for reduced in live reduced; do
+                args=()
+                if [[ "$reduced" == reduced ]]; then args+=(--preview-reduced-transparency); fi
+                "native/macos/build/Proof Native.app/Contents/MacOS/ProofNative" --capture-preview "$PWD/native/macos/build/screenshots" --preview-page changes --preview-theme "$theme" --preview-backdrop "$backdrop" "${args[@]}" || capture_failed=1
+              done
+            done
           done
           python3 - <<'PYVERIFY'
           import itertools, json, pathlib, struct
@@ -150,25 +150,18 @@ jobs:
                   assert data[:8] == b'\x89PNG\r\n\x1a\n' and len(data) > 20000
               evidence.append(metadata)
           assert len(evidence) == 28
+          diagnostic = []
+          for path in sorted(directory.glob('*backdrop-*.json')):
+              metadata = json.loads(path.read_text())
+              assert metadata['geometryPassed'], metadata['geometryError']
+              assert metadata['previewBackdrop'] in ('A', 'B')
+              diagnostic.append(metadata)
+          assert len(diagnostic) == 8
+          (directory / 'backdrop-evidence-index.json').write_text(json.dumps(diagnostic, indent=2))
           (directory / 'evidence-index.json').write_text(json.dumps(evidence, indent=2))
           assert not geometry_failures, '\n'.join(geometry_failures)
           PYVERIFY
           test "$capture_failed" -eq 0
-      - name: Verify transparency remains enabled on this disposable runner
-        if: ${{ always() }}
-        run: |
-          python3 - <<'PY'
-          import json, os, pathlib, subprocess
-          path = pathlib.Path('native/macos/build/screenshots/material-system-setting.json')
-          if path.exists():
-              state = json.loads(path.read_text())
-              preference = subprocess.check_output(['/usr/bin/defaults', 'read', 'com.apple.universalaccess', 'reduceTransparency'], text=True).strip()
-              effective = subprocess.check_output([os.environ['RUNNER_TEMP'] + '/proof-transparency-state'], text=True).strip()
-              assert preference in ('0', 'false') and effective == 'false', (preference, effective)
-              state.update(finalPreference=False, finalEffective=False, status='left_disabled_on_disposable_runner', persistentAcrossRunners=False)
-              path.write_text(json.dumps(state, indent=2) + '\n')
-              print(json.dumps(state))
-          PY
       - uses: actions/upload-artifact@v4
         if: ${{ always() && hashFiles('native/macos/build/screenshots/*.png') != '' }}
         with:

@@ -139,7 +139,7 @@ struct WorkspaceView: View {
                 .popover(isPresented: $contextPopover) { ProofContextInspector(model: model).frame(width: 300, height: 470) }
             openRepositoryButton
         }.font(.system(size: 14)).padding(.horizontal, 16).frame(height: 64)
-            .background(Color(nsColor: WorkbenchPalette.canvas).opacity(0.32))
+            .background(Color(nsColor: WorkbenchPalette.canvas).opacity(0.10))
             .overlay(alignment: .bottom) { horizontalRule.opacity(0.55) }
     }
     private var repositoryTab: some View {
