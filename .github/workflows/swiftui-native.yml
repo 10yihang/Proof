@@ -35,6 +35,8 @@ jobs:
           swift --version
           rustc --version
           git --version
+      - name: Verify unchanged application source for this capture
+        run: git diff --exit-code 3a1700649a5ec972f6176828bec7e505dfe540c0 -- native/macos crates Cargo.toml Cargo.lock
       - name: Rust bridge real-Git tests
         run: cargo test --locked -p proof-swift-bridge
       - name: Check native tree, navigation, and commit guards (model-level)
@@ -77,20 +79,9 @@ jobs:
           # Ordinary future builds keep the runner's accessibility settings intact.
           state="$PWD/native/macos/build/screenshots/material-system-setting.json"
           helper="$RUNNER_TEMP/proof-transparency-state"
-          if [[ "${{ github.run_attempt }}" == 1 && "$(git rev-parse HEAD^)" == 37ee7184e8a874edcfaabc848b938526a64d595d && "$(git log -1 --format=%s)" == "Validate recomposed workbench glass and fallback once" ]]; then
+          if [[ "${{ github.run_attempt }}" == 1 && "$(git rev-parse HEAD^)" == 3a1700649a5ec972f6176828bec7e505dfe540c0 && "$(git log -1 --format=%s)" == "Capture current card design with native transparency" ]]; then
             printf 'import AppKit; print(NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency ? "true" : "false")\n' > "$helper.swift"
             swiftc "$helper.swift" -o "$helper"
-            restore_transparency() {
-              status=$?
-              trap - EXIT
-              set +e
-              python3 native/macos/ci-transparency.py restore "$state" "$helper"
-              restored=$?
-              if [[ "$restored" != 0 ]]; then exit "$restored"; fi
-              exit "$status"
-            }
-            trap restore_transparency EXIT
-            trap 'exit 130' INT TERM HUP
             python3 native/macos/ci-transparency.py begin "$state" "$helper"
           fi
           capture_failed=0
@@ -163,13 +154,21 @@ jobs:
           assert not geometry_failures, '\n'.join(geometry_failures)
           PYVERIFY
           test "$capture_failed" -eq 0
-      - name: Restore authorized temporary accessibility preference
+      - name: Verify transparency remains enabled on this disposable runner
         if: ${{ always() }}
         run: |
-          state="$PWD/native/macos/build/screenshots/material-system-setting.json"
-          if [[ -f "$state" ]]; then
-            python3 native/macos/ci-transparency.py restore "$state" "$RUNNER_TEMP/proof-transparency-state"
-          fi
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess
+          path = pathlib.Path('native/macos/build/screenshots/material-system-setting.json')
+          if path.exists():
+              state = json.loads(path.read_text())
+              preference = subprocess.check_output(['/usr/bin/defaults', 'read', 'com.apple.universalaccess', 'reduceTransparency'], text=True).strip()
+              effective = subprocess.check_output([os.environ['RUNNER_TEMP'] + '/proof-transparency-state'], text=True).strip()
+              assert preference in ('0', 'false') and effective == 'false', (preference, effective)
+              state.update(finalPreference=False, finalEffective=False, status='left_disabled_on_disposable_runner', persistentAcrossRunners=False)
+              path.write_text(json.dumps(state, indent=2) + '\n')
+              print(json.dumps(state))
+          PY
       - uses: actions/upload-artifact@v4
         if: ${{ always() && hashFiles('native/macos/build/screenshots/*.png') != '' }}
         with:
