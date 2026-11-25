@@ -10,6 +10,8 @@ pub struct AiProgress {
     pub path: Option<String>,
     pub completed: Option<usize>,
     pub total: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub excluded: Option<usize>,
 }
 impl AiProgress {
     pub(super) fn phase(phase: &'static str) -> Self {
@@ -18,6 +20,7 @@ impl AiProgress {
             path: None,
             completed: None,
             total: None,
+            excluded: None,
         }
     }
     pub(super) fn capture(path: &str, completed: usize, total: usize) -> Self {
@@ -26,6 +29,7 @@ impl AiProgress {
             path: Some(path.into()),
             completed: Some(completed),
             total: Some(total),
+            excluded: None,
         }
     }
 }

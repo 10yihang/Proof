@@ -8,6 +8,15 @@
   overflow: hidden;
   user-select: none;
 }
+.project-tabs-label {
+  align-self: center;
+  flex-shrink: 0;
+  padding-inline: 4px 8px;
+  border-inline-end: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
 .project-tab-strip {
   display: flex;
   align-items: stretch;

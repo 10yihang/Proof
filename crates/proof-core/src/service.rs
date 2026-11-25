@@ -364,12 +364,7 @@ impl Proof {
                 patch: String::new(),
             });
         }
-        for hunk in &mut hunks {
-            crate::check_read_cancellation()?;
-            hunk.review_state =
-                self.store
-                    .review_state(workspace_id, path, side.as_str(), &hunk.id)?;
-        }
+        self.read_review_states(workspace_id, path, side, &mut hunks)?;
         let additions = hunks
             .iter()
             .flat_map(|h| &h.lines)
@@ -440,6 +435,33 @@ impl Proof {
         };
         Ok(diff)
     }
+    /// Reuse a retained local Diff after the caller has matched the file version
+    /// from Changes. Review decisions are read again because other windows may
+    /// have updated them without changing the worktree.
+    pub fn cached_file_diff(&self, id: &str) -> Result<Option<FileDiff>> {
+        let Some(mut diff) = self.snapshots.get(id).cloned() else {
+            return Ok(None);
+        };
+        self.read_review_states(&diff.workspace_id, &diff.path, diff.side, &mut diff.hunks)?;
+        Ok(Some(diff))
+    }
+
+    fn read_review_states(
+        &self,
+        workspace_id: &str,
+        path: &str,
+        side: Side,
+        hunks: &mut [Hunk],
+    ) -> Result<()> {
+        for hunk in hunks {
+            crate::check_read_cancellation()?;
+            hunk.review_state =
+                self.store
+                    .review_state(workspace_id, path, side.as_str(), &hunk.id)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn snapshot(&self, id: &str) -> Result<FileDiff> {
         self.snapshots
             .get(id)

@@ -112,6 +112,10 @@ async function loadDataSession(notice?: string): Promise<DataSession> {
   acceptDataSession(value, undefined, notice);
   return liveSession!;
 }
+export function currentDataEpoch() {
+  return liveSession?.epoch;
+}
+
 function dataSession() {
   return (sessionPromise ??= loadDataSession().catch((error) => {
     sessionPromise = undefined;
@@ -202,6 +206,11 @@ export function useRequest() {
 type ReadCommand =
   | "run_ai_task"
   | "probe_ai_agent"
+  | "ocr_preview"
+  | "ocr_rule_match"
+  | "ocr_builtin_rule"
+  | "test_ocr_connection"
+  | "ocr_provider_catalog"
   | "read_file_diff"
   | "read_compare_file"
   | "compare_commit"

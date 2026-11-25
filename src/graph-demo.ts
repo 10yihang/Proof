@@ -52,6 +52,9 @@ const subjects = [
   "添加项目说明",
   "Initial commit",
 ];
+const demoCommitDays = [3, 2, 0, 5, 1, 3, 0, 2, 4, 1, 3, 0, 2, 4].flatMap(
+  (count, day) => Array<number>(count).fill(day),
+);
 /** Fictional demo-service data, displayed only behind the app's demo banner. */
 export function demoGraphPage(scope = "all"): CommitGraphPage {
   const commits = Array.from({ length: 30 }, (_, index) => {
@@ -61,7 +64,9 @@ export function demoGraphPage(scope = "all"): CommitGraphPage {
       parents: (forks[id] ?? (id === 1 ? [] : [id - 1])).map(oid),
       subject: subjects[index],
       author: ["林舟", "Alex Chen", "许宁"][index % 3],
-      date: new Date(Date.UTC(2026, 8, 12, 10, 30 - index * 19)).toISOString(),
+      date: new Date(
+        Date.UTC(2026, 8, 12 - demoCommitDays[index], 10, 30 - index * 19),
+      ).toISOString(),
       refs:
         id === 30
           ? "HEAD → main, origin/main"

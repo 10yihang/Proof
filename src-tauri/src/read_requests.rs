@@ -60,6 +60,11 @@ impl ReadRequests {
                 | "compare_refs"
                 | "diff_context"
                 | "compare_context"
+                | "ocr_preview"
+                | "ocr_rule_match"
+                | "ocr_builtin_rule"
+                | "test_ocr_connection"
+                | "ocr_provider_catalog"
         ) {
             return Err(Error::new(
                 "INVALID_READ_REQUEST",
@@ -121,9 +126,17 @@ impl Drop for ReadTicket {
 mod tests {
     use super::*;
     #[test]
-    fn context_reads_share_scoped_cancellation_without_authorizing_writes() {
+    fn context_and_ocr_reads_share_scoped_cancellation_without_authorizing_writes() {
         let reads = ReadRequests::default();
-        for command in ["diff_context", "compare_context"] {
+        for command in [
+            "diff_context",
+            "compare_context",
+            "ocr_preview",
+            "ocr_rule_match",
+            "ocr_builtin_rule",
+            "test_ocr_connection",
+            "ocr_provider_catalog",
+        ] {
             let id = reads.prepare("main").unwrap();
             let ticket = reads.claim("main", &id, command).unwrap();
             assert!(reads.cancel("main", &id));

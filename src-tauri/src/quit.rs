@@ -99,6 +99,8 @@ pub fn on_run_event(app: &AppHandle, event: tauri::RunEvent) {
         if app.state::<QuitState>().confirm_exit(code) {
             api.prevent_exit();
             request(app);
+        } else if let Some(reviews) = app.try_state::<crate::ocr_reviews::OcrReviews>() {
+            reviews.cancel_all();
         }
     }
 }

@@ -99,32 +99,12 @@
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
-.workspace-sidebar .workspace-tab-indicator {
-  inset: 0;
-  width: auto;
-  height: auto;
-  border-radius: var(--radius-control);
+.workspace-sidebar :is(.view-tab, .diff-tab-item).active {
   background: var(--hover);
 }
 .workspace-sidebar .view-tab.active {
   color: var(--text);
   font-weight: 600;
-}
-.workspace-tabs.workspace-comparisons {
-  height: 36px;
-  min-height: 36px;
-  flex: 0 0 36px;
-  padding: 0 12px;
-  border-bottom: 1px solid var(--border);
-  overflow-x: auto;
-  background: var(--chrome);
-}
-.workspace-comparisons .workspace-tab-list {
-  flex: 0 0 auto;
-}
-.workspace-comparisons .diff-tab-strip {
-  margin: 0;
-  border: 0;
 }
 @media (max-width: 1100px) {
   .workspace-tabs.workspace-sidebar {

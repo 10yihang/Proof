@@ -68,6 +68,108 @@ fn review() -> serde_json::Value {
 }
 
 #[test]
+fn ocr_captures_the_selected_worktree_and_both_sides_of_a_split_index() {
+    let (temp, mut proof, main) = fixture();
+    let linked = temp.path().join("linked");
+    git(
+        Path::new(&main.path),
+        &["worktree", "add", "-b", "linked", linked.to_str().unwrap()],
+    );
+    fs::write(
+        linked.join("context.rs"),
+        "const ORIGIN: &str = \"linked\";\n",
+    )
+    .unwrap();
+    git(&linked, &["add", "context.rs"]);
+    git(&linked, &["commit", "-m", "Linked context"]);
+    git(&linked, &["update-index", "--split-index"]);
+    fs::write(linked.join("auth.rs"), "fn auth() { allow(true); }\n").unwrap();
+    git(&linked, &["add", "auth.rs"]);
+    fs::write(linked.join("auth.rs"), "fn auth() { allow(false); }\n").unwrap();
+    fs::write(
+        linked.join("context.rs"),
+        "const ORIGIN: &str = \"working\";\n",
+    )
+    .unwrap();
+    fs::write(linked.join("new[1].rs"), "const NEW: bool = true;\n").unwrap();
+    assert!(git(&linked, &["diff", "HEAD", "--", "auth.rs"]).is_empty());
+
+    let workspace = proof.open_workspace(linked.to_str().unwrap()).unwrap();
+    proof.set_trust(&workspace.id, true).unwrap();
+    let before_index = proof.git().unwrap().index_bytes(&workspace).unwrap();
+    let selection = [Side::Staged, Side::Unstaged]
+        .into_iter()
+        .map(|side| AiFileSelection {
+            path: "auth.rs".into(),
+            side,
+            snapshot_token: Some(
+                proof
+                    .file_diff(&workspace.id, "auth.rs", side)
+                    .unwrap()
+                    .token,
+            ),
+        })
+        .collect();
+    let request = AiRequest {
+        amend: false,
+        provider: AgentKind::Ocr,
+        task: AiTask::Review,
+        scope: AiScope::Local {
+            workspace_id: workspace.id.clone(),
+            expected_token: proof.changes(&workspace.id).unwrap().token,
+            files: Some(selection),
+        },
+    };
+    let task = proof.prepare_ai_task(request.clone()).unwrap();
+    let plan = task.ocr_plan.as_ref().unwrap();
+    let view = plan.capture(&task.selected).unwrap();
+    assert_eq!(view.ranges.len(), 2);
+    let staged = &view.ranges[0];
+    let unstaged = &view.ranges[1];
+    assert_eq!(staged.side, Some(Side::Staged));
+    assert_eq!(unstaged.side, Some(Side::Unstaged));
+    assert_eq!(staged.target, unstaged.base);
+    let read = |commit: &str, path: &str| {
+        git(
+            &linked,
+            &[
+                "--git-dir",
+                view.git_dir.to_str().unwrap(),
+                "show",
+                &format!("{commit}:{path}"),
+            ],
+        )
+    };
+    assert!(read(&staged.base, "auth.rs").contains("allow(false)"));
+    assert!(read(&staged.target, "auth.rs").contains("allow(true)"));
+    assert!(read(&staged.target, "context.rs").contains("\"linked\""));
+    assert!(read(&unstaged.target, "auth.rs").contains("allow(false)"));
+    assert!(read(&unstaged.target, "context.rs").contains("\"working\""));
+    assert!(read(&unstaged.target, "new[1].rs").contains("const NEW"));
+    assert_eq!(
+        proof.git().unwrap().index_bytes(&workspace).unwrap(),
+        before_index
+    );
+    assert_eq!(git(&linked, &["rev-parse", "HEAD"]), staged.base);
+
+    fs::write(
+        linked.join("auth.rs"),
+        "fn auth() { allow(new_value()); }\n",
+    )
+    .unwrap();
+    assert!(read(&unstaged.target, "auth.rs").contains("allow(false)"));
+    match plan.capture(&task.selected) {
+        Err(error) => assert_eq!(error.code, "STALE_CONTENT"),
+        Ok(_) => panic!("OCR accepted a different working tree version"),
+    }
+    drop(task);
+    match proof.prepare_ai_task(request) {
+        Err(error) => assert_eq!(error.code, "STALE_CONTENT"),
+        Ok(_) => panic!("OCR accepted an outdated Diff token"),
+    }
+}
+
+#[test]
 #[ignore = "same-fixture comparison preparation benchmark; never starts an Agent"]
 fn comparison_preparation_benchmark() {
     let (temp, mut proof, workspace) = fixture();
@@ -1822,17 +1924,21 @@ fn ocr_review_output_maps_onto_the_shared_review_schema() {
         2,
         "out-of-scope and empty comments drop out"
     );
-    assert_eq!(findings[0]["file"], "main.rs");
-    assert_eq!(findings[0]["side"], "unstaged");
-    assert_eq!(findings[0]["line"], 1);
+    assert_eq!(findings[0]["file"], "staged.rs");
+    assert_eq!(findings[0]["side"], "staged");
+    assert_eq!(
+        findings[0]["line"], 0,
+        "unpositioned findings stay file-level"
+    );
     assert_eq!(findings[0]["lineSide"], "new");
-    assert_eq!(findings[1]["side"], "staged");
-    assert_eq!(findings[1]["line"], 1, "zero OCR line numbers clamp to 1");
-    assert!(findings[1]["title"].as_str().unwrap().contains("Line one"));
+    assert!(findings[0]["title"].as_str().unwrap().contains("Line one"));
+    assert_eq!(findings[1]["side"], "unstaged");
+    assert_eq!(findings[1]["line"], 1);
     assert!(value["summary"].as_str().unwrap().contains("2 finding(s)"));
 
     // The mapped value passes the standard review validation end to end.
     let (_temp, mut proof, workspace) = fixture();
+    let expected_token = proof.changes(&workspace.id).unwrap().token;
     let job = proof
         .prepare_ai_task(AiRequest {
             amend: false,
@@ -1840,7 +1946,7 @@ fn ocr_review_output_maps_onto_the_shared_review_schema() {
             task: AiTask::Review,
             scope: AiScope::Local {
                 workspace_id: workspace.id.clone(),
-                expected_token: String::new(),
+                expected_token,
                 files: None,
             },
         })

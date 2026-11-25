@@ -7,6 +7,7 @@ import ReactDOM from "react-dom/client";
 import { ProjectWorkspace } from "./components/ProjectWorkspace";
 import { UIProvider } from "./components/ui/provider";
 import { DiffWindow } from "./components/DiffWindow";
+import { resetOcrReviews, useOcrReviewRuns } from "./ocr-reviews";
 import "./styles/theme.css";
 import "./styles/application.css";
 import type { DataSessionChange } from "./api";
@@ -21,9 +22,11 @@ function AppShell() {
     notice?: string;
   }>({ key: 0 });
   useApplicationLanguage(session.key);
+  useOcrReviewRuns(session.key);
   React.useEffect(() => {
     const changed = (event: Event) => {
       clearSyntaxCache();
+      resetOcrReviews();
       const {
         session: next,
         previousEpoch,

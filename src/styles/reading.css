@@ -232,6 +232,9 @@
   gap: 8px;
 }
 .deferred-diff-body {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
   margin: auto;
   width: min(460px, calc(100% - 48px));
   padding: 44px 24px;
@@ -242,13 +245,13 @@
   color: var(--faint);
 }
 .deferred-diff-body h2 {
-  margin: 16px 0 6px;
+  margin: 0;
   font-size: 17px;
   font-weight: 600;
   color: var(--text);
 }
 .deferred-diff-body p {
-  margin: 16px 0 20px;
+  margin: 0;
   line-height: 1.7;
 }
 .deferred-size {
@@ -259,11 +262,7 @@
   display: flex;
   gap: 8px;
   justify-content: center;
-  margin-bottom: 18px;
-}
-.deferred-diff-body small {
-  color: var(--faint);
-  font-size: 11px;
+  margin-top: 6px;
 }
 
 :root {

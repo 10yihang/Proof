@@ -28,6 +28,7 @@ import {
   ArrowClockwise,
   ArrowRight,
   Check,
+  CircleNotch,
   FolderOpen,
   GearSix,
   GitBranch,
@@ -70,8 +71,10 @@ import type {
   EditorOpenResult,
 } from "./types";
 import type { HistoryComparison } from "./components/HistoryDiff";
+import type { OcrComparison } from "./components/OcrSettings";
 import { DiffView, type DiffPosition } from "./components/DiffView";
 import { useAi, type DiffJump } from "./ai";
+import { useLatestOcrReview } from "./ocr-reviews";
 import { AiReviewPanel } from "./components/AiReviewPanel";
 import { FindingLocationPane } from "./components/FindingLocationPane";
 import type { FindingLocationTarget } from "./finding-location";
@@ -101,6 +104,7 @@ import "./styles/review-flow.css";
 
 let preferenceWriteQueue: Promise<void> = Promise.resolve();
 
+const WorkspaceOverview = lazy(() => import("./components/WorkspaceOverview"));
 const HistoryDiff = lazy(() =>
   import("./components/HistoryDiff").then((module) => ({
     default: module.HistoryDiff,
@@ -171,7 +175,6 @@ export default function App({
   projectTabs,
   onOpenProject,
   onProjectReady,
-  onCloseProject,
   onProjectCloseGuardChange,
 }: {
   initialWorkspaceId?: string;
@@ -185,7 +188,6 @@ export default function App({
   projectTabs?: ReactNode;
   onOpenProject?: (path: string) => Promise<void>;
   onProjectReady?: (workspace: Workspace) => void;
-  onCloseProject?: () => void;
   onProjectCloseGuardChange?: (guard: {
     dirty: boolean;
     busy: boolean;
@@ -237,7 +239,6 @@ export default function App({
     setSummary(read?.state === "deferred" ? read.summary : null);
   }
   const displayedDiff = useRef<FileDiff | null>(null);
-  displayedDiff.current = diff;
   const [inspectorTab, setInspectorTab] = useWindowField(
     windowUI,
     "inspectorTab",
@@ -252,11 +253,11 @@ export default function App({
   const [commandTarget, setCommandTarget] = useState<EditorTarget | null>(null);
   const [loaded, setLoaded] = useState<Record<string, FileDiff>>({});
   const [selected, setSelected] = useState<string | null>(null);
-  const commitEntry = useRef("");
-  const changesSelection = useRef<{
-    workspaceId: string;
-    key: string | null;
-  } | null>(null);
+  const localSelections = useRef<
+    Partial<
+      Record<"changes" | "commit", { workspaceId: string; key: string | null }>
+    >
+  >({});
   const readingPositions = useRef({
     changes: { key: "", ref: { current: null as DiffPosition | null } },
     commit: { key: "", ref: { current: null as DiffPosition | null } },
@@ -275,39 +276,52 @@ export default function App({
     [loadingDiff, setLoadingDiff] = useState(false);
   const [dialog, setDialog] = useWindowField(windowUI, "dialog");
   const [tab, setTabState] = useWindowField(windowUI, "tab");
+  const lastWorkspacePage = useRef<typeof tab>("changes");
   if (tab === "changes" || tab === "commit") lastLocalView.current = tab;
-  function setTab(next: typeof tab) {
-    const active = current.current;
-    if (active && tab === "changes" && next !== tab)
-      changesSelection.current = {
-        workspaceId: active.workspace.id,
+  function setTab(next: typeof tab, nextFile?: ChangedFile) {
+    const previous = windowUI.getState().tab;
+    if (next === previous) return;
+    const repository = current.current;
+    if (repository && (previous === "changes" || previous === "commit"))
+      localSelections.current[previous] = {
+        workspaceId: repository.workspace.id,
         key: selectedRef.current,
       };
+    if (!next.startsWith("diff:")) lastWorkspacePage.current = next;
     setTabState(next);
-    if (
-      active &&
-      next === "changes" &&
-      next !== tab &&
-      changesSelection.current?.workspaceId === active.workspace.id
-    ) {
-      const file = active.files.find(
-        (file) => fileKey(file) === changesSelection.current?.key,
-      );
-      if (file) void loadFile(file);
-    }
-    if (active && next === "commit" && next !== tab) {
-      const staged = active.files.filter((file) => file.side === "staged");
-      setCommitScope(staged.length ? "staged" : "unstaged");
+    if (!repository || (next !== "changes" && next !== "commit")) return;
+    const remembered = localSelections.current[next];
+    const restore = remembered?.workspaceId === repository.workspace.id;
+    const staged = repository.files.find((file) => file.side === "staged");
+    if (next === "commit" && !restore) {
+      setCommitScope(staged ? "staged" : "unstaged");
       setCommitSearch("");
-      if (staged.length) void loadFile(staged[0]);
     }
+    const file =
+      (next === "changes" ? nextFile : undefined) ??
+      (restore
+        ? repository.files.find((file) => fileKey(file) === remembered.key)
+        : undefined) ??
+      (next === "commit" ? staged : undefined) ??
+      repository.files.find((file) => fileKey(file) === selectedRef.current) ??
+      repository.files[0];
+    if (file && (nextFile || fileKey(file) !== selectedRef.current))
+      void loadFile(file);
   }
   const [diffTabs, setDiffTabs] = useWindowField(windowUI, "diffTabs");
-  const historyTab = useRef<HTMLButtonElement>(null);
-  function openHistoryDiff(selection: HistoryComparison) {
+  const [reviewIntent, setReviewIntent] = useState<{
+    tab: string;
+    revision: number;
+  } | null>(null);
+  function openHistoryDiff(selection: HistoryComparison, showReview = false) {
     if (!changes) return;
     const id =
       `diff:${selection.base ?? "commit"}:${selection.target}` as const;
+    if (showReview)
+      setReviewIntent((previous) => ({
+        tab: id,
+        revision: (previous?.revision ?? 0) + 1,
+      }));
     setDiffTabs((previous) =>
       previous.some(
         (t) => t.id === id && t.workspaceId === changes.workspace.id,
@@ -327,27 +341,19 @@ export default function App({
     setFocused(false);
     setTab(id);
     requestAnimationFrame(() => {
-      const button = appRoot.current?.querySelector<HTMLButtonElement>(
-        ".diff-tab-item.active .diff-tab-button",
-      );
-      button?.focus();
-      button
-        ?.closest(".diff-tab-item")
-        ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      if (windowUI.getState().tab !== id) return;
+      appRoot.current
+        ?.querySelector<HTMLButtonElement>(
+          '.workspace-sidebar [aria-current="page"]',
+        )
+        ?.focus({ preventScroll: true });
     });
   }
   function closeDiffTab(id: string) {
-    if (diffWindow) {
-      void getCurrentWindow()
-        .close()
-        .catch((error) => setError(asError(error)));
-      return;
-    }
     const origin = document.activeElement;
     setDiffTabs((previous) => previous.filter((t) => t.id !== id));
-    if (tab === id) {
-      setTab("repository");
-      setRepositorySection("history");
+    if (windowUI.getState().tab === id) {
+      setTab(lastWorkspacePage.current);
       requestAnimationFrame(() => {
         // Do not overwrite a newer keyboard or pointer focus after closing.
         const active = document.activeElement;
@@ -357,36 +363,24 @@ export default function App({
           active === document.documentElement ||
           active === origin
         )
-          historyTab.current?.focus();
+          appRoot.current
+            ?.querySelector<HTMLButtonElement>(
+              '.workspace-sidebar [aria-current="page"]',
+            )
+            ?.focus();
       });
     }
   }
-  useWindowMenu(
-    () => {
-      if (tab.startsWith("diff:")) closeDiffTab(tab);
-      else if (onCloseProject && !diffWindow) onCloseProject();
-      else
-        void getCurrentWindow()
-          .close()
-          .catch((error) => setError(asError(error)));
-    },
-    (error) => setError(asError(error)),
-    active,
-  );
-  useEffect(() => {
-    if (!active || !tab.startsWith("diff:")) return;
-    const item = appRoot.current?.querySelector<HTMLElement>(
-      ".diff-tab-item.active",
-    );
-    const strip = item?.parentElement;
-    if (!item || !strip) return;
-    const reveal = () =>
-      item.scrollIntoView({ block: "nearest", inline: "nearest" });
-    const observer = new ResizeObserver(reveal);
-    observer.observe(strip);
-    reveal();
-    return () => observer.disconnect();
-  }, [tab, active]);
+  function closeActiveView() {
+    const { tab, dialog } = windowUI.getState();
+    if (!active || dialog) return;
+    if (diffWindow) {
+      void getCurrentWindow()
+        .close()
+        .catch((error) => setError(asError(error)));
+    } else if (tab.startsWith("diff:")) closeDiffTab(tab);
+  }
+  useWindowMenu(closeActiveView, (error) => setError(asError(error)), active);
   useEffect(() => {
     setDiffTabs((previous) =>
       previous.filter((t) => t.workspaceId === changes?.workspace.id),
@@ -404,6 +398,10 @@ export default function App({
   const [repositoryVisited, setRepositoryVisited] = useState(false);
   const [commitVisited, setCommitVisited] = useState(false);
   const [filesVisited, setFilesVisited] = useState(false);
+  const [overviewVisited, setOverviewVisited] = useState(false);
+  useEffect(() => {
+    if (tab === "overview") setOverviewVisited(true);
+  }, [tab]);
   const [settingsSection, setSettingsSection] = useState<
     | "appearance"
     | "review"
@@ -411,8 +409,10 @@ export default function App({
     | "data"
     | "editor"
     | "diagnostics"
+    | "ocr"
     | "agents"
   >(initialDataNotice ? "data" : "appearance");
+  const [ocrComparison, setOcrComparison] = useState<OcrComparison>();
   const [repositorySection, setRepositorySection] = useWindowField(
     windowUI,
     "repositorySection",
@@ -430,7 +430,24 @@ export default function App({
   const [commitSearch, setCommitSearch] = useState("");
   const [focused, setFocused] = useWindowField(windowUI, "focused"),
     [demo, setDemo] = useState(false);
-  const ai = useAi(changes, diff, demo, undefined, active);
+  const selectedDiff = diff && fileKey(diff) === selected ? diff : null;
+  displayedDiff.current = selectedDiff;
+  const selectedSide = changes?.files.find(
+    (file) => fileKey(file) === selected,
+  )?.side;
+  const ai = useAi(
+    changes,
+    selectedDiff,
+    demo,
+    undefined,
+    active,
+    selectedSide,
+  );
+  const latestOcrReview = useLatestOcrReview(changes?.workspace.id);
+  const latestOcrStatus =
+    latestOcrReview?.status === "finished"
+      ? t(latestOcrReview.error ? "OCR 审查已结束" : "OCR 审查结果")
+      : t("OCR 审查中");
   const [narrow, setNarrow] = useState(window.innerWidth <= 1100),
     [contextDrawer, setContextDrawer] = useWindowField(
       windowUI,
@@ -592,6 +609,10 @@ export default function App({
       autoDemo &&
       new URLSearchParams(window.location.search).get("demo") === "1"
     ) {
+      if (
+        new URLSearchParams(window.location.search).get("view") === "overview"
+      )
+        setTab("overview");
       setDemo(true);
       setChanges(demoChanges);
       setSelected(fileKey(demoChanges.files[0]));
@@ -764,7 +785,8 @@ export default function App({
     };
   }, [changes?.workspace.id, demo, preferences.gitPath, active]);
   useEffect(() => {
-    if (active && (tab === "changes" || tab === "commit")) pollRef.current();
+    if (active && (tab === "overview" || tab === "changes" || tab === "commit"))
+      pollRef.current();
   }, [active, tab, changes?.workspace.id]);
 
   // False means the current selection still needs a read. Cancellation and
@@ -809,10 +831,12 @@ export default function App({
       return true;
     }
     pendingRead.current = { intent, quiet };
-    // Keep the current capture visible until its replacement arrives. Pending
-    // disables its write actions; a different Git base still clears the view.
-    setDiff((d) => (d && matchesGitBase(active, d) ? d : null));
-    setSummary((s) => (s && matchesGitBase(active, s) ? s : null));
+    const keepReading = (target: FileDiff | DiffSummary | null) =>
+      target &&
+      matchesGitBase(active, target) &&
+      (!quiet || fileKey(target) === fileKey(file));
+    setDiff((d) => (keepReading(d) ? d : null));
+    setSummary((s) => (keepReading(s) ? s : null));
     setLoadingDiff(true);
     try {
       const next = await cache.current.read(
@@ -1644,7 +1668,7 @@ export default function App({
       if (
         diffWindow &&
         (event.metaKey || event.ctrlKey) &&
-        /^[1-4ko]$/i.test(event.key)
+        /^[1-5ko]$/i.test(event.key)
       ) {
         event.preventDefault();
         return;
@@ -1675,23 +1699,23 @@ export default function App({
         !dialog &&
         !isMacDesktop &&
         (event.metaKey || event.ctrlKey) &&
-        event.key.toLowerCase() === "w" &&
-        (tab.startsWith("diff:") || diffWindow || onCloseProject)
+        !event.altKey &&
+        !event.shiftKey &&
+        event.key.toLowerCase() === "w"
       ) {
         event.preventDefault();
-        if (tab.startsWith("diff:") || diffWindow) closeDiffTab(tab);
-        else onCloseProject?.();
+        closeActiveView();
         return;
       }
       if (
         !dialog &&
         changes &&
         (event.metaKey || event.ctrlKey) &&
-        /^[1-4]$/.test(event.key)
+        /^[1-5]$/.test(event.key)
       ) {
         event.preventDefault();
         selectWorkspaceView(
-          (["changes", "commit", "history", "files"] as const)[
+          (["changes", "commit", "history", "files", "overview"] as const)[
             Number(event.key) - 1
           ],
         );
@@ -1790,21 +1814,6 @@ export default function App({
     setScope("all");
     void loadFile(nextReview);
   }
-  useEffect(() => {
-    const identity = tab === "commit" ? (changes?.workspace.id ?? "") : "";
-    if (identity && commitEntry.current !== identity) {
-      const staged =
-        changes?.files.filter((file) => file.side === "staged") ?? [];
-      setCommitScope(staged.length ? "staged" : "unstaged");
-      setCommitSearch("");
-      if (
-        staged.length &&
-        !staged.some((file) => fileKey(file) === selectedRef.current)
-      )
-        void loadFile(staged[0]);
-    }
-    commitEntry.current = identity;
-  }, [tab, changes?.workspace.id, changes?.files]);
   const stagedCount =
     changes?.files.filter((f) => f.side === "staged").length ?? 0;
   const contextOpen =
@@ -1855,11 +1864,14 @@ export default function App({
       | "data"
       | "editor"
       | "diagnostics"
-      | "agents" = "appearance",
+      | "agents"
+      | "ocr" = "appearance",
+    comparison?: OcrComparison,
   ) {
     if (dialog !== "settings")
       settingsTrigger.current = document.activeElement as HTMLElement | null;
     setSettingsSection(section);
+    setOcrComparison(comparison);
     setDialog("settings");
   }
   function openCommands() {
@@ -1916,9 +1928,25 @@ export default function App({
   }
   const workspaceView: WorkspaceView = tab === "repository" ? "history" : tab;
   function selectWorkspaceView(view: WorkspaceView) {
+    if (view === "changes") setFocused(false);
     if (view === "history") showRepository("history");
     else if (view === "commit") showCommit();
     else setTab(view);
+  }
+  function leaveOverview(view: "changes" | "history", file?: ChangedFile) {
+    if (file) {
+      setFindingTarget(null);
+      setFocused(false);
+      setSearch("");
+      setScope("all");
+      ai.setView("files");
+      setTab("changes", file);
+    } else selectWorkspaceView(view);
+    requestAnimationFrame(() =>
+      appRoot.current
+        ?.querySelector<HTMLElement>('.view-tab[aria-current="page"]')
+        ?.focus(),
+    );
   }
   const workspaceToolbar = (
     <div
@@ -1928,7 +1956,11 @@ export default function App({
       aria-label={t("Worktree")}
     >
       {diffWindow && (
-        <div className="diff-window-label" data-tauri-drag-region>
+        <div
+          className="diff-window-label"
+          title={changes?.workspace.path}
+          data-tauri-drag-region
+        >
           {changes?.workspace.name ?? "Proof"}
           <span>{initialComparison ? "Diff" : t("Local changes")}</span>
         </div>
@@ -2016,6 +2048,44 @@ export default function App({
           <ArrowClockwise size={17} className={busy ? "spinning" : ""} />
         </Button>
       )}
+      {!diffWindow && latestOcrReview && (
+        <Button
+          className="ocr-review-status"
+          aria-label={t("打开 OCR 审查")}
+          title={[latestOcrStatus, latestOcrReview.label]
+            .filter(Boolean)
+            .join(" · ")}
+          onClick={() => {
+            if (latestOcrReview.base && latestOcrReview.target) {
+              openHistoryDiff(
+                { base: latestOcrReview.base, target: latestOcrReview.target },
+                true,
+              );
+              return;
+            }
+            setTab("changes");
+            setInspectorTab("ai");
+            setFocused(false);
+            if (narrow) {
+              setFilesDrawer(false);
+              setContextDrawer(true);
+            } else void repositoryLayout.update({ contextOpen: true });
+          }}
+        >
+          {latestOcrReview.status !== "finished" ? (
+            <CircleNotch
+              className="ai-task-spinner"
+              size={16}
+              aria-hidden="true"
+            />
+          ) : latestOcrReview.error ? (
+            <Warning size={16} aria-hidden="true" />
+          ) : (
+            <ShieldCheck size={16} aria-hidden="true" />
+          )}
+          <span>{latestOcrStatus}</span>
+        </Button>
+      )}
       <Button
         className="observer-status"
         onClick={() => openSettings("observer")}
@@ -2059,17 +2129,15 @@ export default function App({
         <>
           <header className="project-header" data-tauri-drag-region>
             <div className="project-leading" data-tauri-drag-region>
-              <a
+              <Button
                 className="brand"
-                href="#"
                 aria-label={t("Proof 首页")}
-                onClick={(event) => {
-                  event.preventDefault();
-                  if (changes) setTab("changes");
+                onClick={() => {
+                  if (changes) selectWorkspaceView("changes");
                 }}
               >
                 <ProofMark />
-              </a>
+              </Button>
               <div className="project-drag-space" data-tauri-drag-region />
             </div>
             <div className="project-identity">
@@ -2112,8 +2180,6 @@ export default function App({
             comparisons={diffTabs.filter(
               (item) => item.workspaceId === changes.workspace.id,
             )}
-            historyRef={historyTab}
-            onSelect={selectWorkspaceView}
             onClose={closeDiffTab}
             onReorder={(source, target) =>
               setDiffTabs((tabs) => reorderComparisonTabs(tabs, source, target))
@@ -2286,6 +2352,35 @@ export default function App({
             </main>
           ) : (
             <>
+              {!diffWindow &&
+                coverage &&
+                (overviewVisited || tab === "overview") && (
+                  <Tabs.Panel
+                    keepMounted
+                    hidden={tab !== "overview"}
+                    value="overview"
+                    className="workspace-page overview-page"
+                  >
+                    <Suspense
+                      fallback={<WorkspacePending label={t("正在载入总览…")} />}
+                    >
+                      <WorkspaceOverview
+                        key={changes.workspace.id}
+                        active={active && tab === "overview"}
+                        changes={changes}
+                        demo={demo}
+                        historyRevision={gitActions.graphRevision}
+                        busy={busy || loadingDiff}
+                        coverage={coverage}
+                        nextReview={nextReview}
+                        onOpenFile={(file) => leaveOverview("changes", file)}
+                        onOpenChanges={() => leaveOverview("changes")}
+                        onOpenHistory={() => leaveOverview("history")}
+                        onOpenDiff={openHistoryDiff}
+                      />
+                    </Suspense>
+                  </Tabs.Panel>
+                )}
               {diffTabs
                 .filter((t) => t.workspaceId === changes.workspace.id)
                 .map((item) => (
@@ -2316,8 +2411,15 @@ export default function App({
                                 }).catch((e) => setError(asError(e)));
                               }
                         }
-                        onAgentSettings={() => openSettings("agents")}
+                        onAgentSettings={(ocr, scope) =>
+                          openSettings(ocr ? "ocr" : "agents", scope)
+                        }
                         active={active && tab === item.id}
+                        reviewRequest={
+                          reviewIntent?.tab === item.id
+                            ? reviewIntent.revision
+                            : undefined
+                        }
                         onPendingChange={(pending) =>
                           trackChildAi(item.id, pending)
                         }
@@ -2607,11 +2709,26 @@ export default function App({
                         onTab={setInspectorTab}
                         aiPanel={
                           <AiReviewPanel
-                            onSettings={() => openSettings("agents")}
+                            onSettings={(ocr) =>
+                              openSettings(ocr ? "ocr" : "agents")
+                            }
                             ai={ai}
-                            hasDiff={!!diff && !loadingDiff}
+                            hasDiff={!!selectedDiff && !loadingDiff}
                             demo={demo}
                             onFinding={(finding, index, contextId) => {
+                              if (finding.line === 0) {
+                                const file = changes.files.find(
+                                  (file) =>
+                                    file.path === finding.file &&
+                                    file.side === finding.side,
+                                );
+                                if (file) {
+                                  setFindingTarget(null);
+                                  void loadFile(file);
+                                  if (narrow) closeContext();
+                                  return;
+                                }
+                              }
                               if (!demo) {
                                 const reportId = contextId
                                   ? undefined
@@ -2731,6 +2848,21 @@ export default function App({
                         }
                         jumpTo={aiJump}
                         ai={ai}
+                        onShowReview={
+                          tab === "changes"
+                            ? () => {
+                                setFocused(false);
+                                setInspectorTab("ai");
+                                if (narrow) {
+                                  setFilesDrawer(false);
+                                  setContextDrawer(true);
+                                } else
+                                  void repositoryLayout.update({
+                                    contextOpen: true,
+                                  });
+                              }
+                            : undefined
+                        }
                         diff={diff}
                         preferences={preferences}
                         onEditor={() => void openEditor()}
@@ -2826,10 +2958,10 @@ export default function App({
                           ++sequence.current;
                           fileReader.cancel();
                           cache.current.cancelPending();
+                          const retained = diff ?? summary;
                           if (
-                            (diff && fileKey(diff) !== selectedRef.current) ||
-                            (summary &&
-                              fileKey(summary) !== selectedRef.current)
+                            retained &&
+                            fileKey(retained) !== selectedRef.current
                           )
                             showReading(null);
                           setLoadingDiff(false);
@@ -3239,6 +3371,9 @@ export default function App({
             initialSection={settingsSection}
             workspaces={recent}
             workspaceId={changes?.workspace.id}
+            workspaceTrusted={changes?.workspace.trusted}
+            ocrComparison={ocrComparison}
+            ocrSide={ai.reviewSide}
             demo={demo}
             error={error}
             preferences={preferences}

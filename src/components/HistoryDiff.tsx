@@ -8,6 +8,7 @@ import { useAi, type DiffJump } from "../ai";
 import { AiReviewPanel } from "./AiReviewPanel";
 import { FindingLocationPane } from "./FindingLocationPane";
 import type { FindingLocationTarget } from "../finding-location";
+import type { OcrComparison } from "./OcrSettings";
 import type { AiFinding } from "../ai";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import {
@@ -38,7 +39,7 @@ import { DiffView, type DiffPosition } from "./DiffView";
 import { DeferredDiff } from "./DeferredDiff";
 import { DiffReadBudget, diffReadBytes } from "../diff-budget";
 import { demoChanges, demoDiff, demoDiffContext } from "../demo";
-import { hiddenWhitespace } from "../diff-reading";
+import { hiddenWhitespace, shortComparisonRef } from "../diff-reading";
 export interface HistoryComparison {
   base?: string;
   target: string;
@@ -73,6 +74,7 @@ export function HistoryDiff({
   panelLayout,
   onOpenWindow,
   onPendingChange,
+  reviewRequest,
 }: {
   changes: Changes;
   demo: boolean;
@@ -81,7 +83,7 @@ export function HistoryDiff({
   selection: HistoryComparison;
   toolbar?: ReactNode;
   active?: boolean;
-  onAgentSettings?: () => void;
+  onAgentSettings?: (ocr: boolean, comparison?: OcrComparison) => void;
   panelLayout: ReturnType<typeof useRepositoryLayout>;
   onOpenWindow?: (selection: {
     base: string;
@@ -89,6 +91,7 @@ export function HistoryDiff({
     path: string | null;
   }) => void;
   onPendingChange?: (pending: boolean) => void;
+  reviewRequest?: number;
 }) {
   const fileReader = useReadRequest();
   const comparisonReader = useReadRequest();
@@ -96,12 +99,23 @@ export function HistoryDiff({
   const request = useRequest();
   const [marking, setMarking] = useState(false);
   const [, setReviewRevision] = useState(0);
+  const [reverseKey, setReverseKey] = useState<string | null>(null);
+  const selectionKey = `${selection.base ?? "parent"}:${selection.target}:${selection.parent ?? 0}`;
+  const reversed = !!selection.base && reverseKey === selectionKey;
+  const comparisonKey = `${changes.workspace.id}:${selectionKey}:${reversed}`;
   const searchId = useId();
   const rangeTriggerId = useId();
-  const [result, setResult] = useState<Comparison | null>(null),
-    [diff, setDiff] = useState<FileDiff | null>(null);
+  const [loadedComparison, setLoadedComparison] = useState<{
+    key: string;
+    value: Comparison;
+  } | null>(null);
+  const result =
+    loadedComparison?.key === comparisonKey ? loadedComparison.value : null;
+  const [diff, setDiff] = useState<FileDiff | null>(null);
   const [summary, setSummary] = useState<DiffSummary | null>(null);
-  const ai = useAi(changes, diff, demo, result, active);
+  const [selected, setSelected] = useState<string | null>(null);
+  const selectedDiff = diff && fileKey(diff) === selected ? diff : null;
+  const ai = useAi(changes, selectedDiff, demo, result, active);
   const pendingListener = useRef(onPendingChange);
   pendingListener.current = onPendingChange;
   const aiPending = !!(ai.pending || ai.saving || ai.decisionSaving);
@@ -111,6 +125,17 @@ export function HistoryDiff({
   useEffect(() => () => pendingListener.current?.(false), []);
   const [aiOpen, setAiOpen] = useState(false);
   const [rangeOpen, setRangeOpen] = useState(false);
+  const shownReview = useRef<string | null>(null);
+  const reviewId = ai.ocrRun?.id;
+  useEffect(() => {
+    if (active && reviewId && shownReview.current !== reviewId) {
+      shownReview.current = reviewId;
+      setAiOpen(true);
+    }
+  }, [active, reviewId]);
+  useEffect(() => {
+    if (active && reviewRequest !== undefined) setAiOpen(true);
+  }, [active, reviewRequest]);
   useEffect(() => {
     if (!active) setRangeOpen(false);
   }, [active]);
@@ -162,10 +187,7 @@ export function HistoryDiff({
     target: FindingLocationTarget;
     finding: AiFinding;
   } | null>(null);
-  useEffect(
-    () => setFindingTarget(null),
-    [changes.workspace.id, selection.base, selection.target],
-  );
+  useEffect(() => setFindingTarget(null), [comparisonKey]);
   const activeRef = useRef(active);
   activeRef.current = active;
   const loadedLarge = useRef(new Set<string>());
@@ -191,8 +213,7 @@ export function HistoryDiff({
   function cacheKey(file: Pick<ChangedFile, "path">, scope: Comparison) {
     return `${changes.workspace.id}:${scope.baseOid}:${scope.targetOid}:${file.path}`;
   }
-  const [selected, setSelected] = useState<string | null>(null),
-    [search, setSearch] = useState("");
+  const [search, setSearch] = useState("");
   const live = useRef({ diff, result, selected });
   live.current = { diff, result, selected };
   const mounted = useRef(true);
@@ -204,19 +225,18 @@ export function HistoryDiff({
   }, []);
   const [loading, setLoading] = useState(false),
     [loadingFile, setLoadingFile] = useState(false),
-    [error, setError] = useState<ProofError | null>(null),
-    [reverseKey, setReverseKey] = useState<string | null>(null);
+    [error, setError] = useState<ProofError | null>(null);
   const sequence = useRef(0),
     fileSequence = useRef(0),
     cache = useRef(new DiffReadBudget(8 * 1024 * 1024, 64));
-  const selectionKey = `${selection.base ?? "parent"}:${selection.target}:${selection.parent ?? 0}`;
-  const reversed = !!selection.base && reverseKey === selectionKey;
+  const requestedBase = reversed ? selection.target : selection.base;
+  const requestedTarget = reversed ? selection.base! : selection.target;
   useEffect(() => {
     const n = ++sequence.current;
     fileReader.cancel();
     comparisonReader.cancel();
     ++fileSequence.current;
-    setResult(null);
+    setLoadedComparison(null);
     showReading(null);
     setSelected(null);
     setError(null);
@@ -227,33 +247,33 @@ export function HistoryDiff({
       return;
     }
     setLoading(true);
-    const base = reversed ? selection.target : selection.base,
-      target = reversed ? selection.base! : selection.target;
     const task = demo
       ? Promise.resolve({
           baseOid:
-            base ?? selection.parents?.[selection.parent ?? 0] ?? "empty",
-          targetOid: target,
+            requestedBase ??
+            selection.parents?.[selection.parent ?? 0] ??
+            "empty",
+          targetOid: requestedTarget,
           files:
-            base === target
+            requestedBase === requestedTarget
               ? []
               : demoChanges.files.filter((f) => f.side === "unstaged"),
         })
-      : base
+      : requestedBase
         ? comparisonReader.read<Comparison>("compare_refs", {
             workspaceId: changes.workspace.id,
-            base,
-            target,
+            base: requestedBase,
+            target: requestedTarget,
           })
         : comparisonReader.read<Comparison>("compare_commit", {
             workspaceId: changes.workspace.id,
-            oid: target,
+            oid: requestedTarget,
             parent: selection.parent ?? 0,
           });
     task
       .then((value) => {
         if (n !== sequence.current) return;
-        setResult(value);
+        setLoadedComparison({ key: comparisonKey, value });
         if (value.files[0]) {
           const initial =
             value.files.find((file) => file.path === selection.path) ??
@@ -276,14 +296,14 @@ export function HistoryDiff({
     };
   }, [
     changes.workspace.id,
+    comparisonKey,
     demo,
-    selection.base,
-    selection.target,
+    requestedBase,
+    requestedTarget,
     selection.parent,
     selection.parents,
     selection.unavailable,
     selection.path,
-    reversed,
     comparisonRevision,
   ]);
   useEffect(() => {
@@ -296,9 +316,11 @@ export function HistoryDiff({
         retryComparison.current = true;
         setLoading(false);
       }
+      const retained = diff ?? summary;
       if (
         loadingFile ||
         reconcilingReview.current ||
+        (retained && fileKey(retained) !== selected) ||
         (diff && diffReadBytes({ state: "ready", diff }) > 8 * 1024 * 1024)
       )
         showReading(null);
@@ -336,7 +358,13 @@ export function HistoryDiff({
       cached = cache.current.get(key);
     const usable = cached && (!loadLarge || cached.state === "ready");
     reconcilingReview.current = preserveCurrent && !usable;
-    if (cached) showReading(cached);
+    const previous = live.current.result;
+    if (
+      cached ||
+      previous?.baseOid !== scope.baseOid ||
+      previous?.targetOid !== scope.targetOid
+    )
+      showReading(cached ?? null);
     setLoadingFile(!usable);
     if (usable) return;
     if (loadLarge) {
@@ -491,26 +519,33 @@ export function HistoryDiff({
       ),
   );
   if (diff) loadedFiles[fileKey(diff)] = diff;
-  const short = (id: string) =>
-    id === "empty" ? t("Empty tree") : id.slice(0, 8);
-  const left = reversed ? selection.targetLabel : selection.baseLabel,
-    right = reversed ? selection.baseLabel : selection.targetLabel;
+  const base =
+    result?.baseOid ??
+    requestedBase ??
+    selection.parents?.[selection.parent ?? 0];
+  const target = result?.targetOid ?? requestedTarget;
+  const baseName = reversed ? selection.targetLabel : selection.baseLabel;
+  const targetName = reversed ? selection.baseLabel : selection.targetLabel;
+  const endpoints = [
+    { label: t("基线"), revision: base, name: baseName },
+    { label: t("目标"), revision: target, name: targetName },
+  ];
   const rangeDetails = (
     <PopoverContent
-      align="end"
+      align="start"
       className="comparison-range-popup"
       aria-label={t("比较范围")}
     >
       <strong>{t("比较范围")}</strong>
-      <div className="history-endpoint">
-        <code>{result?.baseOid ?? "…"}</code>
-        {left && <span>{left}</span>}
-      </div>
-      <ArrowRight size={13} aria-hidden="true" />
-      <div className="history-endpoint">
-        <code>{result?.targetOid ?? selection.target}</code>
-        {right && <span>{right}</span>}
-      </div>
+      {endpoints.map(({ label, revision, name }) => (
+        <div className="history-endpoint" key={label}>
+          <span className="comparison-endpoint-label">{label}</span>
+          <code>
+            {revision === "empty" ? t("Empty tree") : (revision ?? "…")}
+          </code>
+          {name && <span>{name}</span>}
+        </div>
+      ))}
       <span role="status">
         {loading
           ? t("读取中…")
@@ -555,70 +590,70 @@ export function HistoryDiff({
       </div>
     </PopoverContent>
   );
-  const comparisonControls = (
-    <div className="comparison-tools">
+  const comparisonToolbar = (
+    <div className="comparison-toolbar">
       <PopoverTrigger
         id={rangeTriggerId}
         render={
           <Button
             className="button compact comparison-range"
             aria-label={t("比较范围")}
-            title={`${result?.baseOid ?? "…"} ${left ?? ""} → ${result?.targetOid ?? selection.target} ${right ?? ""}`}
+            aria-describedby={`${rangeTriggerId}-endpoints`}
+            title={`${base === "empty" ? t("Empty tree") : (base ?? "…")} → ${target}`}
           >
-            <GitDiff
-              className="comparison-range-icon"
-              size={14}
-              aria-hidden="true"
-            />
-            <code>
-              {result ? short(result.baseOid).slice(0, 7) : "…"} →{" "}
-              {result
-                ? short(result.targetOid).slice(0, 7)
-                : short(selection.target).slice(0, 7)}
-            </code>
-            <CaretDown size={11} />
+            <span
+              id={`${rangeTriggerId}-endpoints`}
+              className="comparison-endpoints"
+            >
+              {endpoints.map(({ label, revision }, index) => (
+                <span className="comparison-endpoint" key={label}>
+                  {index > 0 && <ArrowRight size={13} aria-hidden="true" />}
+                  <span className="comparison-endpoint-label">{label}</span>
+                  <code>{revision ? shortComparisonRef(revision) : "…"}</code>
+                </span>
+              ))}
+            </span>
+            <CaretDown size={11} aria-hidden="true" />
           </Button>
         }
       />
 
-      <Button
-        ref={filesToggle}
-        className="icon-button"
-        aria-label={filesVisible ? t("隐藏文件栏") : t("显示文件栏")}
-        title={t("Files")}
-        aria-controls={filesId}
-        aria-expanded={filesVisible}
-        onClick={() => {
-          setFocused(false);
-          setFilesOpen(!filesVisible);
-        }}
-      >
-        <SidebarSimple size={16} />
-      </Button>
-      <Button
-        className="icon-button"
-        aria-label={t("AI Review")}
-        title={t("AI Review")}
-        ref={aiToggle}
-        aria-controls={contextId}
-        aria-expanded={contextVisible}
-        onClick={() => {
-          setFocused(false);
-          setAiOpen(!contextVisible);
-        }}
-      >
-        <ShieldCheck size={16} />
-      </Button>
+      <div className="comparison-tools">
+        <Button
+          ref={filesToggle}
+          className="icon-button"
+          aria-label={filesVisible ? t("隐藏文件栏") : t("显示文件栏")}
+          title={t("Files")}
+          aria-controls={filesId}
+          aria-expanded={filesVisible}
+          onClick={() => {
+            setFocused(false);
+            setFilesOpen(!filesVisible);
+          }}
+        >
+          <SidebarSimple size={16} />
+        </Button>
+        <Button
+          className="icon-button"
+          aria-label={t("AI Review")}
+          title={t("AI Review")}
+          ref={aiToggle}
+          aria-controls={contextId}
+          aria-expanded={contextVisible}
+          onClick={() => {
+            setFocused(false);
+            setAiOpen(!contextVisible);
+          }}
+        >
+          <ShieldCheck size={16} />
+        </Button>
+      </div>
     </div>
   );
   return (
     <Popover open={rangeOpen && active} onOpenChange={setRangeOpen}>
       <section className="history-diff" aria-label={t("历史文件差异")}>
-        {(!result || (!diff && !summary) || findingTarget) && (
-          <div className="comparison-fallback-toolbar">
-            {comparisonControls}
-          </div>
-        )}
+        {comparisonToolbar}
         {error && (
           <div className="inline-notice" role="alert">
             {uiMessage(error.message)} · {error.code}
@@ -710,12 +745,34 @@ export function HistoryDiff({
                     </Button>
                   </header>
                   <AiReviewPanel
-                    onSettings={onAgentSettings}
+                    onSettings={
+                      onAgentSettings &&
+                      ((ocr) =>
+                        onAgentSettings(
+                          ocr,
+                          result
+                            ? { base: result.baseOid, target: result.targetOid }
+                            : undefined,
+                        ))
+                    }
                     ai={ai}
-                    hasDiff={!!diff && !!result && !loadingFile}
+                    hasDiff={!!selectedDiff && !!result && !loadingFile}
                     demo={demo}
                     onFinding={(finding, index, contextId) => {
-                      if (!demo) {
+                      const file = result?.files.find(
+                        (file) => file.path === finding.file,
+                      );
+                      if (finding.line === 0 && file && result) {
+                        setFindingTarget(null);
+                        void select(file, result);
+                        return;
+                      }
+                      const exactOcr =
+                        !contextId &&
+                        ai.report?.provider === "ocr" &&
+                        !ai.stale &&
+                        file;
+                      if (!demo && !exactOcr) {
                         const reportId = contextId ? undefined : ai.report?.id;
                         if (!contextId && !reportId) return;
                         setFindingTarget({
@@ -734,10 +791,8 @@ export function HistoryDiff({
                           file.path === finding.file &&
                           file.side === finding.side,
                       );
-                      const file = result?.files.find(
-                        (file) => file.path === finding.file,
-                      );
                       if (!captured || !file || !result || ai.stale) return;
+                      setFindingTarget(null);
                       setAiJump({
                         id: crypto.randomUUID(),
                         comparisonId: captured.snapshotId,
@@ -798,13 +853,9 @@ export function HistoryDiff({
                 />
               ) : summary && result ? (
                 <DeferredDiff
-                  comparisonControls={comparisonControls}
+                  comparison
                   summary={summary}
                   pending={loadingFile || marking}
-                  comparison={{
-                    base: short(result.baseOid),
-                    target: short(result.targetOid),
-                  }}
                   onLoad={() => {
                     const file = result.files.find(
                       (file) => fileKey(file) === selected,
@@ -814,9 +865,12 @@ export function HistoryDiff({
                 />
               ) : diff && result ? (
                 <DiffView
-                  comparisonControls={comparisonControls}
                   jumpTo={aiJump}
                   ai={ai}
+                  onShowReview={() => {
+                    setFocused(false);
+                    setAiOpen(true);
+                  }}
                   key={diff.id}
                   positionRef={positionFor(
                     `${result.baseOid}:${result.targetOid}:${diff.path}`,
@@ -848,8 +902,8 @@ export function HistoryDiff({
                   }
                   onCancelContext={contextReader.cancel}
                   comparison={{
-                    base: short(result.baseOid),
-                    target: short(result.targetOid),
+                    base: shortComparisonRef(result.baseOid),
+                    target: shortComparisonRef(result.targetOid),
                   }}
                 />
               ) : (

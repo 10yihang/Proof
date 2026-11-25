@@ -6,6 +6,7 @@ import { test, expect, type Locator, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import { demoChanges, demoDiff } from "../../src/demo";
 import { demoGraphPage } from "../../src/graph-demo";
+import type { RepositoryOverview } from "../../src/overview-data";
 import { defaultPreferences } from "../../src/types";
 
 async function openCommit(page: Page) {
@@ -1948,6 +1949,7 @@ async function openFixture(
     sidebarOpen: true,
     contextOpen: false,
   },
+  ocrEnabled = false,
 ) {
   const workspace = {
     ...demoChanges.workspace,
@@ -1976,6 +1978,7 @@ async function openFixture(
       watchAvailable,
       aiEnabled,
       layout,
+      ocrEnabled,
     }) => {
       const state = {
         changes,
@@ -2014,6 +2017,41 @@ async function openFixture(
         aiRelease: null as (() => void) | null,
         aiReject: null as ((error: unknown) => void) | null,
         aiTicket: "",
+        ocrConfig: {
+          fingerprint: "fixture-config",
+          provider: "team",
+          model: "fixture-model",
+          language: "中文",
+          effort: "medium",
+          providers: [
+            {
+              id: "team",
+              model: "fixture-model",
+              models: [] as string[],
+              savedKey: true,
+              endpoint: null as { url: string; protocol: string } | null,
+            },
+            {
+              id: "chatgpt",
+              model: "review-fast",
+              models: ["review-fast", "review-deep"],
+              savedKey: false,
+              endpoint: null,
+            },
+          ],
+        },
+        ocrRules: {
+          fingerprint: "fixture-rule",
+          content: JSON.stringify({
+            exclude: [],
+            rules: [{ path: "src/**/*.ts", rule: "Check boundaries" }],
+          }),
+        },
+        ocrGlobalRules: {
+          fingerprint: "",
+          content: "{}",
+        },
+        ocrRuns: {} as Record<string, any>,
       };
       const callbacks = new Map<number, (event: any) => void>();
       const listeners = new Map<number, { event: string; handler: number }>();
@@ -2021,6 +2059,25 @@ async function openFixture(
       Object.assign(window, {
         fixture: Object.assign(state, {
           emitNativeEvent: (event: string, payload: unknown = null) => {
+            if (event === "proof://ai-progress") {
+              const update = payload as { ticket: string; event: any };
+              const run = state.ocrRuns[update.ticket];
+              if (run) {
+                run.revision++;
+                run.activity.push({ at: Date.now(), event: update.event });
+                if (update.event.phase === "ocr_scope")
+                  run.coverage = update.event;
+                if (update.event.path) run.recentPath = update.event.path;
+                for (const [id, entry] of listeners) {
+                  if (entry.event === "proof://ocr-review")
+                    callbacks.get(entry.handler)?.({
+                      event: entry.event,
+                      id,
+                      payload: structuredClone(run),
+                    });
+                }
+              }
+            }
             for (const [id, entry] of listeners) {
               if (entry.event === event)
                 callbacks.get(entry.handler)?.({ event, id, payload });
@@ -2145,6 +2202,39 @@ async function openFixture(
                 }));
             if (command === "ai_review_report")
               return structuredClone(reportStore[args.reportId]);
+            if (command === "resolve_finding_location") {
+              const report = reportStore[args.reportId];
+              const finding = report?.review.findings[args.findingIndex];
+              if (!finding) throw new Error("Fixture finding is missing");
+              const diff = state.diffs[finding.file];
+              const line = finding.line;
+              const endLine = finding.endLine ?? line;
+              const content = diff.hunks
+                .flatMap((hunk: any) => hunk.lines)
+                .filter(
+                  (row: any) => row.newLine >= line && row.newLine <= endLine,
+                )
+                .map((row: any) => row.content)
+                .join("\n");
+              const location = {
+                path: finding.file,
+                source:
+                  report.scope.kind === "comparison" ? "target" : "worktree",
+                line,
+                endLine,
+                startLine: line,
+                content,
+                fingerprint: diff.token,
+              };
+              return {
+                workspaceId: args.workspaceId,
+                path: finding.file,
+                status: "exact",
+                original: location,
+                current: location,
+                candidates: [],
+              };
+            }
             if (command === "set_ai_finding_decision") {
               const r = reportStore[args.reportId];
               if (r.revision !== args.expectedRevision)
@@ -2167,6 +2257,7 @@ async function openFixture(
                     "codex",
                     "claude_code",
                     ...(state.codewizEnabled ? ["codewiz"] : []),
+                    ...(ocrEnabled ? ["ocr"] : []),
                   ].map((id) => {
                     const options =
                       id === "codex"
@@ -2181,7 +2272,9 @@ async function openFixture(
                           ? "Codex"
                           : id === "codewiz"
                             ? "Codewiz"
-                            : "Claude Code",
+                            : id === "ocr"
+                              ? "OpenCodeReview"
+                              : "Claude Code",
                       available: true,
                       path:
                         options.executablePath ??
@@ -2192,6 +2285,178 @@ async function openFixture(
                     };
                   })
                 : [];
+            if (command === "ocr_settings")
+              return structuredClone(state.ocrConfig);
+            if (command === "ocr_provider_catalog")
+              return ["chatgpt", "openai", "anthropic"];
+            if (command === "test_ocr_connection") return null;
+            if (command === "set_ocr_settings") {
+              if (
+                args.update.expectedFingerprint !== state.ocrConfig.fingerprint
+              )
+                throw new Error("OCR config revision mismatch");
+              const { provider, model, language, effort, apiKey, endpoint } =
+                args.update;
+              const prior = state.ocrConfig.providers.find(
+                (entry) => entry.id === provider,
+              );
+              const entry = {
+                id: provider,
+                model,
+                models: prior?.models ?? [],
+                savedKey: !!apiKey || !!prior?.savedKey,
+                endpoint: endpoint ?? prior?.endpoint ?? null,
+              };
+              state.ocrConfig = {
+                provider,
+                model,
+                language,
+                effort,
+                fingerprint: "saved-fixture-config",
+                providers: [
+                  ...state.ocrConfig.providers.filter(
+                    (provider) => provider.id !== entry.id,
+                  ),
+                  entry,
+                ],
+              };
+              return structuredClone(state.ocrConfig);
+            }
+            if (command === "ocr_rules" || command === "ocr_global_rules")
+              return structuredClone(
+                command === "ocr_rules" ? state.ocrRules : state.ocrGlobalRules,
+              );
+            if (
+              command === "set_ocr_rules" ||
+              command === "set_ocr_global_rules"
+            ) {
+              const field =
+                command === "set_ocr_rules" ? "ocrRules" : "ocrGlobalRules";
+              if (args.expectedFingerprint !== state[field].fingerprint)
+                throw new Error("OCR rule revision mismatch");
+              state[field] = {
+                fingerprint: "saved-fixture-rule",
+                content: args.content,
+              };
+              return structuredClone(state[field]);
+            }
+            if (command === "ocr_review_runs")
+              return structuredClone(Object.values(state.ocrRuns));
+            if (command === "cancel_ocr_review") {
+              const run = state.ocrRuns[args.id];
+              if (!run) return null;
+              if (run.status === "running") {
+                run.status = "cancelling";
+                run.revision++;
+                if (state.aiTicket === run.id)
+                  state.aiReject?.({
+                    code: "AI_CANCELLED",
+                    message: "AI 分析已取消。",
+                    detail: "Owned fixture task cancelled",
+                  });
+              }
+              return structuredClone(run);
+            }
+            if (command === "start_ocr_review") {
+              const scope = args.request.scope;
+              const comparison =
+                scope.kind === "comparison"
+                  ? { base: scope.base, target: scope.target }
+                  : null;
+              const run = {
+                id: `ocr-run-${++identifier}`,
+                epoch: args._dataEpoch,
+                revision: 0,
+                workspaceId: scope.workspaceId,
+                scope: comparison
+                  ? `comparison:${scope.base}:${scope.target}`
+                  : "local",
+                comparison,
+                label: args.label,
+                startedAt: Date.now(),
+                status: "running",
+                activity: [] as { at: number; event: any }[],
+                coverage: null,
+                recentPath: null,
+                error: null as any,
+              };
+              state.ocrRuns[run.id] = run;
+              const announce = () =>
+                (window as any).fixture.emitNativeEvent(
+                  "proof://ocr-review",
+                  structuredClone(run),
+                );
+              announce();
+              void (window as any).__TAURI_INTERNALS__
+                .invoke("proof_command", {
+                  command: "run_ai_task",
+                  args: { ...args, _readTicket: run.id },
+                })
+                .then(
+                  (report: any) => {
+                    run.status = "finished";
+                    run.revision++;
+                    announce();
+                    (window as any).fixture.emitNativeEvent(
+                      "proof:ai-review-updated",
+                      {
+                        origin: "native",
+                        detail: {
+                          workspaceId: run.workspaceId,
+                          scope: run.scope,
+                          reportId: report.id,
+                          revision: report.revision,
+                          select: true,
+                        },
+                      },
+                    );
+                  },
+                  (error: any) => {
+                    run.status = "finished";
+                    run.error = error;
+                    run.revision++;
+                    announce();
+                  },
+                );
+              return structuredClone(run);
+            }
+            if (command === "ocr_preview") {
+              const rules = JSON.parse(args.rules ?? state.ocrRules.content);
+              const skipReadme = rules.exclude?.includes("README.md");
+              return {
+                files: [
+                  { path: "src/api/requests.ts", willReview: true },
+                  {
+                    path: "README.md",
+                    willReview: !skipReadme,
+                    excludeReason: skipReadme ? "user_exclude" : undefined,
+                  },
+                ],
+              };
+            }
+            if (command === "ocr_rule_match") {
+              const rule = JSON.parse(state.ocrRules.content).rules[0];
+              return { source: "project", pattern: rule.path, rule: rule.rule };
+            }
+            if (command === "ocr_builtin_rule") {
+              if (args.path.endsWith(".go"))
+                return {
+                  source: "system",
+                  pattern: "**/*.go",
+                  rule: "Check Go error handling.",
+                };
+              if (args.path.endsWith(".rs"))
+                return {
+                  source: "system",
+                  pattern: "**/*.rs",
+                  rule: "Check Rust ownership.",
+                };
+              return {
+                source: "system",
+                pattern: "**/*.ts",
+                rule: "Check TypeScript types.",
+              };
+            }
             if (command === "open_diff_window") {
               (state as any).windowSelection = structuredClone(args.selection);
               return { label: "diff-fixture" };
@@ -2291,6 +2556,24 @@ async function openFixture(
                 revision: 0,
                 decisions: input.task === "review" ? ["pending"] : [],
                 provider: input.provider,
+                ...(input.provider === "ocr"
+                  ? {
+                      ocr: {
+                        status: "partial",
+                        pinnedDiff: true,
+                        sessionId: "fixture-ocr-session",
+                        model: "fixture-model",
+                        provider: "team",
+                        eligible: 2,
+                        reviewed: 1,
+                        omittedFindings: 0,
+                        excluded: [{ path: "README.md", reason: "user_rule" }],
+                        incomplete: [
+                          { path: "src/api/response.ts", reason: "timeout" },
+                        ],
+                      },
+                    }
+                  : {}),
                 task: input.task,
                 scope,
                 fingerprint: "fixture-snapshot",
@@ -2586,6 +2869,7 @@ async function openFixture(
       watchAvailable,
       aiEnabled,
       layout,
+      ocrEnabled,
     },
   );
   await page.goto("/");
@@ -2801,6 +3085,15 @@ test("Changes focuses on Diff while Commit keeps staging and the draft in its ow
     "true",
   );
   await expect(page.getByLabel("Commit message")).toBeVisible();
+  const commitSearch = page.locator("#commit-file-search");
+  await commitSearch.fill("response");
+  await page.getByRole("tab", { name: "History", exact: true }).click();
+  await openCommit(page);
+  await expect(page.locator(".diff-file-header")).toContainText("response.ts");
+  await expect(commitSearch).toHaveValue("response");
+  await expect(page.getByLabel("Commit message")).toHaveValue(
+    "Independent commit draft",
+  );
   expect(
     await page.evaluate(() =>
       (window as any).fixture.actions.filter((a: any) =>
@@ -4365,6 +4658,14 @@ test("History opens selected Commit diffs in closable tabs and preserves graph s
     ),
   );
   expect(requests.at(-1).args.base).toBe(requests.at(-2).args.target);
+  await expect(
+    panel
+      .getByRole("button", { name: "比较范围", exact: true })
+      .locator("code"),
+  ).toHaveText([
+    requests.at(-1).args.base.slice(0, 8),
+    requests.at(-1).args.target.slice(0, 8),
+  ]);
   await page.screenshot({ path: ".artifacts/history-diff-tab-desktop.png" });
   await returnToHistory(page);
   await expect(graph.getByRole("option", { selected: true })).toHaveCount(2);
@@ -4419,16 +4720,31 @@ test("History opens selected Commit diffs in closable tabs and preserves graph s
   ).toEqual([]);
 });
 
-test("Diff tabs remain closable in a narrow window and return focus to History", async ({
+test("Opened pages share the sidebar list and stay closable in a narrow window", async ({
   page,
-}) => {
-  await page.setViewportSize({ width: 1024, height: 800 });
+}, testInfo) => {
+  await page.setViewportSize({ width: 1024, height: 720 });
   await openFixture(page);
-  const history = page
-    .getByRole("navigation", { name: "Worktree" })
-    .getByRole("tab", { name: "History", exact: true });
+  const navigation = page.getByRole("navigation", { name: "Worktree" });
+  const tabList = navigation.getByRole("tablist");
+  const history = tabList.getByRole("tab", { name: "History", exact: true });
   const graph = page.getByRole("listbox", { name: "提交列表与分支关系" });
-  for (let index = 0; index < 6; index++) {
+  const initialWidth = (await navigation.boundingBox())!.width;
+  await history.click();
+  await graph.getByRole("option").first().dblclick();
+  await expect(navigation).toHaveAttribute("data-sidebar-state", "collapsed");
+  expect((await navigation.boundingBox())!.width).toBe(initialWidth);
+  await expect(tabList.getByRole("group")).toHaveCount(0);
+  const firstPage = tabList.getByRole("tab", {
+    name: demoGraphPage().commits[0].subject,
+    exact: true,
+  });
+  await expect(firstPage).toHaveAttribute("aria-selected", "true");
+  await navigation
+    .getByRole("button", { name: "展开侧边栏", exact: true })
+    .click();
+  const expandedWidth = (await navigation.boundingBox())!.width;
+  for (let index = 1; index < 6; index++) {
     await history.click();
     await graph.getByRole("option").nth(index).dblclick();
     const close = page.locator(
@@ -4439,14 +4755,26 @@ test("Diff tabs remain closable in a narrow window and return focus to History",
   await expect(
     page.locator(".workspace-sidebar:visible .diff-tab-item"),
   ).toHaveCount(6);
+  expect((await navigation.boundingBox())!.width).toBe(expandedWidth);
+  const files = tabList.getByRole("tab", { name: "文件", exact: true });
+  const filesBox = (await files.boundingBox())!;
+  const firstPageBox = (await firstPage.boundingBox())!;
+  expect(firstPageBox.height).toBe(filesBox.height);
+  expect(firstPageBox.x).toBe(filesBox.x);
+  await files.press("ArrowDown");
+  await expect(firstPage).toBeFocused();
   for (const width of [660, 1440, 1024]) {
-    await page.setViewportSize({ width, height: 800 });
+    await page.setViewportSize({ width, height: 720 });
     await expect(
       page.locator(
         ".workspace-sidebar:visible .diff-tab-item.active .diff-tab-close",
       ),
     ).toBeInViewport({ ratio: 1 });
   }
+  await page.screenshot({
+    path: testInfo.outputPath("proof-navigation-compact.png"),
+    animations: "disabled",
+  });
   await page
     .locator(".workspace-sidebar:visible .diff-tab-item.active .diff-tab-close")
     .click();
@@ -4456,6 +4784,87 @@ test("Diff tabs remain closable in a narrow window and return focus to History",
     "aria-selected",
     "true",
   );
+});
+
+test("Returning home restores the oversized file and keeps the workbench interactive", async ({
+  page,
+}, testInfo) => {
+  await openFixture(page, true, false, defaultPreferences, {
+    sidebarWidth: 320,
+    contextWidth: 300,
+    sidebarOpen: true,
+    contextOpen: true,
+  });
+  await page.evaluate(() => {
+    const w = window as any;
+    const invoke = w.__TAURI_INTERNALS__.invoke;
+    w.__TAURI_INTERNALS__.invoke = async (name: string, payload: any) => {
+      if (payload?.command === "changes" && w.holdHomeRefresh)
+        await new Promise<void>((resolve) => {
+          w.releaseHomeRefresh = resolve;
+        });
+      if (
+        payload?.command === "read_file_diff" &&
+        payload.args.path.endsWith("response.ts")
+      ) {
+        const { workspaceId, path, side } = payload.args;
+        return {
+          state: "deferred",
+          summary: {
+            workspaceId,
+            path,
+            side,
+            oldPath: null,
+            base: `${w.fixture.changes.head}:${w.fixture.changes.branch}`,
+            capturedAt: Date.now(),
+            patchBytes: null,
+            reason: "file_limit",
+            canLoad: false,
+          },
+        };
+      }
+      return invoke(name, payload);
+    };
+  });
+  await page.getByRole("button", { name: /^response\.ts/ }).click();
+  const empty = page.locator(".deferred-diff-body");
+  await expect(empty).toContainText("Diff 超过读取上限");
+  const icon = (await empty.locator("svg").boundingBox())!;
+  const body = (await empty.boundingBox())!;
+  expect
+    .soft(Math.abs(icon.x + icon.width / 2 - body.x - body.width / 2))
+    .toBeLessThan(2);
+
+  const home = page.locator(".project-header .brand");
+  const changes = page.getByRole("tab", { name: /^本地变更/ });
+  const history = page.getByRole("tab", { name: "History", exact: true });
+  const app = page.locator(".app:visible");
+  await page.keyboard.press("Meta+Shift+r");
+  await expect(app).toHaveClass(/is-focused/);
+  await history.click();
+  await expect(history).toHaveAttribute("aria-selected", "true");
+  await page.evaluate(() => {
+    (window as any).holdHomeRefresh = true;
+  });
+  await home.click();
+  await expect(changes).toHaveAttribute("aria-selected", "true");
+  await expect(empty).toBeVisible();
+  await expect.soft(app).not.toHaveClass(/is-focused/);
+  await expect
+    .poll(() => page.evaluate(() => typeof (window as any).releaseHomeRefresh))
+    .toBe("function");
+  await page.screenshot({ path: testInfo.outputPath("large-file-home.png") });
+  await page
+    .getByRole("button", { name: /^requests\.ts/ })
+    .click({ timeout: 1000 });
+  await expect(page.locator(".diff-file-header:visible")).toContainText(
+    "requests.ts",
+  );
+  await page.evaluate(() => {
+    const w = window as any;
+    w.holdHomeRefresh = false;
+    w.releaseHomeRefresh();
+  });
 });
 
 for (const language of ["zh-CN", "en"] as const) {
@@ -4612,6 +5021,93 @@ for (const language of ["zh-CN", "en"] as const) {
   });
 }
 
+test("Overview loads repository statistics on demand and opens the intended Diff", async ({
+  page,
+}) => {
+  await openFixture(page, true);
+  await page.evaluate((history) => {
+    const w = window as any;
+    const original = w.__TAURI_INTERNALS__.invoke;
+    const midnight = new Date().setHours(0, 0, 0, 0) / 1000;
+    const overviewData: RepositoryOverview = {
+      head: history[0].oid,
+      branch: "main",
+      recent: history.slice(0, 4),
+      activity: [{ timestamp: midnight, count: 1351 }],
+      contributors: [
+        { range: 30, active: 2, leaders: [["Branch author", 808]] },
+      ],
+      extensions: { ts: 8, css: 2 },
+      lines: [],
+      branches: {
+        local: 1,
+        remote: 0,
+        worktrees: 1,
+        stale: 0,
+        merged: 0,
+        upstream: null,
+        distance: null,
+      },
+    };
+    w.overviewHistoryReads = 0;
+    w.__TAURI_INTERNALS__.invoke = async (name: string, payload: any) => {
+      if (payload?.command === "repository_overview") {
+        ++w.overviewHistoryReads;
+        return overviewData;
+      }
+      return original(name, payload);
+    };
+  }, demoGraphPage("current").commits);
+
+  const nav = page.getByRole("navigation", { name: "Worktree" });
+  const overview = nav.getByRole("tab", { name: "总览", exact: true });
+  const changes = nav.getByRole("tab", { name: /^本地变更/ });
+  const panel = page.getByRole("tabpanel", { name: "总览" });
+  await expect(changes).toHaveAttribute("aria-current", "page");
+  await expect(panel).toBeHidden();
+
+  await page.keyboard.press("Meta+5");
+  await expect(panel.getByRole("progressbar")).toHaveAttribute(
+    "aria-valuemax",
+    "2",
+  );
+  await expect(panel).toContainText("4 项变更尚未读取");
+  await expect(panel.getByText("所有分支", { exact: true })).toBeVisible();
+  await expect(panel.locator(".ov-heat-foot")).toContainText("1,351");
+  await expect(panel.locator(".ov-ranking")).toContainText("Branch author");
+  await expect(panel.locator(".ov-heat-cells li")).toHaveCount(371);
+  await expect(panel.locator(".ov-language-list")).toContainText("TypeScript");
+  await expect(panel.locator(".ov-trend-bars > span")).toHaveCount(30);
+  await panel.getByRole("button", { name: "7 天", exact: true }).click();
+  await expect(panel.locator(".ov-trend-bars > span")).toHaveCount(7);
+
+  await panel.getByRole("button", { name: "继续审查" }).click();
+  await expect(changes).toHaveAttribute("aria-current", "page");
+  await expect(changes).toBeFocused();
+  await expect(page.locator(".diff-file-header:visible")).toContainText(
+    "response.ts",
+  );
+
+  await overview.click();
+  const firstCommit = demoGraphPage().commits[0];
+  await panel
+    .getByRole("button", { name: new RegExp(firstCommit.subject) })
+    .click();
+  await expect(
+    nav.getByRole("tab", { name: firstCommit.subject, exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+  await nav
+    .getByRole("button", {
+      name: `关闭标签页 ${firstCommit.subject}`,
+      exact: true,
+    })
+    .click();
+  await expect(overview).toHaveAttribute("aria-current", "page");
+  expect(await page.evaluate(() => (window as any).overviewHistoryReads)).toBe(
+    1,
+  );
+});
+
 test("Desktop chrome reserves native controls and supports document tab shortcuts", async ({
   page,
 }) => {
@@ -4680,11 +5176,11 @@ test("Desktop chrome reserves native controls and supports document tab shortcut
     animations: "disabled",
   });
   await graph.getByRole("option").first().dblclick();
-  await page.keyboard.press("Meta+p");
   const diff = page.locator(".diff-tab-page:not([hidden])");
-  await expect(
-    diff.getByRole("textbox", { name: "搜索变化文件" }),
-  ).toBeFocused();
+  const fileSearch = diff.getByRole("textbox", { name: "搜索变化文件" });
+  await expect(fileSearch).toBeVisible();
+  await page.keyboard.press("Meta+p");
+  await expect(fileSearch).toBeFocused();
   await expect
     .poll(() => editorState(diff.locator(".diff-scroll")))
     .not.toBeNull();
@@ -4728,6 +5224,13 @@ test("Desktop chrome reserves native controls and supports document tab shortcut
   await page.evaluate(() =>
     (window as any).fixture.emitNativeEvent("proof:close-active-view"),
   );
+  await expect(
+    page.getByRole("tablist", { name: "仓库", exact: true }).getByRole("tab"),
+  ).toHaveCount(1);
+  await expect(page.getByLabel("Commit message")).toHaveValue(
+    "Keep this draft while switching views",
+  );
+  await page.getByRole("button", { name: /^关闭仓库 / }).click();
   await expect(page.locator(".project-tab-button:visible")).toHaveCount(0);
   await expect(
     page.getByRole("heading", { name: "打开仓库，开始工作", exact: true }),
@@ -4898,31 +5401,64 @@ test("titlebar exposes a central native drag region with one, two and many proje
   );
 });
 
-test("Non-macOS document shortcut closes only the active Diff", async ({
-  page,
-}) => {
-  await page.addInitScript(() =>
-    Object.defineProperty(navigator, "platform", { value: "Win32" }),
-  );
-  await openFixture(page);
-  const history = page
-    .getByRole("navigation", { name: "Worktree" })
-    .getByRole("tab", { name: "History", exact: true });
-  await history.click();
-  await page
-    .getByRole("listbox", { name: "提交列表与分支关系" })
-    .getByRole("option")
-    .first()
-    .dblclick();
-  await page.keyboard.press("Control+w");
-  await expect(
-    page.locator(".workspace-sidebar:visible .diff-tab-item"),
-  ).toHaveCount(0);
-  await expect(history).toBeFocused();
-  expect(await page.evaluate(() => (window as any).fixture.windowCloses)).toBe(
-    0,
-  );
-});
+for (const [platform, label] of [
+  ["MacIntel", "macOS"],
+  ["Win32", "non-macOS"],
+] as const) {
+  test(`${label} close shortcut returns from Diff and keeps the repository open`, async ({
+    page,
+  }) => {
+    await page.addInitScript(
+      (platform) =>
+        Object.defineProperty(navigator, "platform", { value: platform }),
+      platform,
+    );
+    await openFixture(page);
+    const navigation = page.getByRole("navigation", { name: "Worktree" });
+    const history = navigation.getByRole("tab", {
+      name: "History",
+      exact: true,
+    });
+    const graph = page.getByRole("listbox", { name: "提交列表与分支关系" });
+    const commit = graph.getByRole("option").nth(1);
+    const openedPage = navigation.getByRole("tab", {
+      name: demoGraphPage().commits[1].subject,
+      exact: true,
+    });
+    const project = page.locator(
+      ".project-tabs-row:visible .project-tab-button",
+    );
+    const close = () =>
+      platform === "MacIntel"
+        ? page.evaluate(() =>
+            (window as any).fixture.emitNativeEvent("proof:close-active-view"),
+          )
+        : page.keyboard.press("Control+w");
+    await history.click();
+    await commit.dblclick();
+    await expect(openedPage).toHaveAttribute("aria-selected", "true");
+    await close();
+    await expect(openedPage).toHaveCount(0);
+    await expect(history).toBeFocused();
+    await close();
+    await expect(project).toHaveCount(1);
+    await expect(history).toHaveAttribute("aria-selected", "true");
+    await expect(commit).toHaveAttribute("aria-selected", "true");
+    await commit.dblclick();
+    const changes = navigation.getByRole("tab", { name: /^本地变更/ });
+    await changes.click();
+    await close();
+    await expect(openedPage).toHaveCount(1);
+    await openedPage.click();
+    await close();
+    await expect(changes).toBeFocused();
+    await expect(changes).toHaveAttribute("aria-selected", "true");
+    await expect(project).toHaveCount(1);
+    expect(
+      await page.evaluate(() => (window as any).fixture.windowCloses),
+    ).toBe(0);
+  });
+}
 
 test("Branch comparison opens a Diff tab and an older file response cannot replace its empty result", async ({
   page,
@@ -6236,7 +6772,7 @@ test("historical AI Review stays in its frozen Diff tab and never reviews local 
   await tab
     .getByRole("button", { name: "Missing boundary validation", exact: true })
     .click();
-  await expect(tab.locator(".is-finding-target")).toHaveCount(2);
+  await expect(tab.locator(".finding-location-line-highlight")).toHaveCount(2);
   const calls = await page.evaluate(() =>
     (window as any).fixture.actions.filter(
       (a: any) => a.command === "run_ai_task",
@@ -6282,6 +6818,529 @@ test("historical AI Review stays in its frozen Diff tab and never reviews local 
   expect(Math.abs(layout.centerTop - layout.inspectorTop)).toBeLessThan(2);
   await page.screenshot({ path: ".artifacts/ai-core/history-review.png" });
 });
+test("OCR owns Review, surfaces live activity and opens repository settings from Diff", async ({
+  page,
+}, testInfo) => {
+  await openFixture(page, false, true, defaultPreferences, undefined, true);
+  await page.evaluate(() => {
+    (window as any).fixture.aiHold = true;
+  });
+  await page.getByRole("button", { name: "OCR 审查", exact: true }).click();
+  const panel = page.locator(".ai-review-panel");
+  await expect(panel.getByRole("combobox")).toContainText("OpenCodeReview");
+  await panel
+    .getByRole("button", { name: "审查此 Diff", exact: true })
+    .press("Enter");
+  const progress = panel.getByRole("region", { name: "Agent 活动" });
+  await expect(progress).toContainText("OpenCodeReview 正在审查");
+  await expect(progress).toBeFocused();
+  await expect
+    .poll(() => page.evaluate(() => (window as any).fixture.aiTicket))
+    .not.toBe("");
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    for (const event of [
+      { phase: "ocr_scope", total: 2, excluded: 1 },
+      { phase: "ocr_reading", path: "src/api/requests.ts" },
+    ])
+      fixture.emitNativeEvent("proof://ai-progress", {
+        ticket: fixture.aiTicket,
+        event,
+      });
+  });
+  await expect(progress).toContainText("纳入 2 个文件 · 跳过 1 个");
+  await expect(progress).toContainText("OCR 正在读取代码");
+  await expect(progress).toContainText("src/api/requests.ts");
+  await expect(progress).toContainText("Index → 工作区");
+  const requested = await page.evaluate(
+    () =>
+      (window as any).fixture.actions.find(
+        ({ command }: { command: string }) => command === "start_ocr_review",
+      ).args.request.scope,
+  );
+  expect(requested.files.length).toBeGreaterThan(0);
+  expect(requested.files.every((file: any) => file.side === "unstaged")).toBe(
+    true,
+  );
+  await progress.getByText("查看活动", { exact: true }).click();
+  const cancel = progress.getByRole("button", { name: "取消", exact: true });
+  const before = await cancel.boundingBox();
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    for (let index = 0; index < 12; index++) {
+      fixture.emitNativeEvent("proof://ai-progress", {
+        ticket: fixture.aiTicket,
+        event: { phase: index % 2 ? "ocr_searching" : "ocr_reviewing" },
+      });
+    }
+  });
+  await expect(
+    progress.getByText("OCR 正在查找相关代码", { exact: true }).last(),
+  ).toBeVisible();
+  await expect(progress.locator("ol li")).toHaveCount(4);
+  expect(await cancel.boundingBox()).toEqual(before);
+  await expect(
+    panel.getByRole("button", { name: "审查此 Diff", exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: /^response\.ts/ }).click();
+  const diff = page.getByRole("region", { name: "代码差异", exact: true });
+  await expect(diff.locator(".diff-file-header")).toContainText("response.ts");
+  await expect
+    .poll(
+      async () =>
+        (await editorState(diff.locator(".diff-scroll")))?.modelLines ?? 0,
+    )
+    .toBeGreaterThan(0);
+  await expect(progress).toContainText("src/api/requests.ts");
+  await page.screenshot({ path: testInfo.outputPath("ocr-progress.png") });
+  await page.evaluate(() => (window as any).fixture.aiRelease());
+  await expect(panel).toContainText("OCR 部分完成");
+  await expect(panel).toContainText("已审 1 / 2 个文件");
+  await expect(panel.locator(".ocr-report-counts")).toContainText(
+    "Index → 工作区",
+  );
+  await panel.getByText("审查覆盖与会话", { exact: true }).click();
+  await expect(panel).toContainText("审查超时");
+  await expect(panel).toContainText("被审查规则排除");
+  await panel.getByText("审查覆盖与会话", { exact: true }).click();
+  const pending = panel.getByRole("button", { name: /^待处理 \d+ 条$/ });
+  await pending.click();
+  await panel.getByRole("button", { name: "采纳", exact: true }).click();
+  await expect(
+    panel.getByText("没有待处理的意见。", { exact: true }),
+  ).toBeVisible();
+  await expect(pending).toBeFocused();
+  await pending.click();
+  await expect(
+    panel.getByText("Missing boundary validation", { exact: true }),
+  ).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("ocr-findings.png") });
+  const calls = await page.evaluate(() => (window as any).fixture.actions);
+  expect(
+    calls.find((action: any) => action.command === "run_ai_task").args.request
+      .provider,
+  ).toBe("ocr");
+  await panel
+    .getByRole("button", { name: "OpenCodeReview 设置", exact: true })
+    .click();
+  const model = page.getByRole("textbox", { name: "OCR 模型", exact: true });
+  await expect(model).toHaveValue("fixture-model");
+  await model.fill("fixture-next-model");
+  await page
+    .getByRole("button", { name: "保存 OCR 配置", exact: true })
+    .click();
+  await expect(page.getByText("OCR 配置已保存", { exact: true })).toBeVisible();
+  await page
+    .getByRole("button", { name: "重新读取 OCR 配置", exact: true })
+    .click();
+  await expect(model).toHaveValue("fixture-next-model");
+  await page.evaluate(() => {
+    const internals = (window as any).__TAURI_INTERNALS__;
+    const invoke = internals.invoke;
+    internals.invoke = (name: string, payload: any) => {
+      if (payload?.command === "test_ocr_connection") {
+        internals.invoke = invoke;
+        return Promise.reject({
+          code: "OCR_CONNECTION_OAUTH_TIMEOUT",
+          message: "连接 ChatGPT 认证服务超时，请检查网络后重试。",
+          detail: "ChatGPT OAuth · auth.openai.com\nOCR · exit 1",
+        });
+      }
+      return invoke(name, payload);
+    };
+  });
+  const testConnection = page.getByRole("button", {
+    name: "测试模型连接",
+    exact: true,
+  });
+  await testConnection.click();
+  const failure = page.getByRole("alert");
+  await expect(failure).toContainText("连接 ChatGPT 认证服务超时");
+  await expect(failure.locator("pre")).toBeHidden();
+  await failure.getByText("查看失败详情", { exact: true }).click();
+  await expect(failure.locator("pre")).toContainText("auth.openai.com");
+  await testConnection.click();
+  await expect(failure).toHaveCount(0);
+  await expect(page.getByText("模型连接正常", { exact: true })).toBeVisible();
+  await page.getByRole("tab", { name: "仓库规则", exact: true }).click();
+  const preview = page.getByRole("region", { name: "文件范围", exact: true });
+  await expect(
+    preview.getByRole("button", { name: "纳入审查 2", exact: true }),
+  ).toBeVisible();
+  const pattern = page
+    .getByRole("group", { name: "排除路径", exact: true })
+    .getByRole("textbox", { name: "添加路径模式", exact: true });
+  await pattern.fill("README.md");
+  await pattern.press("Enter");
+  await expect(
+    preview.getByRole("button", { name: "跳过 1", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "src/**/*.ts", exact: true }).click();
+  await page
+    .getByRole("textbox", { name: "审查指令", exact: true })
+    .fill("Check input boundaries");
+  await page.getByRole("switch", { name: "合并内置规则", exact: true }).click();
+  await page.getByRole("button", { name: "编辑 JSON", exact: true }).click();
+  const ruleJson = page.getByRole("textbox", {
+    name: "OCR 仓库规则",
+    exact: true,
+  });
+  expect(JSON.parse(await ruleJson.inputValue())).toEqual({
+    exclude: ["README.md"],
+    rules: [
+      {
+        path: "src/**/*.ts",
+        rule: "Check input boundaries",
+        merge_system_rule: true,
+      },
+    ],
+  });
+  await page.getByRole("button", { name: "返回表单", exact: true }).click();
+  await page.getByRole("button", { name: "保存仓库规则", exact: true }).click();
+  await expect(
+    page.getByText("OCR 仓库规则已保存", { exact: true }),
+  ).toBeVisible();
+  await preview.getByRole("button", { name: "跳过 1", exact: true }).click();
+  await expect(preview).toContainText("README.md");
+  await expect(preview).toContainText("被审查规则排除");
+  await expect(
+    preview.getByRole("button", { name: "src/api/requests.ts", exact: true }),
+  ).toHaveCount(0);
+  await preview.getByRole("button", { name: "全部 2", exact: true }).click();
+  await preview.getByRole("button", { name: "src/api/requests.ts" }).click();
+  await expect(preview).toContainText("src/**/*.ts");
+  await expect(preview.locator(".ocr-rule-text")).toHaveText(
+    "Check input boundaries",
+  );
+  await preview
+    .getByText("src/**/*.ts", { exact: true })
+    .scrollIntoViewIfNeeded();
+  await expect(
+    page.getByRole("tab", { name: "全局规则", exact: true }),
+  ).toBeInViewport({ ratio: 1 });
+  await page.screenshot({ path: testInfo.outputPath("ocr-settings.png") });
+});
+
+test("OCR global and built-in rules work from Home", async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ width: 1024, height: 720 });
+  await openFixture(page, false, true, defaultPreferences, undefined, true);
+  await page.getByRole("button", { name: /^关闭仓库 / }).click();
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("tab", { name: "OpenCodeReview", exact: true }).click();
+  await expect(
+    page.getByRole("tab", { name: "仓库规则", exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("tab", { name: "全局规则", exact: true }).click();
+  const global = page.getByRole("tabpanel", { name: "全局规则", exact: true });
+  await expect(global).toContainText("~/.opencodereview/rule.json");
+  await expect(global).toContainText("未创建");
+  await global
+    .getByRole("button", { name: "添加审查规则", exact: true })
+    .click();
+  await global
+    .getByRole("textbox", { name: "匹配路径", exact: true })
+    .fill("**/*.go");
+  await global
+    .getByRole("textbox", { name: "审查指令", exact: true })
+    .fill("Check errors in callbacks");
+  await global
+    .getByRole("button", { name: "保存全局规则", exact: true })
+    .click();
+  await expect(global).toContainText("OCR 全局规则已保存");
+  await global
+    .getByRole("button", { name: "重新读取全局规则", exact: true })
+    .click();
+  await expect(
+    global.getByRole("button", { name: "**/*.go", exact: true }),
+  ).toBeVisible();
+  await expect(global.getByText("未创建", { exact: true })).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath("ocr-global-rules.png") });
+
+  await page.getByRole("tab", { name: "内置规则", exact: true }).click();
+  const builtin = page.getByRole("tabpanel", { name: "内置规则", exact: true });
+  await builtin.getByRole("button", { name: "Go", exact: true }).click();
+  await expect(builtin.locator(".ocr-rule-text")).toHaveText(
+    "Check Go error handling.",
+  );
+  const lookup = builtin.getByRole("textbox", {
+    name: "按文件路径查看",
+    exact: true,
+  });
+  await lookup.fill("src/model.rs");
+  await lookup.press("Enter");
+  await expect(builtin.locator(".ocr-rule-text")).toHaveText(
+    "Check Rust ownership.",
+  );
+  await expect(builtin).toContainText("**/*.rs");
+  await expect
+    .poll(() =>
+      builtin.evaluate((element) => element.scrollWidth - element.clientWidth),
+    )
+    .toBeLessThanOrEqual(1);
+  await page.screenshot({
+    path: testInfo.outputPath("ocr-built-in-rules.png"),
+  });
+});
+
+test("OCR settings fit the compact dark desktop window", async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ width: 1024, height: 720 });
+  await openFixture(
+    page,
+    false,
+    true,
+    { ...defaultPreferences, theme: "dark" },
+    undefined,
+    true,
+  );
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("tab", { name: "OpenCodeReview", exact: true }).click();
+  await expect(
+    page.getByRole("textbox", { name: "OCR 模型", exact: true }),
+  ).toHaveValue("fixture-model");
+  const provider = page.getByRole("combobox", { name: "服务商", exact: true });
+  await chooseOption(provider, "provider:chatgpt");
+  const model = page.getByRole("combobox", { name: "OCR 模型", exact: true });
+  await chooseOption(model, "model:review-deep");
+  await expect(model).toContainText("review-deep");
+  await page.getByRole("button", { name: "深入", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "深入", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await page
+    .getByRole("button", { name: "保存 OCR 配置", exact: true })
+    .click();
+  await expect(page.getByText("OCR 配置已保存", { exact: true })).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath("ocr-model-compact-dark.png"),
+  });
+  await chooseOption(provider, "custom");
+  await page
+    .getByRole("textbox", { name: "服务名称", exact: true })
+    .fill("local-gateway");
+  await page
+    .getByRole("textbox", { name: "服务地址", exact: true })
+    .fill("http://127.0.0.1:12345/v1");
+  await chooseOption(
+    page.getByRole("combobox", { name: "接口协议", exact: true }),
+    "openai-responses",
+  );
+  await page
+    .getByRole("textbox", { name: "OCR 模型", exact: true })
+    .fill("local-model");
+  await page.getByLabel("API Key", { exact: true }).fill("fixture-key");
+  await page
+    .getByRole("button", { name: "保存 OCR 配置", exact: true })
+    .click();
+  await expect(provider).toContainText("local-gateway");
+  await expect(
+    page.getByRole("textbox", { name: "服务地址", exact: true }),
+  ).toHaveValue("http://127.0.0.1:12345/v1");
+  await expect(page.getByLabel("API Key", { exact: true })).toHaveValue("");
+  await page.getByRole("tab", { name: "仓库规则", exact: true }).click();
+  const panel = page.getByRole("tabpanel", { name: "仓库规则", exact: true });
+  await expect(page.locator(".ocr-settings-panel:visible")).toHaveCount(1);
+  await expect(
+    panel.getByRole("group", { name: "纳入路径", exact: true }),
+  ).toBeVisible();
+  await expect(
+    panel.getByRole("group", { name: "排除路径", exact: true }),
+  ).toBeVisible();
+  await expect(
+    panel.getByRole("button", { name: "全部 2", exact: true }),
+  ).toBeVisible();
+  await expect
+    .poll(() =>
+      panel.evaluate((element) => element.scrollWidth - element.clientWidth),
+    )
+    .toBeLessThanOrEqual(1);
+  await page.screenshot({
+    path: testInfo.outputPath("ocr-settings-compact-dark.png"),
+  });
+});
+
+test("OCR reviews the displayed side when a file has both local versions", async ({
+  page,
+}) => {
+  await openFixture(page, false, true, defaultPreferences, undefined, true);
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    const file = fixture.changes.files.find(
+      ({ path }: { path: string }) => path === "src/api/requests.ts",
+    );
+    fixture.changes.files.push({ ...file, side: "staged" });
+    fixture.changes.token += ":index";
+  });
+  await page
+    .getByRole("button", { name: "刷新 Worktree", exact: true })
+    .click();
+  await page
+    .locator(".file-filters")
+    .getByRole("button", { name: "Staged", exact: true })
+    .click();
+  await page.getByRole("button", { name: /^requests\.ts M/ }).click();
+  await expect(page.locator(".diff-file-header")).toContainText("requests.ts");
+  await expect(page.locator(".comparison")).toHaveText(/HEAD\s*→\s*Index/);
+  await page.getByRole("button", { name: "OCR 审查", exact: true }).click();
+  const panel = page.locator(".ai-review-panel");
+  await expect(panel.locator(".ocr-worktree-range")).toHaveText("HEAD → Index");
+  await panel.getByRole("button", { name: "审查文件", exact: true }).click();
+  await expect(panel.locator(".ocr-report-counts")).toContainText(
+    "HEAD → Index",
+  );
+  const evidence = await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    return {
+      scope: fixture.actions.find(
+        ({ command }: { command: string }) => command === "start_ocr_review",
+      ).args.request.scope,
+      token: fixture.returnedDiffs["staged:src/api/requests.ts"].token,
+    };
+  });
+  expect(evidence.scope.files).toEqual([
+    {
+      path: "src/api/requests.ts",
+      side: "staged",
+      snapshotToken: evidence.token,
+    },
+  ]);
+  await panel
+    .getByRole("button", { name: "OpenCodeReview 设置", exact: true })
+    .click();
+  await page.getByRole("tab", { name: "仓库规则", exact: true }).click();
+  await expect(
+    page
+      .getByRole("region", { name: "文件范围", exact: true })
+      .getByText("HEAD → Index"),
+  ).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as any).fixture.actions
+            .filter((action: any) => action.command === "ocr_preview")
+            .at(-1)?.args.side,
+      ),
+    )
+    .toBe("staged");
+});
+
+test("Closing a comparison keeps its OCR review running and reopenable", async ({
+  page,
+}, testInfo) => {
+  await openFixture(
+    page,
+    false,
+    true,
+    { ...defaultPreferences, theme: "system" },
+    undefined,
+    true,
+  );
+  await page.evaluate(() => {
+    (window as any).fixture.aiHold = true;
+  });
+  const history = page
+    .getByRole("navigation", { name: "Worktree" })
+    .getByRole("tab", { name: "History", exact: true });
+  const commit = page
+    .getByRole("listbox", { name: "提交列表与分支关系" })
+    .getByRole("option")
+    .first();
+  await history.click();
+  await commit.dblclick();
+  const tab = page.locator(".diff-tab-page:not([hidden])");
+  await expect(tab.locator(".diff-file-header")).toBeVisible();
+  const range = tab.getByRole("button", { name: "比较范围", exact: true });
+  const priorRange = await range.locator("code").allTextContents();
+  await page.evaluate(() => {
+    const { changes } = (window as any).fixture;
+    changes.branch = "release/current-worktree";
+    changes.head = "7".repeat(40);
+    changes.token += ":branch-switch";
+  });
+  await page
+    .getByRole("button", { name: "刷新 Worktree", exact: true })
+    .click();
+  await expect(
+    page.locator(".project-identity:visible .branch-picker"),
+  ).toContainText("release/current-worktree");
+  await expect(range.locator("code")).toHaveText(priorRange);
+  await expect(range).toContainText("基线");
+  await expect(range).toContainText("目标");
+  await tab.getByRole("button", { name: "AI Review", exact: true }).click();
+  await tab.getByRole("button", { name: "审查此 Diff", exact: true }).click();
+  await expect
+    .poll(() => page.evaluate(() => (window as any).fixture.aiTicket))
+    .not.toBe("");
+  const comparison = await page.evaluate(() => {
+    const { actions } = (window as any).fixture;
+    return {
+      displayed: actions.find(
+        ({ command }: { command: string }) => command === "read_compare_file",
+      ).args,
+      requested: actions.find(
+        ({ command }: { command: string }) => command === "start_ocr_review",
+      ).args.request.scope,
+    };
+  });
+  expect(comparison.requested).toMatchObject({
+    kind: "comparison",
+    workspaceId: comparison.displayed.workspaceId,
+    base: comparison.displayed.base,
+    target: comparison.displayed.target,
+  });
+  const expectedRange = priorRange.join(" → ");
+  await expect(tab.getByRole("region", { name: "Agent 活动" })).toContainText(
+    expectedRange,
+  );
+  await page.setViewportSize({ width: 1024, height: 720 });
+  await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expect(range).toBeInViewport({ ratio: 1 });
+  await expect(range.locator("code")).toHaveText(priorRange);
+  await page.screenshot({
+    path: testInfo.outputPath("history-review-range.png"),
+  });
+  await page.evaluate(() =>
+    (window as any).fixture.emitNativeEvent("proof:close-active-view"),
+  );
+  await expect(tab).toHaveCount(0);
+  await expect(history).toHaveAttribute("aria-selected", "true");
+  await expect
+    .poll(() => page.evaluate(() => !!(window as any).fixture.aiReject), {
+      timeout: 1000,
+    })
+    .toBe(true);
+  await commit.dblclick();
+  await expect(
+    tab.getByRole("region", { name: "Agent 活动", exact: true }),
+  ).toContainText("OpenCodeReview 正在审查");
+  await page.evaluate(() =>
+    (window as any).fixture.emitNativeEvent("proof:close-active-view"),
+  );
+  await expect(tab).toHaveCount(0);
+  await page.evaluate(() => (window as any).fixture.aiRelease());
+  const review = page.getByRole("button", {
+    name: "打开 OCR 审查",
+    exact: true,
+  });
+  await expect(review).toBeInViewport({ ratio: 1 });
+  await expect(review).toHaveAttribute(
+    "title",
+    `OCR 审查结果 · ${expectedRange}`,
+  );
+  await review.click();
+  await expect(tab.getByText("OCR 部分完成", { exact: true })).toBeVisible();
+  await expect(tab.locator(".ocr-report-counts")).toContainText(expectedRange);
+  await tab.getByRole("button", { name: "审查此 Diff", exact: true }).click();
+  await tab.getByRole("button", { name: "取消", exact: true }).click();
+  await expect(tab.getByText("OCR 审查已取消", { exact: true })).toBeVisible();
+});
+
 test("missing AI providers leave manual groups, Diff and Commit usable", async ({
   page,
 }) => {
@@ -6315,7 +7374,7 @@ test("Agent settings expose default provider, CLI paths, models and a no-inferen
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await page.getByRole("tab", { name: "AI Agent", exact: true }).click();
   await chooseOption(
-    page.getByLabel("默认 Agent", { exact: true }),
+    page.getByLabel("分组与提交的默认 Agent", { exact: true }),
     "claude_code",
   );
   await page
@@ -6353,10 +7412,9 @@ test("Agent settings expose default provider, CLI paths, models and a no-inferen
   await expect(
     page.getByRole("textbox", { name: "Codex CLI 路径", exact: true }),
   ).toHaveValue("/custom/Codex Agent/codex");
-  await expect(page.getByLabel("默认 Agent", { exact: true })).toHaveAttribute(
-    "data-value",
-    "claude_code",
-  );
+  await expect(
+    page.getByLabel("分组与提交的默认 Agent", { exact: true }),
+  ).toHaveAttribute("data-value", "claude_code");
   await expect(
     page.getByRole("heading", { name: "AI Agent", exact: true }),
   ).toBeInViewport();
@@ -6388,7 +7446,10 @@ test("Codewiz is hidden until detected and its settings drive Grouping and Revie
   await expect(
     page.getByRole("textbox", { name: "Codewiz CLI 路径", exact: true }),
   ).toBeVisible();
-  await chooseOption(page.getByLabel("默认 Agent", { exact: true }), "codewiz");
+  await chooseOption(
+    page.getByLabel("分组与提交的默认 Agent", { exact: true }),
+    "codewiz",
+  );
   await page
     .getByRole("textbox", { name: "Codewiz 模型", exact: true })
     .fill("company/model");
@@ -6990,6 +8051,9 @@ for (const historical of [false, true]) {
 test("Diff file loading preserves workbench geometry", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await openFixture(page);
+  await page.evaluate(() => {
+    (window as any).fixture.delay = 650;
+  });
   await page
     .getByRole("navigation", { name: "Worktree" })
     .getByRole("tab", { name: "History", exact: true })
@@ -7000,10 +8064,30 @@ test("Diff file loading preserves workbench geometry", async ({ page }) => {
     .first()
     .dblclick();
   const tab = page.locator(".diff-tab-page:not([hidden])");
+  await expect(
+    tab.getByRole("status").filter({ hasText: "载入 Diff" }),
+  ).toBeVisible();
+  const toolbar = tab.locator(".comparison-toolbar");
+  const scopeBefore = await toolbar.boundingBox();
+  const firstRead = await tab.locator(".center-panel").boundingBox();
   await expect(tab.locator(".diff-file-header")).toBeVisible();
+  expect(await toolbar.boundingBox()).toEqual(scopeBefore);
   const before = await tab.locator(".center-panel").boundingBox();
+  expect.soft(before).toEqual(firstRead);
+  const lines = tab.locator(".monaco-editor .view-lines").first();
+  await expect(lines).toHaveText(/\S/);
   await page.evaluate(() => {
     (window as any).fixture.delay = 1800;
+    const baseline = ((window as any).diffFileFrames = [] as boolean[]);
+    const sample = () => {
+      if ((window as any).diffFileFrames !== baseline) return;
+      const code = document.querySelector(
+        ".diff-tab-page:not([hidden]) .monaco-editor .view-lines",
+      );
+      baseline.push(!!code?.textContent?.trim());
+      requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
   });
   await tab
     .locator(".tree-file")
@@ -7011,11 +8095,24 @@ test("Diff file loading preserves workbench geometry", async ({ page }) => {
     .first()
     .click();
   await expect(
-    tab.getByRole("status").filter({ hasText: "载入 Diff" }),
+    tab.getByRole("status").filter({ hasText: /(?:载入|更新) Diff/ }),
   ).toBeVisible();
+  await expect
+    .soft(tab.locator(".diff-file-header"))
+    .toContainText("requests.ts", {
+      timeout: 500,
+    });
   const during = await tab.locator(".center-panel").boundingBox();
   expect(during).toEqual(before);
   await expect(tab.locator(".diff-file-header")).toContainText("response.ts");
+  await expect(lines).toHaveText(/\S/);
+  const frames = await page.evaluate(() => {
+    const recorded = (window as any).diffFileFrames;
+    delete (window as any).diffFileFrames;
+    return recorded as boolean[];
+  });
+  expect(frames.length).toBeGreaterThan(2);
+  expect(frames).not.toContain(false);
   expect(await tab.locator(".center-panel").boundingBox()).toEqual(before);
 });
 

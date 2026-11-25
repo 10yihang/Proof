@@ -35,7 +35,6 @@ import type { GitSyntax } from "../monaco-document";
 import { t } from "../i18n";
 
 type Runtime = typeof import("../monaco-runtime");
-// Reuse the loaded module so subsequent file mounts can finish before paint.
 let loadedRuntime: Runtime | undefined;
 export interface EditorBookmark {
   position: ReadingAnchor;
@@ -649,7 +648,9 @@ export default function MonacoDiffSurface(props: Props) {
             fontFamily: "SFMono-Regular, Menlo, Consolas, monospace",
             fontLigatures: false,
             wordWrap: props.preferences.wrapLines ? "on" : "off",
-            renderWhitespace: props.preferences.showWhitespace ? "all" : "none",
+            renderWhitespace: props.preferences.showWhitespace
+              ? "all"
+              : "none",
             stickyScroll: { enabled: false },
             guides: { indentation: false },
             padding: { top: 0, bottom: 0 },
@@ -689,7 +690,10 @@ export default function MonacoDiffSurface(props: Props) {
         pane.disposables.push(
           editor.onDidScrollChange((event) => {
             if (event.scrollLeftChanged)
-              host.style.setProperty("--editor-left", `${event.scrollLeft}px`);
+              host.style.setProperty(
+                "--editor-left",
+                `${event.scrollLeft}px`,
+              );
             if (
               !syncing.current &&
               !aligning.current &&
@@ -781,14 +785,14 @@ export default function MonacoDiffSurface(props: Props) {
       setLoading(false);
       latest.current.onReady();
     };
-    const failed = (error: unknown) => {
+    const fail = (error: unknown) => {
       if (generation === sequence.current) latest.current.onError(error);
     };
     if (loadedRuntime) {
       try {
         mount(loadedRuntime);
       } catch (error) {
-        failed(error);
+        fail(error);
       }
     } else {
       void import("../monaco-runtime")
@@ -796,7 +800,7 @@ export default function MonacoDiffSurface(props: Props) {
           loadedRuntime = module;
           mount(module);
         })
-        .catch(failed);
+        .catch(fail);
     }
     return () => {
       ++sequence.current;

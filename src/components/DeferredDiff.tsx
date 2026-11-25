@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { Button } from "./ui/controls";
 import { t } from "../i18n";
 import { Code, ArrowRight, ArrowClockwise } from "@phosphor-icons/react";
@@ -10,14 +9,12 @@ export function DeferredDiff({
   onLoad,
   onStage,
   comparison,
-  comparisonControls,
 }: {
   summary: DiffSummary;
   pending: boolean;
   onLoad: () => void;
   onStage?: () => void;
-  comparison?: { base: string; target: string };
-  comparisonControls?: ReactNode;
+  comparison?: boolean;
 }) {
   const limited = !summary.canLoad;
   return (
@@ -38,17 +35,16 @@ export function DeferredDiff({
             </div>
           </div>
         </header>
-        {comparisonControls ?? (
+        {!comparison && (
           <span className="comparison">
-            {comparison?.base ?? (summary.side === "staged" ? "HEAD" : "Index")}
+            {summary.side === "staged" ? "HEAD" : "Index"}
             <ArrowRight size={12} />
-            {comparison?.target ??
-              (summary.side === "staged" ? "Index" : "Worktree")}
+            {summary.side === "staged" ? "Index" : "Worktree"}
           </span>
         )}
       </div>
       <div className="deferred-diff-body">
-        <Code size={28} />
+        <Code size={28} aria-hidden="true" />
         <h2>{limited ? t("Diff 超过读取上限") : t("Large diff")}</h2>
         {summary.patchBytes !== null && (
           <span className="deferred-size">
@@ -67,24 +63,27 @@ export function DeferredDiff({
                 ? t("包含较长的代码行，点击后加载 Diff。")
                 : t("内容较多，点击后加载 Diff。")}
         </p>
-        <div className="deferred-actions">
-          {summary.canLoad && (
-            <Button
-              className="button primary"
-              disabled={pending}
-              onClick={onLoad}
-            >
-              {pending && <ArrowClockwise size={15} className="spinning" />}
-              {pending ? t("载入 Diff…") : t("加载 Diff")}
-            </Button>
-          )}
-          {onStage && (
-            <Button className="button" disabled={pending} onClick={onStage}>
-              {summary.side === "staged" ? t("Unstage file") : t("Stage file")}
-            </Button>
-          )}
-        </div>
-        <small>{t("尚未加载 · 未计入 Review")}</small>
+        {(summary.canLoad || onStage) && (
+          <div className="deferred-actions">
+            {summary.canLoad && (
+              <Button
+                className="button primary"
+                disabled={pending}
+                onClick={onLoad}
+              >
+                {pending && <ArrowClockwise size={15} className="spinning" />}
+                {pending ? t("载入 Diff…") : t("加载 Diff")}
+              </Button>
+            )}
+            {onStage && (
+              <Button className="button" disabled={pending} onClick={onStage}>
+                {summary.side === "staged"
+                  ? t("Unstage file")
+                  : t("Stage file")}
+              </Button>
+            )}
+          </div>
+        )}
       </div>
     </section>
   );

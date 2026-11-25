@@ -101,6 +101,16 @@ impl Proof {
     /// 随即经 perform_recovery 原子移除工作区文件。tracked 文件删除后也会出现在
     /// 本地变更中；untracked 文件完全依赖此恢复点找回（保留 7 天）。
     pub fn delete_text_file(&mut self, workspace_id: &str, path: &str) -> Result<RecoveryPoint> {
+        self.delete_text_file_checked(workspace_id, path, None)
+    }
+
+    /// Uses the exact content the editor displayed when confirming deletion.
+    pub fn delete_text_file_checked(
+        &mut self,
+        workspace_id: &str,
+        path: &str,
+        expected_fingerprint: Option<&str>,
+    ) -> Result<RecoveryPoint> {
         let workspace = self.store.workspace(workspace_id)?;
         self.require_write(&workspace)?;
         crate::git::checked_path(&workspace, path)?;
@@ -113,6 +123,11 @@ impl Proof {
             let before = file.read()?.ok_or_else(|| {
                 Error::new("FILE_MISSING", "文件不存在或已被移出工作区。", path)
             })?;
+            if expected_fingerprint.is_some_and(|expected| {
+                crate::fingerprint(&[before.bytes.as_slice()]) != expected
+            }) {
+                return Err(Error::stale());
+            }
             let size = 2 * before.bytes.len() as u64 + 8192;
             let used = self.recovery_usage()?;
             if used.saturating_add(size) > CAPACITY {

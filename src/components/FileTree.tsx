@@ -44,6 +44,7 @@ export function FileTree({
   reviewProgress,
   onNextReview,
   reviewLoading = false,
+  findingCounts,
 }: {
   files: ChangedFile[];
   selected: string | null;
@@ -63,6 +64,7 @@ export function FileTree({
   reviewProgress?: ReviewCoverage;
   onNextReview?: () => void;
   reviewLoading?: boolean;
+  findingCounts?: ReadonlyMap<string, number>;
 }) {
   const clientStorage = useClientStorage();
   const parent = useRef<HTMLDivElement>(null);
@@ -317,6 +319,9 @@ export function FileTree({
               loaded[fileKey(file)]?.hunks.every(
                 (hunk) => hunk.reviewState === "reviewed",
               );
+            const findings = file
+              ? findingCounts?.get(fileKey(file))
+              : undefined;
             return (
               <div
                 key={row.key}
@@ -387,6 +392,14 @@ export function FileTree({
                           : row.file.path.split("/").pop()}
                       </span>
                       {reviewed && <Check size={12} className="review-check" />}
+                      {!!findings && (
+                        <span
+                          className="ocr-file-findings"
+                          title={t("{v0} 条 OCR 意见", { v0: findings })}
+                        >
+                          {findings}
+                        </span>
+                      )}
                       <span
                         className={`file-status status-${row.file.status === "?" ? "new" : row.file.status}`}
                       >

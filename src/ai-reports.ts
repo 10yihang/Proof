@@ -81,6 +81,9 @@ export function useAiReports(
         if (!valid()) return;
         setReports(records);
         const id =
+          (detail?.select === true
+            ? records.find((record) => record.id === detail.reportId)?.id
+            : undefined) ??
           records.find((r) => r.id === current.current?.id)?.id ??
           records[0]?.id;
         const value = id

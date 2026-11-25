@@ -82,7 +82,7 @@ export function reviewInstructions(
       `## ${index + 1}. [${finding.severity}] ${finding.title.replace(/[\r\n]+/g, " ")}`,
       "",
       `- ${text("文件")}: ${code(finding.file)}`,
-      `- ${text("位置")}: ${source} · ${text(finding.lineSide === "old" ? "修改前" : "修改后")} · L${finding.line}${end > finding.line ? `–L${end}` : ""}`,
+      `- ${text("位置")}: ${source} · ${finding.line === 0 ? text("文件级意见") : `${text(finding.lineSide === "old" ? "修改前" : "修改后")} · L${finding.line}${end > finding.line ? `–L${end}` : ""}`}`,
       "",
       `${text("问题说明")}:`,
       finding.description,

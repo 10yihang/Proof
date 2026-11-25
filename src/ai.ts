@@ -6,6 +6,12 @@ import {
 import { t } from "./i18n";
 import { useAiReports, type FindingDecision } from "./ai-reports";
 import { publishDiffEvent } from "./diff-events";
+import { comparisonRangeLabel } from "./diff-reading";
+import {
+  receiveOcrReview,
+  useOcrReview,
+  type OcrReviewRun,
+} from "./ocr-reviews";
 import { useEffect, useRef, useState } from "react";
 import { asError, useReadRequest, useRequest } from "./api";
 import type { Changes, ChangedFile, FileDiff, Side, ProofError } from "./types";
@@ -39,6 +45,20 @@ export interface AgentProviderInfo {
   reason: string | null;
   model?: string | null;
   isDefault?: boolean;
+}
+function defaultAgents(providers: AgentProviderInfo[]) {
+  const available = providers.filter((provider) => provider.available);
+  const general =
+    available.find((provider) => provider.isDefault && provider.id !== "ocr")
+      ?.id ??
+    available.find((provider) => provider.id !== "ocr")?.id ??
+    "codex";
+  return {
+    general,
+    review: available.some((provider) => provider.id === "ocr")
+      ? ("ocr" as const)
+      : general,
+  };
 }
 export interface AiFinding {
   severity: AiRisk;
@@ -77,6 +97,18 @@ export type AiScope =
     };
 export interface AiReport {
   session?: { id: string; resumeCommand: string } | null;
+  ocr?: {
+    status: "complete" | "partial" | "skipped";
+    pinnedDiff?: boolean;
+    sessionId: string | null;
+    model: string | null;
+    provider: string | null;
+    eligible: number | null;
+    reviewed: number;
+    excluded: { path: string; reason: string }[];
+    incomplete: { path: string; reason: string }[];
+    omittedFindings: number;
+  };
   revision: number;
   decisions: FindingDecision[];
   id: string;
@@ -157,21 +189,35 @@ export function useAi(
     files: ChangedFile[];
   } | null,
   active = true,
+  localSide?: Side,
 ) {
   const request = useRequest(),
     reader = useReadRequest();
   const [providers, setProviders] = useState<AgentProviderInfo[]>([]);
   const [provider, setProvider] = useState<AgentKind>("codex");
+  const [reviewProvider, setReviewProvider] = useState<AgentKind>("ocr");
   const [groups, setGroups] = useState<ChangeGroups>(emptyGroups);
   const [groupReady, setGroupReady] = useState(false);
   const [saving, setSaving] = useState(false);
   const [suggestion, setSuggestion] = useState<AiReport | null>(null);
-  const [pending, setPending] = useState<"grouping" | "review" | null>(null);
-  const [progress, setProgress] = useState<AiRunProgress | null>(null);
+  const [localPending, setPending] = useState<"grouping" | "review" | null>(
+    null,
+  );
+  const [localProgress, setProgress] = useState<AiRunProgress | null>(null);
+  const launchingOcr = useRef<{ cancel: boolean } | null>(null);
   const [error, setError] = useState<ProofError | null>(null);
   const [view, setView] = useState<"files" | "groups">("files");
   const historical = comparison !== undefined;
   const files = historical ? (comparison?.files ?? []) : (changes?.files ?? []);
+  const reviewSide = historical
+    ? undefined
+    : (localSide ?? diff?.side ?? files[0]?.side);
+  const ocrRange = reviewSide
+    ? t(reviewSide === "staged" ? "HEAD → Index" : "Index → 工作区")
+    : undefined;
+  const comparisonLabel = comparison
+    ? comparisonRangeLabel(comparison.baseOid, comparison.targetOid)
+    : undefined;
   const sourceToken = comparison
     ? `comparison:${comparison.baseOid}:${comparison.targetOid}`
     : historical
@@ -186,14 +232,19 @@ export function useAi(
   const initialGroupsLoaded = useRef(false);
   const initialProvidersLoaded = useRef(false);
   const workspace = changes?.workspace.id;
+  const ocrRun = useOcrReview(demo ? undefined : workspace, groupScope);
+  const ocrRunning = !!ocrRun && ocrRun.status !== "finished";
+  const pending = localPending ?? (ocrRunning ? "review" : null);
   const reviewState = useAiReports(workspace, groupScope, demo, active);
   const { report } = reviewState;
-  // A hidden project keeps its AI work and selections. Only a new scope cancels
-  // explicit tasks; activity below controls background reads separately.
+  const currentGroup = groups.groups.find((group) =>
+    group.files.includes(diff?.path ?? ""),
+  );
   useEffect(() => {
     ++generation.current;
     reader.cancel();
     running.current = false;
+    launchingOcr.current = null;
     editing.current = false;
     setSaving(false);
     setPending(null);
@@ -226,15 +277,17 @@ export function useAi(
       .then((value) => {
         if (!valid()) return;
         setProviders(value);
-        const defaultProvider =
-          value.find((p) => p.available && p.isDefault)?.id ??
-          value.find((p) => p.available)?.id ??
-          "codex";
+        const defaults = defaultAgents(value);
         const firstLoad = !initialProvidersLoaded.current;
         initialProvidersLoaded.current = true;
         setProvider((selected) =>
           firstLoad || !value.some((p) => p.id === selected && p.available)
-            ? defaultProvider
+            ? defaults.general
+            : selected,
+        );
+        setReviewProvider((selected) =>
+          firstLoad || !value.some((p) => p.id === selected && p.available)
+            ? defaults.review
             : selected,
         );
       })
@@ -281,11 +334,9 @@ export function useAi(
         .then((value) => {
           if (disposed || n !== generation.current) return;
           setProviders(value);
-          setProvider(
-            value.find((p) => p.isDefault && p.available)?.id ??
-              value.find((p) => p.available)?.id ??
-              "codex",
-          );
+          const defaults = defaultAgents(value);
+          setProvider(defaults.general);
+          setReviewProvider(defaults.review);
         })
         .catch((e) => {
           if (!disposed && n === generation.current) setError(asError(e));
@@ -413,34 +464,30 @@ export function useAi(
     }
   }
   async function run(task: "grouping" | "review", all = false) {
+    const engine = task === "review" ? reviewProvider : provider;
     if (
       !changes ||
       (historical && !comparison) ||
       demo ||
       running.current ||
-      !providers.some((p) => p.id === provider && p.available)
+      ocrRunning ||
+      !providers.some((p) => p.id === engine && p.available)
     )
       return;
-    if (task === "grouping" && provider === "ocr") {
-      setError({
-        code: "AI_ISOLATION_UNAVAILABLE",
-        message: t("OpenCodeReview 仅支持代码审查，分组请使用其他 Agent。"),
-        detail: "",
-      });
-      return;
-    }
     if (task === "grouping" && !groupReady) return;
-    const currentGroup = groups.groups.find((g) =>
-      g.files.includes(diff?.path ?? ""),
-    );
+    const isOcrReview = task === "review" && engine === "ocr";
+    const localOcr = isOcrReview && !historical;
     const selected =
-      all || task === "grouping"
+      (all && !localOcr) || task === "grouping"
         ? null
         : changes.files
-            .filter((f) =>
-              currentGroup
-                ? currentGroup.files.includes(f.path)
-                : f.path === diff?.path && f.side === diff.side,
+            .filter(
+              (f) =>
+                (!localOcr || f.side === reviewSide) &&
+                (all ||
+                  (currentGroup
+                    ? currentGroup.files.includes(f.path)
+                    : f.path === diff?.path && f.side === diff.side)),
             )
             .map((f) => ({
               path: f.path,
@@ -474,13 +521,38 @@ export function useAi(
       revision = groups.revision;
     running.current = true;
     setPending(task);
-    setProgress(startAiProgress());
+    const label = all
+      ? (comparisonLabel ?? ocrRange)
+      : (currentGroup?.title ?? diff?.path);
+    setProgress({
+      ...startAiProgress(),
+      reviewTarget: isOcrReview ? label : undefined,
+    });
     setError(null);
     try {
+      if (isOcrReview) {
+        const launch = { cancel: false };
+        launchingOcr.current = launch;
+        const started = await request<OcrReviewRun>("start_ocr_review", {
+          request: { provider: engine, task, scope },
+          label,
+        });
+        receiveOcrReview(started);
+        if (launch.cancel) {
+          const cancelled = await request<OcrReviewRun | null>(
+            "cancel_ocr_review",
+            {
+              id: started.id,
+            },
+          );
+          if (cancelled) receiveOcrReview(cancelled);
+        }
+        return;
+      }
       const result = await reader.read<AiReport>(
         "run_ai_task",
         {
-          request: { provider, task, scope },
+          request: { provider: engine, task, scope },
         },
         (event) => {
           if (n === generation.current)
@@ -507,55 +579,90 @@ export function useAi(
     } finally {
       if (n === generation.current) {
         running.current = false;
+        launchingOcr.current = null;
         setPending(null);
       }
     }
   }
   const stale = reportIsStale(report, changes, comparison);
-  const currentLabel =
-    groups.groups.find((group) => group.files.includes(diff?.path ?? ""))
-      ?.title ?? diff?.path;
-  const scopeLabel = comparison
-    ? `${comparison.baseOid.slice(0, 8)} → ${comparison.targetOid.slice(0, 8)}`
-    : t("Local changes · {v0} files", {
-        v0: new Set(changes?.files.map((file) => file.path)).size,
-      });
+  const currentLabel = currentGroup?.title ?? diff?.path;
+  const scopeLabel =
+    comparisonLabel ??
+    t("Local changes · {v0} files", {
+      v0: new Set(
+        changes?.files
+          .filter(
+            (file) =>
+              reviewProvider !== "ocr" ||
+              !reviewSide ||
+              file.side === reviewSide,
+          )
+          .map((file) => file.path),
+      ).size,
+    });
+  const canStart =
+    files.length > 0 &&
+    (!historical || !!comparison) &&
+    !demo &&
+    !!changes?.workspace.trusted &&
+    !pending &&
+    !reviewState.decisionSaving &&
+    !reviewState.reportLoading;
   return {
     workspace: changes?.workspace,
     branch: changes?.branch,
     currentLabel,
+    currentGroupName: currentGroup?.title,
     scopeLabel,
+    ocrRange,
+    reviewSide,
     sourceToken,
     suggestionStale: reportIsStale(suggestion, changes, comparison),
     providers,
     provider,
     setProvider,
+    reviewProvider,
+    setReviewProvider,
     groups,
     groupReady,
     saving,
     save,
     suggestion,
     pending,
-    progress,
-    error: error ?? reviewState.reportError,
+    progress: localProgress,
+    reviewScope: groupScope,
+    ocrRun,
+    ocrRunning,
+    error:
+      error ??
+      (!pending && reviewProvider === "ocr" ? ocrRun?.error : null) ??
+      reviewState.reportError,
     ...reviewState,
     view,
     setView,
     run,
     stale,
     cancel: () => {
+      if (ocrRunning && localPending !== "grouping") {
+        const n = generation.current;
+        void request<OcrReviewRun | null>("cancel_ocr_review", {
+          id: ocrRun.id,
+        })
+          .then((run) => {
+            if (run) receiveOcrReview(run);
+          })
+          .catch((cause) => {
+            if (n === generation.current) setError(asError(cause));
+          });
+        return;
+      }
       setProgress((state) => (state ? { ...state, cancelling: true } : state));
-      reader.cancel();
+      if (launchingOcr.current) launchingOcr.current.cancel = true;
+      else reader.cancel();
     },
-    canRun:
-      files.length > 0 &&
-      (!historical || !!comparison) &&
-      !demo &&
-      !!changes?.workspace.trusted &&
-      providers.some((p) => p.id === provider && p.available) &&
-      !pending &&
-      !reviewState.decisionSaving &&
-      !reviewState.reportLoading,
+    canRun: canStart && providers.some((p) => p.id === provider && p.available),
+    canRunReview:
+      canStart && providers.some((p) => p.id === reviewProvider && p.available),
     visibleGroups: reconcileGroups(
       groups.groups,
       new Set(files.map((f) => f.path)),

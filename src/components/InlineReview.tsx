@@ -3,6 +3,7 @@ import type { AiFinding } from "../ai";
 import type { FindingDecision } from "../ai-reports";
 import { decisionLabel, FindingActions } from "./FindingActions";
 export function findingLocation(finding: AiFinding) {
+  if (finding.line === 0) return t("文件级意见");
   const end = finding.endLine ?? finding.line;
   return `${t(finding.lineSide === "old" ? "修改前" : "修改后")} ${finding.line}${end > finding.line ? `–${end}` : ""}`;
 }

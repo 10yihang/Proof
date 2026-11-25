@@ -110,7 +110,7 @@ export function CommitComposer({
           disabled={!!commitAi.pending || !!ai.pending || demo}
         >
           {(ai.providers.length
-            ? ai.providers
+            ? ai.providers.filter((provider) => provider.id !== "ocr")
             : [{ id: "codex", name: "Codex", available: false }]
           ).map((provider) => (
             <option

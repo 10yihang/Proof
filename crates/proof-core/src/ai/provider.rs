@@ -16,11 +16,11 @@ mod native_claude_tests;
 #[path = "native_codewiz_tests.rs"]
 mod native_codewiz_tests;
 #[cfg(all(test, target_os = "macos"))]
-#[path = "native_ocr_tests.rs"]
-mod native_ocr_tests;
-#[cfg(all(test, target_os = "macos"))]
 #[path = "native_codex_tests.rs"]
 mod native_codex_tests;
+#[cfg(all(test, target_os = "macos"))]
+#[path = "native_ocr_tests.rs"]
+mod native_ocr_tests;
 
 /// The actual project and this task's fixed Git evidence have separate paths.
 #[derive(Clone, Copy)]
@@ -30,11 +30,13 @@ pub struct AgentReadContext<'a> {
     pub paths: &'a [String],
     pub selected: &'a [(String, crate::Side)],
     pub task: super::AiTask,
+    pub scope: &'a super::AiScope,
     pub language: crate::UiLanguage,
 }
 pub struct AgentAnalysis {
     pub value: Value,
     pub session: Option<super::AgentSession>,
+    pub ocr: Option<ocr::OcrReviewDetails>,
 }
 
 /// Active inference only. Passive Observer consent and sessions are separate.
@@ -216,8 +218,7 @@ impl AgentProvider for OcrProvider {
         AgentKind::Ocr
     }
     /// OCR is a fixed review pipeline, not a prompt-driven agent: Proof never
-    /// sends a prompt or schema. The CLI diffs the live repository itself,
-    /// and its findings are mapped onto the shared review schema.
+    /// sends a prompt or schema. The CLI reads Git directly.
     fn analyze_workspace(
         &self,
         program: &AgentProgram,
@@ -225,6 +226,25 @@ impl AgentProvider for OcrProvider {
         _schema: &Value,
         context: AgentReadContext<'_>,
         emit: &dyn Fn(super::AiProgress),
+    ) -> Result<AgentAnalysis> {
+        self.analyze_in_view(program, context, emit, None)
+    }
+
+    fn analyze(&self, program: &AgentProgram, _: &str, _: &Value) -> Result<Value> {
+        if program.kind != self.kind() {
+            return Err(unsupported("Agent 类型不匹配。"));
+        }
+        Err(unsupported("OpenCodeReview 仅支持项目内的代码审查。"))
+    }
+}
+
+impl OcrProvider {
+    pub(super) fn analyze_in_view(
+        &self,
+        program: &AgentProgram,
+        context: AgentReadContext<'_>,
+        emit: &dyn Fn(super::AiProgress),
+        git_dir: Option<&Path>,
     ) -> Result<AgentAnalysis> {
         if program.kind != self.kind() {
             return Err(unsupported("Agent 类型不匹配。"));
@@ -260,11 +280,77 @@ impl AgentProvider for OcrProvider {
         }
         program.validate()?;
         let result = root.join("result.json");
+        let scope_flags = ocr::scope_flags(context.scope);
+        let mut selection_path = None;
+        let scoped_preview = if ocr::is_scoped(context.scope) {
+            emit(super::AiProgress::phase("ocr_selecting"));
+            let preview =
+                preview_ocr(program, context.project, &root, &scope_flags, None, git_dir)?;
+            let included = preview
+                .files
+                .iter()
+                .filter(|file| context.paths.contains(&file.path) && file.will_review)
+                .count();
+            emit(super::AiProgress {
+                total: Some(included),
+                excluded: Some(context.paths.len().saturating_sub(included)),
+                ..super::AiProgress::phase("ocr_scope")
+            });
+            if included == 0 {
+                return ocr_result(
+                    br#"{"status":"skipped","comments":[],"message":"Review skipped: no items were selected."}"#,
+                    context,
+                    Some(&preview),
+                );
+            }
+            let path = root.join("selection.json");
+            fs::write(
+                &path,
+                serde_json::to_vec(&ocr::selection_rule(&preview, context.paths)?)?,
+            )?;
+            let narrowed = preview_ocr(
+                program,
+                context.project,
+                &root,
+                &scope_flags,
+                Some(&path),
+                git_dir,
+            )?;
+            let eligible = |candidate: ocr::OcrPreview| {
+                candidate
+                    .files
+                    .into_iter()
+                    .filter(|file| file.will_review)
+                    .map(|file| file.path)
+                    .collect::<std::collections::BTreeSet<_>>()
+            };
+            let expected = preview
+                .files
+                .iter()
+                .filter(|file| file.will_review && context.paths.contains(&file.path))
+                .map(|file| file.path.clone())
+                .collect();
+            if eligible(narrowed) != expected {
+                return Err(Error::new(
+                    "OCR_SCOPE_CHANGED",
+                    "OCR 审查范围已变化，请刷新 Diff 后重试。",
+                    "OCR did not confirm the requested file selection",
+                ));
+            }
+            selection_path = Some(path);
+            Some(preview)
+        } else {
+            None
+        };
+        program.validate()?;
         // `--audience human` streams `[ocr] ...` progress lines on stderr; the
         // observer only sees stdout, so a thin sh wrapper merges the streams.
         // The sandbox profile already permits /bin/sh and the pinned OCR binary.
-        let command =
+        let mut command =
             reading_command(self.kind(), &program.executable, &root, context.project)?;
+        if let Some(git_dir) = git_dir {
+            super::ocr_git::use_git_view(&mut command, git_dir, context.project);
+        }
         let mut argv: Vec<std::ffi::OsString> =
             command.get_args().map(|arg| arg.to_os_string()).collect();
         let binary = argv
@@ -275,32 +361,24 @@ impl AgentProvider for OcrProvider {
         argv.push("exec \"$0\" \"$@\" 2>&1".into());
         argv.push(binary);
         argv.extend(
-            ["review", "--audience", "human", "--format", "json", "--output"]
-                .into_iter()
-                .map(Into::into),
+            [
+                "review",
+                "--audience",
+                "human",
+                "--color",
+                "never",
+                "--format",
+                "json",
+                "--output",
+            ]
+            .into_iter()
+            .map(Into::into),
         );
         argv.push(result.clone().into_os_string());
-        // A frozen comparison still maps onto OCR's own range flags; the
-        // well-known empty tree OID stands in for Proof's `empty` base.
-        let manifest: Value = serde_json::from_slice(
-            &fs::read(context.evidence.join("manifest.json")).map_err(invalid)?,
-        )
-        .map_err(invalid)?;
-        if manifest["scope"]["kind"].as_str() == Some("comparison") {
-            let base = manifest["scope"]["base"]
-                .as_str()
-                .ok_or_else(|| invalid("Missing comparison base"))?;
-            let target = manifest["scope"]["target"]
-                .as_str()
-                .ok_or_else(|| invalid("Missing comparison target"))?;
-            let base = if base == "empty" {
-                "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
-            } else {
-                base
-            };
-            argv.extend(
-                ["--from", base, "--to", target].into_iter().map(Into::into),
-            );
+        argv.extend(scope_flags.into_iter().map(std::ffi::OsString::from));
+        if let Some(path) = selection_path {
+            argv.push("--rule".into());
+            argv.push(path.into_os_string());
         }
         let mut wrapped = Command::new(command.get_program());
         wrapped
@@ -310,11 +388,16 @@ impl AgentProvider for OcrProvider {
         if let Some(cwd) = command.get_current_dir() {
             wrapped.current_dir(cwd);
         }
-        emit(super::AiProgress::phase("analyzing"));
-        let mut activity = OcrActivity {
+        emit(super::AiProgress::phase(if scoped_preview.is_some() {
+            "ocr_reviewing"
+        } else {
+            "ocr_selecting"
+        }));
+        let mut activity = ocr::Activity {
             pending: Vec::new(),
             paths: context.paths,
             emit,
+            scoped: scoped_preview.is_some(),
             last: None,
         };
         let mut observe = |bytes: &[u8]| activity.feed(bytes);
@@ -333,6 +416,15 @@ impl AgentProvider for OcrProvider {
             _ => Error::new("AI_PROCESS", "无法启动只读 Agent 分析。", error.code),
         })?;
         if output.code != 0 {
+            // OCR emits usable findings for partial runs, including when a
+            // failed group makes the process exit nonzero.
+            if let Ok(bytes) = bounded_ocr_result(&result) {
+                if serde_json::from_slice::<Value>(&bytes)
+                    .is_ok_and(|value| value["status"] == "partial")
+                {
+                    return ocr_result(&bytes, context, scoped_preview.as_ref());
+                }
+            }
             // stderr was merged into stdout for live progress; reattach it so
             // failure classification and redaction still see the CLI's text.
             let failure = process::Output {
@@ -342,20 +434,292 @@ impl AgentProvider for OcrProvider {
             };
             return Err(agent_failure(self.kind(), "analysis", &failure));
         }
-        let bytes = fs::read(&result)
-            .map_err(|_| invalid("OCR finished without writing its result file"))?;
-        program.validate()?;
-        Ok(AgentAnalysis {
-            value: ocr::map_review(&bytes, context.selected, context.language)?,
-            session: None,
-        })
+        let bytes = bounded_ocr_result(&result)?;
+        ocr_result(&bytes, context, scoped_preview.as_ref())
     }
-    fn analyze(&self, program: &AgentProgram, _: &str, _: &Value) -> Result<Value> {
-        if program.kind != self.kind() {
-            return Err(unsupported("Agent 类型不匹配。"));
+}
+
+fn bounded_ocr_result(path: &Path) -> Result<Vec<u8>> {
+    use std::io::Read;
+    const LIMIT: u64 = 16 * 1024 * 1024;
+    let mut bytes = Vec::new();
+    fs::File::open(path)
+        .map_err(|_| invalid("OCR finished without writing its result file"))?
+        .take(LIMIT + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > LIMIT {
+        return Err(invalid("OCR review report exceeded the output limit"));
+    }
+    Ok(bytes)
+}
+
+fn ocr_result(
+    bytes: &[u8],
+    context: AgentReadContext<'_>,
+    preview: Option<&ocr::OcrPreview>,
+) -> Result<AgentAnalysis> {
+    let raw: Value = serde_json::from_slice(bytes).map_err(invalid)?;
+    if let super::AiScope::Comparison { base, target, .. } = context.scope {
+        let input = &raw["manifest"]["input"];
+        let different_head = input["resolved_head"]
+            .as_str()
+            .is_some_and(|head| head != target);
+        let different_base = base != "empty"
+            && input["resolved_base"]
+                .as_str()
+                .is_some_and(|actual| actual != base);
+        if different_head || different_base {
+            return Err(invalid("OCR reviewed a different comparison"));
         }
-        Err(unsupported("OpenCodeReview 仅支持项目内的代码审查。"))
     }
+    if preview.is_some()
+        && raw["manifest"]["coverage"]["selected"]
+            .as_array()
+            .is_some_and(|items| {
+                items.iter().any(|item| {
+                    item["path"]
+                        .as_str()
+                        .is_some_and(|path| !context.paths.iter().any(|p| p == path))
+                })
+            })
+    {
+        return Err(Error::new(
+            "OCR_SCOPE_CHANGED",
+            "OCR 审查范围已变化，请刷新 Diff 后重试。",
+            "OCR selected a file outside the requested paths",
+        ));
+    }
+    let value = ocr::map_review(bytes, context.selected, context.language)?;
+    let count = value["findings"].as_array().map_or(0, Vec::len);
+    Ok(AgentAnalysis {
+        ocr: Some(ocr::details(&raw, context.selected, preview, count)),
+        value,
+        session: None,
+    })
+}
+
+pub(super) fn preview_ocr(
+    program: &AgentProgram,
+    project: &Path,
+    runtime: &Path,
+    scope_flags: &[&str],
+    rules: Option<&Path>,
+    git_dir: Option<&Path>,
+) -> Result<ocr::OcrPreview> {
+    program.validate()?;
+    let mut command = reading_command(AgentKind::Ocr, &program.executable, runtime, project)?;
+    if let Some(git_dir) = git_dir {
+        super::ocr_git::use_git_view(&mut command, git_dir, project);
+    }
+    command
+        .args([
+            "review",
+            "--preview",
+            "--audience",
+            "agent",
+            "--format",
+            "json",
+        ])
+        .args(scope_flags);
+    if let Some(rules) = rules {
+        command.arg("--rule").arg(rules);
+    }
+    let output = process::run_diff(command, None, Duration::from_secs(30), 16 * 1024 * 1024)?;
+    if output.code != 0 {
+        return Err(agent_failure(AgentKind::Ocr, "preview", &output));
+    }
+    program.validate()?;
+    serde_json::from_slice(&output.stdout).map_err(invalid)
+}
+
+const OCR_CONNECTION_TIMEOUT_MESSAGE: &str = "OCR 模型连接测试超时，请检查网络后重试。";
+
+pub(super) fn test_ocr_connection(program: &AgentProgram) -> Result<()> {
+    program.validate()?;
+    let directory = tempfile::tempdir()?;
+    let root = fs::canonicalize(directory.path())?;
+    let mut command = isolated_command(AgentKind::Ocr, &program.executable, &root)?;
+    command.args(["llm", "test", "--color", "never"]);
+    let timeout = Duration::from_secs(45);
+    let output = process::run_diff(command, None, timeout, 128 * 1024).map_err(|error| {
+        if error.code == "PROCESS_TIMEOUT" {
+            Error::new(
+                "OCR_CONNECTION_TIMEOUT",
+                OCR_CONNECTION_TIMEOUT_MESSAGE,
+                format!("OCR · {} s", timeout.as_secs()),
+            )
+        } else {
+            error
+        }
+    })?;
+    program.validate()?;
+    if output.code != 0 {
+        return Err(ocr_connection_failure(&output));
+    }
+    Ok(())
+}
+
+pub(super) fn ocr_provider_catalog(program: &AgentProgram) -> Result<Vec<String>> {
+    program.validate()?;
+    let directory = tempfile::tempdir()?;
+    let root = fs::canonicalize(directory.path())?;
+    let mut command = isolated_command(AgentKind::Ocr, &program.executable, &root)?;
+    command.args(["llm", "providers", "--color", "never"]);
+    let output = process::run_diff(command, None, Duration::from_secs(10), 128 * 1024)?;
+    if output.code != 0 {
+        return Err(agent_failure(AgentKind::Ocr, "provider list", &output));
+    }
+    program.validate()?;
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let id = fields.next()?;
+            match fields.next()? {
+                "openai" | "openai-responses" | "anthropic" | "anthropic-bedrock" => {
+                    Some(id.to_owned())
+                }
+                _ => None,
+            }
+        })
+        .collect())
+}
+
+pub(super) fn inspect_ocr_rule(
+    program: &AgentProgram,
+    project: &Path,
+    runtime: &Path,
+    scope_flags: &[&str],
+    path: &str,
+    git_dir: Option<&Path>,
+) -> Result<super::OcrRuleMatch> {
+    program.validate()?;
+    let result = read_ocr_rule(
+        || {
+            let mut command =
+                reading_command(AgentKind::Ocr, &program.executable, runtime, project)?;
+            if let Some(git_dir) = git_dir {
+                super::ocr_git::use_git_view(&mut command, git_dir, project);
+            }
+            Ok(command)
+        },
+        scope_flags,
+        path,
+    )?;
+    program.validate()?;
+    Ok(result)
+}
+
+pub(super) fn inspect_ocr_builtin_rule(
+    program: &AgentProgram,
+    path: &str,
+) -> Result<super::OcrRuleMatch> {
+    program.validate()?;
+    let directory = tempfile::tempdir()?;
+    let root = fs::canonicalize(directory.path())?;
+    let project = root.join("repo");
+    let runtime = root.join("user");
+    fs::create_dir(&project)?;
+    fs::create_dir(&runtime)?;
+    let mut git = process::git_command("/usr/bin/git", &project);
+    git.env_clear().args(["init", "--quiet", "--template="]);
+    process::checked(process::run_diff(
+        git,
+        None,
+        Duration::from_secs(5),
+        64 * 1024,
+    )?)?;
+    let result = read_ocr_rule(
+        || {
+            let mut command =
+                reading_command(AgentKind::Ocr, &program.executable, &runtime, &project)?;
+            command.env("HOME", &runtime);
+            Ok(command)
+        },
+        &[],
+        path,
+    )?;
+    program.validate()?;
+    if result.source != "system" {
+        return Err(invalid("OCR did not return a built-in rule"));
+    }
+    Ok(result)
+}
+
+fn read_ocr_rule(
+    command: impl Fn() -> Result<Command>,
+    scope_flags: &[&str],
+    path: &str,
+) -> Result<super::OcrRuleMatch> {
+    if path.len() > 4096
+        || path.chars().any(char::is_control)
+        || Path::new(path)
+            .components()
+            .any(|part| !matches!(part, std::path::Component::Normal(_)))
+        || path.is_empty()
+    {
+        return Err(Error::new(
+            "OCR_RULE_PATH",
+            "请输入相对文件路径。",
+            "Expected a repository-relative file for the OCR rule",
+        ));
+    }
+    let run = |args: &[&str], refs: &[&str]| {
+        let mut child = command()?;
+        child.args(args).args(refs).arg("--").arg(path);
+        process::run_diff(child, None, Duration::from_secs(15), 1024 * 1024)
+    };
+    let output = run(
+        &["delegate", "rule", "--color", "never", "--format", "json"],
+        scope_flags,
+    )?;
+    if output.code == 0 {
+        #[derive(serde::Deserialize)]
+        struct RuleGroups {
+            groups: Vec<super::OcrRuleMatch>,
+        }
+        let groups: RuleGroups = serde_json::from_slice(&output.stdout).map_err(invalid)?;
+        return groups
+            .groups
+            .into_iter()
+            .next()
+            .ok_or_else(|| invalid("OCR did not report a rule"));
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.contains("unknown command \"delegate\"")
+        && !stderr.contains("unknown command \"rule\"")
+    {
+        return Err(agent_failure(AgentKind::Ocr, "rules check", &output));
+    }
+    let output = run(&["rules", "check", "--color", "never"], &[])?;
+    if output.code != 0 {
+        return Err(agent_failure(AgentKind::Ocr, "rules check", &output));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let (metadata, body) = stdout
+        .split_once("\nRule:\n")
+        .ok_or_else(|| invalid("OCR did not report rule text"))?;
+    let field = |prefix: &str| {
+        metadata
+            .lines()
+            .find_map(|line| line.strip_prefix(prefix).map(str::trim))
+    };
+    let divider = "─".repeat(40);
+    let body = body
+        .strip_prefix(&format!("{divider}\n"))
+        .unwrap_or(body)
+        .trim_end_matches('\n');
+    Ok(super::OcrRuleMatch {
+        source: field("Source:")
+            .and_then(|source| source.split_whitespace().next())
+            .ok_or_else(|| invalid("OCR did not report a rule source"))?
+            .to_ascii_lowercase(),
+        pattern: field("Pattern:").map(str::to_owned),
+        rule: body
+            .strip_suffix(&format!("\n{divider}"))
+            .unwrap_or(body)
+            .to_owned(),
+    })
 }
 impl AgentProvider for CodewizProvider {
     fn kind(&self) -> AgentKind {
@@ -436,7 +800,7 @@ pub(crate) fn locate(kind: AgentKind) -> Option<PathBuf> {
         PathBuf::from("/opt/homebrew/bin"),
         PathBuf::from("/usr/local/bin"),
     ];
-        if let Some(user_directory) = std::env::var_os("HOME") {
+    if let Some(user_directory) = std::env::var_os("HOME") {
         for suffix in [".local/bin", ".cargo/bin", ".npm-global/bin"] {
             roots.push(PathBuf::from(&user_directory).join(suffix));
         }
@@ -736,8 +1100,17 @@ fn isolated_command_options(
             command.env(key, value);
         }
     }
+    let developer_tools = if kind == AgentKind::Ocr && workspace.is_some() {
+        concat!(
+            "/Applications/Xcode.app/Contents/Developer/usr/bin:",
+            "/Applications/Xcode-beta.app/Contents/Developer/usr/bin:",
+            "/Library/Developer/CommandLineTools/usr/bin:"
+        )
+    } else {
+        ""
+    };
     command
-        .env("PATH", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/Applications/Codex.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources")
+        .env("PATH", format!("/opt/homebrew/bin:/usr/local/bin:{developer_tools}/usr/bin:/bin:/Applications/Codex.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources"))
         .env("TMPDIR", directory)
         .env("CLAUDE_CODE_TMPDIR", directory)
         .env("TERM", "dumb")
@@ -759,6 +1132,23 @@ fn isolated_command_options(
     }
     if kind == AgentKind::Codewiz {
         codewiz::configure(&mut command, directory, workspace.is_some())?;
+    }
+    if kind == AgentKind::Ocr {
+        command
+            .env("OCR_NO_UPDATE", "1")
+            .env("GIT_NO_REPLACE_OBJECTS", "1");
+        for key in [
+            "OCR_LLM_URL",
+            "OCR_LLM_TOKEN",
+            "OCR_LLM_MODEL",
+            "OCR_USE_ANTHROPIC",
+            "OCR_LLM_AUTH_HEADER",
+            "OCR_LLM_EXTRA_HEADERS",
+        ] {
+            if let Some(value) = std::env::var_os(key) {
+                command.env(key, value);
+            }
+        }
     }
     if kind == AgentKind::ClaudeCode {
         let config = directory.join("claude");
@@ -804,48 +1194,6 @@ fn run(
         .map(|output| output.value)
 }
 
-/// Live `[ocr] ...` progress lines, mapped to public activity events.
-/// The file under review surfaces whenever a line mentions a selected path;
-/// spinner frames still refresh liveness, but identical lines never repeat.
-struct OcrActivity<'a> {
-    pending: Vec<u8>,
-    paths: &'a [String],
-    emit: &'a dyn Fn(super::AiProgress),
-    last: Option<String>,
-}
-impl OcrActivity<'_> {
-    fn feed(&mut self, bytes: &[u8]) {
-        self.pending.extend_from_slice(bytes);
-        if self.pending.len() > 2 * 1024 * 1024 {
-            self.pending.clear();
-            return;
-        }
-        while let Some(end) = self.pending.iter().position(|byte| *byte == b'\n') {
-            let line: Vec<u8> = self.pending.drain(..=end).collect();
-            let text = String::from_utf8_lossy(&line);
-            let text = text.trim_matches(|c: char| c.is_control() || c == ' ');
-            if !text.starts_with("[ocr]") {
-                continue;
-            }
-            let path = self
-                .paths
-                .iter()
-                .filter(|path| text.contains(path.as_str()))
-                .max_by_key(|path| path.len());
-            let key = format!("{text}|{:?}", path);
-            if self.last.as_deref() == Some(&key) {
-                continue;
-            }
-            self.last = Some(key);
-            (self.emit)(super::AiProgress {
-                phase: "analyzing",
-                path: path.cloned(),
-                completed: None,
-                total: None,
-            });
-        }
-    }
-}
 fn help_output(kind: AgentKind, executable: &Path, root: &Path) -> Result<process::Output> {
     let mut command = isolated_command(kind, executable, root)?;
     if kind == AgentKind::Codewiz {
@@ -1053,6 +1401,7 @@ fn run_workspace(
     Ok(AgentAnalysis {
         value: decode(kind, &output.stdout)?,
         session,
+        ocr: None,
     })
 }
 fn arguments(kind: AgentKind, root: &Path, schema: &Value) -> Result<Vec<String>> {
@@ -1252,7 +1601,16 @@ fn missing_capabilities(kind: AgentKind, help: &str) -> Vec<&'static str> {
             "--strict-mcp-config",
             "--json-schema",
         ],
-        AgentKind::Ocr => &["--audience", "--format", "--output", "--from", "--to"],
+        AgentKind::Ocr => &[
+            "--audience",
+            "--format",
+            "--output",
+            "--from",
+            "--to",
+            "--commit",
+            "--preview",
+            "--rule",
+        ],
     };
     flags
         .iter()
@@ -1264,7 +1622,7 @@ fn provider_name(kind: AgentKind) -> &'static str {
     kind.adapter().name
 }
 
-fn safe_failure_text(output: &process::Output) -> String {
+fn failure_text(output: &process::Output) -> String {
     let mut lines = Vec::new();
     for line in output.stdout.split(|c| *c == b'\n') {
         if let Ok(value) = serde_json::from_slice::<Value>(line) {
@@ -1296,7 +1654,7 @@ fn safe_failure_text(output: &process::Output) -> String {
             })
             .map(str::to_owned),
     );
-    let value = lines
+    lines
         .into_iter()
         .filter(|s| !s.trim().is_empty())
         .rev()
@@ -1305,9 +1663,13 @@ fn safe_failure_text(output: &process::Output) -> String {
         .into_iter()
         .rev()
         .collect::<Vec<_>>()
-        .join("\n");
-    redact(&value).chars().take(2000).collect()
+        .join("\n")
 }
+
+fn safe_failure_text(output: &process::Output) -> String {
+    redact(&failure_text(output)).chars().take(2000).collect()
+}
+
 pub(super) fn redact(text: &str) -> String {
     use std::sync::OnceLock;
     static PATTERNS: OnceLock<Vec<regex::Regex>> = OnceLock::new();
@@ -1327,10 +1689,57 @@ pub(super) fn redact(text: &str) -> String {
         .filter(|c| !c.is_control() || matches!(c, '\n' | '\t'))
         .collect()
 }
-fn agent_failure(kind: AgentKind, phase: &str, output: &process::Output) -> Error {
-    let text = safe_failure_text(output);
-    let lower = text.to_lowercase();
-    let (code, message) = if lower.contains("not logged in")
+fn ocr_connection_failure(output: &process::Output) -> Error {
+    let text = failure_text(output).to_ascii_lowercase();
+    let timed_out = ["context deadline exceeded", "timeout", "timed out"]
+        .iter()
+        .any(|phrase| text.contains(phrase));
+    let (code, message, detail) = if text.contains("chatgpt oauth transport failed") {
+        let detail = if text.contains("https://auth.openai.com/") {
+            "ChatGPT OAuth · auth.openai.com"
+        } else {
+            "ChatGPT OAuth"
+        };
+        if timed_out {
+            (
+                "OCR_CONNECTION_OAUTH_TIMEOUT",
+                "连接 ChatGPT 认证服务超时，请检查网络后重试。",
+                detail,
+            )
+        } else {
+            (
+                "OCR_CONNECTION_OAUTH_NETWORK",
+                "无法连接 ChatGPT 认证服务，请检查网络后重试。",
+                detail,
+            )
+        }
+    } else if timed_out {
+        (
+            "OCR_CONNECTION_TIMEOUT",
+            OCR_CONNECTION_TIMEOUT_MESSAGE,
+            "OCR · connection deadline exceeded",
+        )
+    } else {
+        let (reason, _) = classify_agent_failure(&text);
+        let message = match reason {
+            "AI_AUTH_REQUIRED" => "模型服务认证失败，请检查登录状态或 API Key。",
+            "AI_USAGE_LIMIT" => "模型服务达到额度或速率限制，请稍后重试。",
+            "AI_CLI_CONFIGURATION" => "OCR 无法使用所选模型，请检查模型配置。",
+            "AI_STARTUP_PERMISSION" => "OCR 启动权限受限，请查看失败详情。",
+            "AI_NETWORK" => "CLI 无法连接服务，请检查网络或本机代理。",
+            _ => "OCR 模型连接测试失败，请查看失败详情。",
+        };
+        ("OCR_CONNECTION_FAILED", message, reason)
+    };
+    Error::new(
+        code,
+        message,
+        format!("{detail}\nOCR · exit {}", output.code),
+    )
+}
+
+fn classify_agent_failure(lower: &str) -> (&'static str, &'static str) {
+    if lower.contains("not logged in")
         || lower.contains("authentication")
         || lower.contains("unauthorized")
         || lower.contains("401")
@@ -1382,7 +1791,12 @@ fn agent_failure(kind: AgentKind, phase: &str, output: &process::Output) -> Erro
             "AI_AGENT_FAILED",
             "Agent 未完成本次分析，请查看失败详情或打开 Agent 设置。",
         )
-    };
+    }
+}
+
+fn agent_failure(kind: AgentKind, phase: &str, output: &process::Output) -> Error {
+    let text = safe_failure_text(output);
+    let (code, message) = classify_agent_failure(&text.to_lowercase());
     Error::new(
         code,
         message,
@@ -1475,10 +1889,14 @@ pub(super) fn probe_program(program: &AgentProgram) -> Result<AgentProbeResult> 
     if kind == AgentKind::Ocr {
         program.validate()?;
         return Ok(AgentProbeResult {
-            provider: kind, executable_path: program.executable.clone(), version, compatible,
+            provider: kind,
+            executable_path: program.executable.clone(),
+            version,
+            compatible,
             authenticated: ocr::authenticated(),
             message: "OpenCodeReview CLI 已找到。".into(),
-            detail: "已检查 CLI 参数和 ~/.opencodereview 的模型配置；未调用模型或验证登录有效期。".into(),
+            detail: "已检查 CLI 参数和 ~/.opencodereview 的模型配置；未调用模型或验证登录有效期。"
+                .into(),
         });
     }
     let login = execute(match kind {
@@ -1543,6 +1961,22 @@ pub(super) fn probe_program(program: &AgentProgram) -> Result<AgentProbeResult> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ocr_connection_reports_the_oauth_timeout_without_replaying_stderr() {
+        let output = process::Output {
+            code: 1,
+            stdout: Vec::new(),
+            stderr: b"Error: resolve LLM endpoint: resolve OCR config file: ChatGPT OAuth transport failed: Post \"https://auth.openai.com/oauth/token\": context deadline exceeded\nResponse body: private-provider-output\n".to_vec(),
+        };
+        let error = ocr_connection_failure(&output);
+        assert_eq!(error.code, "OCR_CONNECTION_OAUTH_TIMEOUT");
+        assert!(error.message.contains("ChatGPT 认证服务超时"));
+        assert_eq!(
+            error.detail,
+            "ChatGPT OAuth · auth.openai.com\nOCR · exit 1"
+        );
+    }
 
     #[test]
     fn failures_retain_useful_details_without_tokens_and_do_not_blame_login_for_permissions() {

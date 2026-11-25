@@ -23,6 +23,7 @@ import type {
   Preferences,
   ProofError,
   RepositoryLayout,
+  Side,
   Workspace,
 } from "../types";
 import type { LayoutSnapshot } from "../repository-layout";
@@ -33,6 +34,7 @@ import { ObserverSettings } from "./ObserverSettings";
 import { EditorSettings } from "./EditorSettings";
 import { UpdateSettings } from "./UpdateSettings";
 import { AgentSettings } from "./AgentSettings";
+import { OcrSettings, type OcrComparison } from "./OcrSettings";
 import { DiagnosticSettings } from "./DiagnosticSettings";
 
 export function Settings({
@@ -42,6 +44,9 @@ export function Settings({
   onClose,
   workspaces,
   workspaceId,
+  workspaceTrusted = false,
+  ocrComparison,
+  ocrSide,
   demo,
   layout,
   initialSection = "appearance",
@@ -54,6 +59,9 @@ export function Settings({
   onClose: () => void;
   workspaces: Workspace[];
   workspaceId?: string;
+  workspaceTrusted?: boolean;
+  ocrComparison?: OcrComparison;
+  ocrSide?: Side;
   demo: boolean;
   layout?: {
     snapshot: LayoutSnapshot;
@@ -71,6 +79,7 @@ export function Settings({
     | "editor"
     | "diagnostics"
     | "updates"
+    | "ocr"
     | "agents";
   onError: (error: unknown) => void;
   onRecentChanged?: () => Promise<void>;
@@ -83,6 +92,7 @@ export function Settings({
     | "editor"
     | "diagnostics"
     | "updates"
+    | "ocr"
     | "agents"
   >(initialSection);
   const language = useLanguage();
@@ -128,6 +138,10 @@ export function Settings({
             <Sparkle size={17} />
             {t("AI Agents")}
           </Tabs.Tab>
+          <Tabs.Tab value="ocr" className={tab === "ocr" ? "active" : ""}>
+            <ShieldCheck size={17} />
+            OpenCodeReview
+          </Tabs.Tab>
           <Tabs.Tab
             value={"observer"}
             className={tab === "observer" ? "active" : ""}
@@ -168,6 +182,16 @@ export function Settings({
         >
           <Tabs.Panel value={tab}>
             {tab === "agents" && <AgentSettings demo={demo} />}
+            {tab === "ocr" && (
+              <OcrSettings
+                workspaceId={workspaceId}
+                workspaceName={layout?.name}
+                trusted={workspaceTrusted}
+                comparison={ocrComparison}
+                side={ocrComparison ? undefined : ocrSide}
+                demo={demo}
+              />
+            )}
             {tab === "updates" && <UpdateSettings demo={demo} />}
             {tab === "diagnostics" && (
               <DiagnosticSettings demo={demo} onError={onError} />

@@ -36,6 +36,7 @@ mod diagnostics;
 mod diff_windows;
 #[cfg(unix)]
 mod observer;
+mod ocr_reviews;
 mod quit;
 mod read_requests;
 mod review_export;
@@ -146,6 +147,9 @@ async fn proof_command(
     let observer = observer.inner.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let work = || {
+            if ocr_reviews::handles(&command) {
+                return ocr_reviews::dispatch(&app, &core, &command, args);
+            }
             if diff_windows::handles(&command) {
                 return diff_windows::dispatch(&app, &core, &owner, &command, &args);
             }
@@ -203,6 +207,13 @@ async fn proof_command(
                         serde_json::from_value::<proof_core::UiLanguage>(value.clone())
                     {
                         app.state::<quit::QuitState>().set_language(language);
+                    }
+                }
+            }
+            if command == "delete_local_data" {
+                if let Ok(value) = &result {
+                    if let Some(epoch) = value["session"]["epoch"].as_u64() {
+                        app.state::<ocr_reviews::OcrReviews>().invalidate(epoch);
                     }
                 }
             }
@@ -289,6 +300,14 @@ fn dispatch_with_progress(
             "Missing renderer data generation",
         )
     })?;
+    if command == "repository_overview" {
+        let day_starts: Vec<u64> = serde_json::from_value(args["dayStarts"].clone())?;
+        let read = session(core, data_epoch)?
+            .prepare_repository_overview(string(&args, "workspaceId")?)?;
+        let overview = read.run(&day_starts)?;
+        drop(session(core, data_epoch)?);
+        return serde_json::to_value(overview).map_err(Error::from);
+    }
     if command == "history_auto_fetch" {
         let job =
             session(core, data_epoch)?.prepare_history_fetch(string(&args, "workspaceId")?)?;
@@ -302,6 +321,52 @@ fn dispatch_with_progress(
     if command == "agent_providers" {
         return serde_json::to_value(session(core, data_epoch)?.agent_providers()?)
             .map_err(Error::from);
+    }
+    if matches!(
+        command,
+        "ocr_preview"
+            | "ocr_rule_match"
+            | "ocr_builtin_rule"
+            | "test_ocr_connection"
+            | "ocr_provider_catalog"
+    ) {
+        if !proof_core::read_cancellation_active() {
+            return Err(Error::new(
+                "INVALID_READ_REQUEST",
+                "OCR 请求缺少取消句柄。",
+                "OCR requires an owned read ticket",
+            ));
+        }
+        let result = match command {
+            "ocr_preview" | "ocr_rule_match" => {
+                let job = session(core, data_epoch)?.prepare_ocr_preview_with_side(
+                    string(&args, "workspaceId")?,
+                    serde_json::from_value(args["rules"].clone())?,
+                    serde_json::from_value(args["comparison"].clone())?,
+                    serde_json::from_value(args["side"].clone())?,
+                )?;
+                if command == "ocr_rule_match" {
+                    serde_json::to_value(job.inspect_rule(string(&args, "path")?)?)?
+                } else {
+                    serde_json::to_value(job.run()?)?
+                }
+            }
+            _ => {
+                let job = session(core, data_epoch)?.prepare_ocr_connection()?;
+                match command {
+                    "ocr_provider_catalog" => serde_json::to_value(job.providers()?)?,
+                    "ocr_builtin_rule" => {
+                        serde_json::to_value(job.inspect_builtin_rule(string(&args, "path")?)?)?
+                    }
+                    _ => {
+                        job.run()?;
+                        serde_json::Value::Null
+                    }
+                }
+            }
+        };
+        drop(session(core, data_epoch)?);
+        return Ok(result);
     }
     if command == "probe_ai_agent" {
         if !proof_core::read_cancellation_active() {
@@ -368,6 +433,21 @@ fn dispatch_with_progress(
             proof.set_ui_language(serde_json::from_value(args["language"].clone())?)?,
         ),
         "agent_settings" => serde_json::to_value(proof.agent_settings()?),
+        "ocr_settings" => serde_json::to_value(proof.ocr_settings()?),
+        "set_ocr_settings" => serde_json::to_value(
+            proof.set_ocr_settings(serde_json::from_value(args["update"].clone())?)?,
+        ),
+        "ocr_rules" => serde_json::to_value(proof.ocr_rules(string(&args, "workspaceId")?)?),
+        "ocr_global_rules" => serde_json::to_value(proof.ocr_global_rules()?),
+        "set_ocr_global_rules" => serde_json::to_value(proof.set_ocr_global_rules(
+            string(&args, "content")?,
+            string(&args, "expectedFingerprint")?,
+        )?),
+        "set_ocr_rules" => serde_json::to_value(proof.set_ocr_rules(
+            string(&args, "workspaceId")?,
+            string(&args, "content")?,
+            string(&args, "expectedFingerprint")?,
+        )?),
         "set_agent_settings" => serde_json::to_value(
             proof.set_agent_settings(serde_json::from_value(args["update"].clone())?)?,
         ),
@@ -740,6 +820,7 @@ pub fn run() {
             window_menu::refresh(app.handle());
             app.manage(diagnostics::DiagnosticState::default());
             app.manage(read_requests::ReadRequests::default());
+            app.manage(ocr_reviews::OcrReviews::default());
             app.manage(diff_windows::DiffWindows::default());
             app.manage(terminal::TerminalSet::default());
             app.manage(Mutex::new(std::collections::HashMap::<

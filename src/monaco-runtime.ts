@@ -4,43 +4,12 @@ import "monaco-editor/editor/contrib/bracketMatching/browser/bracketMatching";
 import "monaco-editor/editor/contrib/find/browser/findController";
 import "monaco-editor/editor/contrib/folding/browser/folding";
 import EditorWorker from "monaco-editor/editor/editor.worker?worker";
+import palette from "./monaco-palette.json";
 import { syntaxRanges } from "./syntax";
 import type { GitEditorDocument } from "./monaco-document";
 
 self.MonacoEnvironment = { getWorker: () => new EditorWorker() };
 
-const palette = {
-  light: {
-    background: "#ffffff",
-    foreground: "#263144",
-    gutter: "#6b7789",
-    selection: "#dbe9ff",
-    keyword: "#8952bb",
-    type: "#267285",
-    function: "#3266a6",
-    string: "#267654",
-    number: "#a86928",
-    comment: "#75818b",
-    operator: "#637089",
-    property: "#a04472",
-    punctuation: "#6a7484",
-  },
-  dark: {
-    background: "#17191d",
-    foreground: "#dce5f2",
-    gutter: "#8592a5",
-    selection: "#30486b",
-    keyword: "#cda6f4",
-    type: "#7ec6ca",
-    function: "#9bbffd",
-    string: "#a3d4aa",
-    number: "#e8bd83",
-    comment: "#8e9dae",
-    operator: "#adbacd",
-    property: "#e4a2c7",
-    punctuation: "#adbacd",
-  },
-};
 const registered: string[] = [];
 const used = new Set<string>();
 for (const mode of ["light", "dark"] as const) {

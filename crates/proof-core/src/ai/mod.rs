@@ -4,7 +4,11 @@ mod events;
 mod groups;
 mod input;
 mod ocr;
+mod ocr_git;
+mod ocr_settings;
 mod progress;
+pub use ocr::{OcrFileOutcome, OcrPreview, OcrReviewDetails};
+pub use ocr_settings::*;
 pub use progress::AiProgress;
 mod provider;
 pub(crate) use provider::{locate as locate_agent, resolve_executable as resolve_agent_executable};
@@ -171,6 +175,8 @@ pub struct AiReport {
     pub commit_message: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<AgentSession>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ocr: Option<OcrReviewDetails>,
     pub limitations: Vec<String>,
 }
 /// Owns this job only. Dropping a completed/failed/cancelled job releases capacity.
@@ -181,6 +187,7 @@ pub struct PreparedAiTask {
     /// Local scope captures no frozen patches, so validation anchors here.
     selected: Vec<(String, Side)>,
     input: input::AnalysisInput,
+    ocr_plan: Option<ocr_git::OcrGitPlan>,
     captured_at: u64,
     fingerprint: String,
     cancellation: ReadCancellation,
@@ -325,16 +332,17 @@ impl Proof {
         let mut diffs = Vec::new();
         let mut selected_pairs: Vec<(String, Side)> = Vec::new();
         let mut bytes = 0;
+        let mut ocr_plan = None;
         match &request.scope {
             AiScope::Local {
                 workspace_id,
                 files,
-                ..
+                expected_token,
             } => {
-                // Live mode: no frozen snapshot. The current change list only
-                // selects which paths the agent must inspect; the agent diffs
-                // the live repository itself and files may change mid-analysis.
                 let before = self.changes(workspace_id)?;
+                if request.provider == AgentKind::Ocr && &before.token != expected_token {
+                    return Err(Error::stale());
+                }
                 head_oid = before.head.clone();
                 if request.amend {
                     amend_head = Some(
@@ -389,6 +397,17 @@ impl Proof {
                     emit(AiProgress::capture(&file.path, selected_pairs.len(), total));
                     selected_pairs.push((file.path.clone(), file.side));
                 }
+                if request.provider == AgentKind::Ocr {
+                    for file in files.iter().flatten() {
+                        if let Some(token) = &file.snapshot_token {
+                            if self.file_diff(workspace_id, &file.path, file.side)?.token != *token
+                            {
+                                return Err(Error::stale());
+                            }
+                        }
+                    }
+                    ocr_plan = Some(ocr_git::OcrGitPlan::local(self.git()?, before));
+                }
             }
             AiScope::Comparison {
                 workspace_id,
@@ -398,6 +417,14 @@ impl Proof {
                 paths,
             } => {
                 let comparison = self.frozen_comparison(workspace_id, base, target)?;
+                if request.provider == AgentKind::Ocr {
+                    ocr_plan = Some(ocr_git::OcrGitPlan::comparison(
+                        self.git()?,
+                        workspace.clone(),
+                        comparison.base_oid.clone(),
+                        comparison.target_oid.clone(),
+                    ));
+                }
                 if let Some(paths) = paths {
                     if path.is_some()
                         || paths.is_empty()
@@ -464,6 +491,7 @@ impl Proof {
             diffs,
             selected: selected_pairs,
             input,
+            ocr_plan,
             captured_at: now(),
             fingerprint,
             cancellation,
@@ -534,27 +562,96 @@ impl PreparedAiTask {
                 self.data_epoch,
                 &self.options,
             )?;
-            let output = provider.analyze_workspace(
-                &program,
-                &self.prompt()?,
-                &schema(self.request.task),
-                AgentReadContext {
-                    task: self.request.task,
-                    project: &self.input.project,
-                    evidence: self
-                        .input
-                        .manifest
-                        .parent()
-                        .expect("Owned analysis directory"),
-                    paths: &self.input.paths,
-                    selected: &self.selected,
-                    language: self.language,
-                },
-                emit,
-            )?;
+            let context = AgentReadContext {
+                task: self.request.task,
+                scope: &self.request.scope,
+                project: &self.input.project,
+                evidence: self
+                    .input
+                    .manifest
+                    .parent()
+                    .expect("Owned analysis directory"),
+                paths: &self.input.paths,
+                selected: &self.selected,
+                language: self.language,
+            };
+            let view = self
+                .ocr_plan
+                .as_ref()
+                .map(|plan| {
+                    emit(AiProgress::phase("ocr_capture"));
+                    plan.capture(&self.selected)
+                })
+                .transpose()?;
+            let output = if let Some(view) = &view {
+                let mut parts = Vec::new();
+                let mut coverage = (0, 0);
+                for range in &view.ranges {
+                    let selected: Vec<_> = self
+                        .selected
+                        .iter()
+                        .filter(|(_, side)| range.side.is_none_or(|value| value == *side))
+                        .cloned()
+                        .collect();
+                    let paths = selected
+                        .iter()
+                        .map(|(path, _)| path.clone())
+                        .collect::<Vec<_>>();
+                    let scope = range.scope(self.request.scope.workspace_id(), Some(paths.clone()));
+                    let output = OcrProvider.analyze_in_view(
+                        &program,
+                        AgentReadContext {
+                            scope: &scope,
+                            paths: &paths,
+                            selected: &selected,
+                            ..context
+                        },
+                        &|mut event| {
+                            if event.phase == "ocr_scope" {
+                                event.total = event.total.map(|total| total + coverage.0);
+                                event.excluded =
+                                    event.excluded.map(|excluded| excluded + coverage.1);
+                            }
+                            emit(event);
+                        },
+                        Some(&view.git_dir),
+                    )?;
+                    if let Some(details) = &output.ocr {
+                        coverage.0 += details.eligible.unwrap_or_default();
+                        coverage.1 += details.excluded.len();
+                    }
+                    parts.push(output);
+                }
+                ocr::combine(parts, self.language)?
+            } else {
+                provider.analyze_workspace(
+                    &program,
+                    &self.prompt()?,
+                    &schema(self.request.task),
+                    context,
+                    emit,
+                )?
+            };
             emit(AiProgress::phase("validating"));
             let mut report = self.validate(output.value)?;
+            if let Some(view) = &view {
+                let mut ids = view
+                    .ranges
+                    .iter()
+                    .flat_map(|range| [range.base.as_bytes(), range.target.as_bytes()])
+                    .collect::<Vec<_>>();
+                ids.extend(
+                    self.selected
+                        .iter()
+                        .flat_map(|(path, side)| [path.as_bytes(), side.as_str().as_bytes()]),
+                );
+                report.fingerprint = fingerprint(&ids);
+            }
             report.session = output.session;
+            report.ocr = output.ocr;
+            if let Some(details) = &mut report.ocr {
+                details.pinned_diff = view.is_some();
+            }
             Ok(report)
         })
     }
@@ -646,6 +743,11 @@ impl PreparedAiTask {
                         .ok_or_else(|| invalid("Unknown finding file/side"))?;
                     let end = finding.end_line.unwrap_or(finding.line);
                     if finding.line == 0 || end < finding.line {
+                        if self.request.provider == AgentKind::Ocr {
+                            finding.line = 0;
+                            finding.end_line = None;
+                            continue;
+                        }
                         return Err(invalid("Finding range must be a positive inclusive range"));
                     }
                     // Frozen comparison patches let us verify every cited line;
@@ -668,9 +770,19 @@ impl PreparedAiTask {
                         if u64::from(end) - u64::from(finding.line) + 1 > lines.len() as u64
                             || !(finding.line..=end).all(|line| lines.contains(&line))
                         {
+                            if self.request.provider == AgentKind::Ocr {
+                                finding.line = 0;
+                                finding.end_line = None;
+                                continue;
+                            }
                             return Err(invalid("Finding range must reference contiguous captured Diff lines on the cited side"));
                         }
                     } else if u64::from(end) - u64::from(finding.line) + 1 > 10_000 {
+                        if self.request.provider == AgentKind::Ocr {
+                            finding.line = 0;
+                            finding.end_line = None;
+                            continue;
+                        }
                         return Err(invalid("Finding range is unreasonably large"));
                     }
                     finding.end_line = Some(end);
@@ -742,9 +854,16 @@ impl PreparedAiTask {
             },
             groups,
             review,
+            ocr: None,
             commit_message,
             session: None,
-            limitations: vec![match self.language {
+            limitations: if self.ocr_plan.is_some() {
+                vec![match self.language {
+                    crate::UiLanguage::Chinese => "OCR 审查已固定 Git 比较范围，代码上下文来自对应版本。未运行测试。",
+                    crate::UiLanguage::English => "OCR used the fixed Git comparison and read code from the matching versions. Tests were not run.",
+                }.into()]
+            } else {
+                vec![match self.language {
                 crate::UiLanguage::Chinese => if matches!(self.request.scope, AiScope::Local { .. }) {
                     "Agent 可只读访问完整项目目录，结论对应分析时实时工作区的 Git Diff；未运行测试。"
                 } else {
@@ -758,7 +877,8 @@ impl PreparedAiTask {
             }.into(), match self.language {
                 crate::UiLanguage::Chinese => "项目上下文为实时文件，分析期间可能由其他程序修改。",
                 crate::UiLanguage::English => "Project context uses live files and may change during analysis.",
-            }.into()],
+            }.into()]
+            },
         })
     }
 }

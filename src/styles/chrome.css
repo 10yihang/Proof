@@ -92,8 +92,7 @@
   user-select: none;
   min-width: 0;
 }
-.workspace-tabs .view-tab,
-.workspace-tabs .diff-tab-button {
+.workspace-tabs .view-tab {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -112,59 +111,18 @@
 .workspace-tabs .view-tab {
   min-width: 80px;
 }
-.workspace-tabs .view-tab:hover,
-.workspace-tabs .diff-tab-button:hover {
+.workspace-tabs .view-tab:hover {
   background: var(--hover);
   color: var(--text);
 }
-/* 激活标签用平底化样式：仅文字加深 + 底部 2px 强调线，
-   不再填充背景色块（暗色下像浮起的卡片/阴影，且与 header 底线叠出双线）。 */
 .workspace-tabs .view-tab.active {
   color: var(--text);
 }
-/* 激活指示线由 .workspace-tab-indicator（motion 弹簧滑动）承担，
-   不再用 ::after 画第二条线，避免两条线叠出毛边。 */
 .workspace-tabs .tab-count {
   padding: 1px 5px;
   font-size: 10px;
   min-width: 18px;
   background: var(--surface-2);
-}
-.workspace-tabs .diff-tab-strip {
-  display: flex;
-  min-width: 0;
-  flex: 0 0 auto;
-  align-self: stretch;
-  margin-left: 8px;
-  border-left: 1px solid var(--border);
-}
-/* 没有打开的比较页时整条隐藏，避免在最后一个视图标签右侧
-   留下一段悬停照不到的空白和一条多余的分隔线。 */
-.workspace-tabs .diff-tab-strip:empty {
-  display: none;
-}
-.workspace-tabs .diff-tab-item {
-  display: flex;
-  align-items: center;
-  flex: 0 0 auto;
-  position: relative;
-  min-width: 154px;
-  border-right: 1px solid var(--border);
-}
-.workspace-tabs .diff-tab-item.active {
-  box-shadow: none;
-}
-.workspace-tabs .diff-tab-button {
-  height: 100%;
-  padding: 0 10px;
-  min-width: 120px;
-}
-.workspace-tabs .diff-tab-button code {
-  font: 10px var(--font-mono);
-  color: var(--muted);
-}
-.workspace-tabs .diff-tab-item.active .diff-tab-button {
-  color: var(--text);
 }
 .workspace-tabs .diff-tab-close {
   display: inline-flex;
@@ -400,9 +358,6 @@
   }
   .workspace-tabs .view-tab > svg {
     display: none;
-  }
-  .workspace-tabs .diff-tab-strip {
-    margin-left: 0;
   }
 }
 

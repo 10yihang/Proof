@@ -109,6 +109,15 @@ export function ProjectTabs({
 
   return (
     <div className="project-tabs" data-tauri-drag-region>
+      {projects.length > 0 && (
+        <span
+          className="project-tabs-label"
+          data-tauri-drag-region
+          aria-hidden="true"
+        >
+          {t("Projects")}
+        </span>
+      )}
       <div
         ref={strip}
         role="tablist"

@@ -208,11 +208,13 @@ export function AgentSettings({ demo }: { demo: boolean }) {
         </div>
       )}
       <label className="field-label" htmlFor="default-ai-provider">
-        {t("Default Agent")}
+        {t("分组与提交的默认 Agent")}
       </label>
       <Select
         id="default-ai-provider"
-        value={draft.defaultProvider}
+        value={
+          draft.defaultProvider === "ocr" ? "codex" : draft.defaultProvider
+        }
         disabled={loading || saving || demo}
         onChange={(e) => {
           setDraft((value) => ({
@@ -222,11 +224,13 @@ export function AgentSettings({ demo }: { demo: boolean }) {
           setSaved(false);
         }}
       >
-        {providers.map((provider) => (
-          <option key={provider.id} value={provider.id}>
-            {provider.name}
-          </option>
-        ))}
+        {providers
+          .filter((provider) => provider.id !== "ocr")
+          .map((provider) => (
+            <option key={provider.id} value={provider.id}>
+              {provider.name}
+            </option>
+          ))}
       </Select>
       <section
         className="agent-prompt-settings"

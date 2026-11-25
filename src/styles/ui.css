@@ -218,16 +218,6 @@
 .workspace-tabs .diff-tab-item.active {
   border-bottom-color: transparent;
 }
-.workspace-tab-indicator {
-  position: absolute;
-  height: 2px;
-  bottom: -1px;
-  left: 9px;
-  right: 9px;
-  border-radius: 2px;
-  background: var(--accent);
-  pointer-events: none;
-}
 .diff-tab-item.is-dragging {
   opacity: 0.35;
 }

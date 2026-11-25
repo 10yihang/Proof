@@ -24,7 +24,6 @@ import {
   useRef,
   useState,
   type MutableRefObject,
-  type ReactNode,
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
@@ -47,6 +46,8 @@ import {
   SlidersHorizontal,
   X,
   ArrowSquareOut,
+  ShieldCheck,
+  CircleNotch,
 } from "@phosphor-icons/react";
 import type {
   DiffContext,
@@ -100,18 +101,19 @@ export function DiffView({
   onEditor,
   openingEditor,
   comparison,
-  comparisonControls,
   focused,
   positionRef,
   jumpTo,
   ai,
   onOpenWindow,
   onNextReview,
+  onShowReview,
 }: {
   jumpTo?: DiffJump | null;
   ai?: AiController;
   onOpenWindow?: () => void;
   onNextReview?: () => void;
+  onShowReview?: () => void;
   diff: FileDiff;
   preferences: Preferences;
   pending: boolean;
@@ -126,7 +128,6 @@ export function DiffView({
   onEditor: () => void;
   openingEditor: boolean;
   comparison?: { base: string; target: string };
-  comparisonControls?: ReactNode;
   focused?: boolean;
   positionRef?: MutableRefObject<DiffPosition | null>;
 }) {
@@ -945,20 +946,35 @@ export function DiffView({
               {t("Split")}
             </Button>
           </div>
-          {comparisonControls ?? (
+          {!comparison && (
             <span className="comparison">
-              <span>
-                {comparison?.base ??
-                  (diff.side === "staged" ? "HEAD" : "Index")}
-              </span>
+              <span>{diff.side === "staged" ? "HEAD" : "Index"}</span>
               <span aria-hidden="true">→</span>
-              <span>
-                {comparison?.target ??
-                  (diff.side === "staged" ? "Index" : "Worktree")}
-              </span>
+              <span>{diff.side === "staged" ? "Index" : "Worktree"}</span>
             </span>
           )}
           <div className="toolbar-spacer" />
+          {ai?.reviewProvider === "ocr" &&
+            ai.providers.some(
+              (provider) => provider.id === "ocr" && provider.available,
+            ) &&
+            onShowReview && (
+              <Button
+                className="button compact diff-review-button"
+                onClick={onShowReview}
+              >
+                {ai.pending === "review" ? (
+                  <CircleNotch
+                    size={15}
+                    className="ai-task-spinner"
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <ShieldCheck size={15} />
+                )}
+                {t(ai.pending === "review" ? "审查进行中" : "OCR 审查")}
+              </Button>
+            )}
           {!comparison && (
             <Button
               className="button compact"

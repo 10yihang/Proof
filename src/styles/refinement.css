@@ -25,19 +25,13 @@
 .workspace-tab-list {
   gap: 3px;
 }
-.workspace-tabs .view-tab,
-.workspace-tabs .diff-tab-item {
+.workspace-tabs .view-tab {
   align-self: center;
   height: 32px;
-  isolation: isolate;
   border-radius: 8px;
 }
-.workspace-tabs .view-tab:hover,
-.workspace-tabs .diff-tab-button:hover {
+.workspace-tabs .view-tab:hover {
   border-radius: 8px;
-}
-.workspace-tabs .diff-tab-item {
-  border-right: 0;
 }
 .workspace-tabs .tab-count {
   background: color-mix(in srgb, var(--text) 7%, transparent);
@@ -51,16 +45,6 @@
 }
 .workspace-tabs .view-tab.active {
   font-weight: 600;
-}
-.workspace-tab-indicator {
-  z-index: -1;
-  inset: 0;
-  height: auto;
-  border-radius: 8px;
-  background: var(--surface-raised);
-  box-shadow:
-    0 1px 4px #0000000a,
-    inset 0 0 0 1px var(--border);
 }
 .app .file-heading,
 .app .context-header,

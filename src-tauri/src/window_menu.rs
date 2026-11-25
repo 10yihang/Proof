@@ -52,7 +52,7 @@ fn localized(app: &AppHandle, language: proof_core::UiLanguage) -> tauri::Result
             &MenuItem::with_id(
                 app,
                 "proof.close-active-view",
-                text("关闭", "Close"),
+                text("关闭当前标签页", "Close Current Tab"),
                 true,
                 Some("CmdOrCtrl+W"),
             )?,

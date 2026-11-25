@@ -1,6 +1,15 @@
 import { syntaxRanges, type SyntaxSpan } from "./syntax";
 import { rowsForHunk, type DiffRow } from "./diff-model";
+import { t } from "./i18n";
 import type { DiffContext, DiffLine, FileDiff, Hunk } from "./types";
+
+export function shortComparisonRef(revision: string) {
+  return revision === "empty" ? t("Empty tree") : revision.slice(0, 8);
+}
+
+export function comparisonRangeLabel(base: string, target: string) {
+  return `${shortComparisonRef(base)} → ${shortComparisonRef(target)}`;
+}
 
 export type ReadingRow = DiffRow & { key: string; hunkId: string | null };
 export type TextRange = { start: number; end: number };

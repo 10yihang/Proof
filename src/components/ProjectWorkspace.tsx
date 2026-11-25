@@ -41,7 +41,6 @@ function ProjectRenderer({
   projectTabs,
   onOpen,
   onReady,
-  onClose,
   onGuard,
 }: {
   session: ProjectSession;
@@ -50,14 +49,12 @@ function ProjectRenderer({
   projectTabs: ReactNode;
   onOpen: (path: string) => Promise<void>;
   onReady: (key: string, workspace: Workspace) => void;
-  onClose: (key: string) => void;
   onGuard: (key: string, guard: ProjectCloseGuard) => void;
 }) {
   const ready = useCallback(
     (workspace: Workspace) => onReady(session.key, workspace),
     [session.key, onReady],
   );
-  const close = useCallback(() => onClose(session.key), [session.key, onClose]);
   const guard = useCallback(
     (value: ProjectCloseGuard) => onGuard(session.key, value),
     [session.key, onGuard],
@@ -80,7 +77,6 @@ function ProjectRenderer({
         projectTabs={projectTabs}
         onOpenProject={onOpen}
         onProjectReady={ready}
-        onCloseProject={close}
         onProjectCloseGuardChange={guard}
       />
     </div>
@@ -243,7 +239,6 @@ export function ProjectWorkspace({
           projectTabs={projectTabs}
           onOpen={openProject}
           onReady={readyProject}
-          onClose={closeProject}
           onGuard={guardProject}
         />
       ))}
