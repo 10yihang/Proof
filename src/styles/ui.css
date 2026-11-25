@@ -308,10 +308,6 @@
 .proof-switch {
   flex-shrink: 0;
 }
-.workspace-page {
-  animation: none !important;
-  transition: none !important;
-}
 .workspace-page[hidden] {
   display: none !important;
 }

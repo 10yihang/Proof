@@ -648,9 +648,7 @@ export default function MonacoDiffSurface(props: Props) {
             fontFamily: "SFMono-Regular, Menlo, Consolas, monospace",
             fontLigatures: false,
             wordWrap: props.preferences.wrapLines ? "on" : "off",
-            renderWhitespace: props.preferences.showWhitespace
-              ? "all"
-              : "none",
+            renderWhitespace: props.preferences.showWhitespace ? "all" : "none",
             stickyScroll: { enabled: false },
             guides: { indentation: false },
             padding: { top: 0, bottom: 0 },
@@ -690,10 +688,7 @@ export default function MonacoDiffSurface(props: Props) {
         pane.disposables.push(
           editor.onDidScrollChange((event) => {
             if (event.scrollLeftChanged)
-              host.style.setProperty(
-                "--editor-left",
-                `${event.scrollLeft}px`,
-              );
+              host.style.setProperty("--editor-left", `${event.scrollLeft}px`);
             if (
               !syncing.current &&
               !aligning.current &&

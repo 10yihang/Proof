@@ -5256,6 +5256,7 @@ test("Desktop chrome reserves native controls and supports document tab shortcut
 test("titlebar exposes a central native drag region with one, two and many projects", async ({
   page,
 }) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
   await page.addInitScript(() =>
     Object.defineProperty(navigator, "platform", { value: "MacIntel" }),
   );
@@ -5391,6 +5392,16 @@ test("titlebar exposes a central native drag region with one, two and many proje
       exact: true,
     })
     .click();
+  await page.evaluate(() => {
+    const state = window as any;
+    const animate = Element.prototype.animate;
+    state.projectPageEntered = false;
+    Element.prototype.animate = function (keyframes, options) {
+      if (this.classList.contains("workspace-page"))
+        state.projectPageEntered = true;
+      return animate.call(this, keyframes, options);
+    };
+  });
   await page
     .locator(".project-tabs-row:visible .project-tab-button")
     .first()
@@ -5398,6 +5409,9 @@ test("titlebar exposes a central native drag region with one, two and many proje
   await expect(page.locator(".workspace-sidebar:visible")).toHaveAttribute(
     "data-sidebar-state",
     "expanded",
+  );
+  expect(await page.evaluate(() => (window as any).projectPageEntered)).toBe(
+    true,
   );
 });
 

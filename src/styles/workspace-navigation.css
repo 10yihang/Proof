@@ -44,6 +44,9 @@
   min-width: 0;
   min-height: 0;
 }
+.workspace-content[data-page-sliding] {
+  overflow: clip;
+}
 .app.layout-enabled .workspace-content > .desktop-toolbar {
   height: 44px;
   min-height: 44px;
@@ -65,6 +68,8 @@
   overflow-y: auto;
 }
 .workspace-sidebar .workspace-tab-list {
+  position: relative;
+  isolation: isolate;
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -101,6 +106,28 @@
 }
 .workspace-sidebar :is(.view-tab, .diff-tab-item).active {
   background: var(--hover);
+}
+.workspace-sidebar .workspace-tab-indicator {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: -1;
+  height: var(--active-tab-height, 36px);
+  border-radius: var(--radius-control);
+  background: var(--hover);
+  transform: translateY(var(--active-tab-top, 0px));
+  pointer-events: none;
+}
+.workspace-sidebar
+  .workspace-tab-list:has(> .workspace-tab-indicator:not([hidden]))
+  :is(.view-tab, .diff-tab-item).active {
+  background: transparent;
+}
+@media (prefers-reduced-motion: no-preference) {
+  :root[data-input-modality="pointer"]
+    .workspace-sidebar
+    .workspace-tab-indicator {
+    transition: transform var(--motion-popup) var(--ease-out);
+  }
 }
 .workspace-sidebar .view-tab.active {
   color: var(--text);

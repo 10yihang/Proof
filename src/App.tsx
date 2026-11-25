@@ -17,6 +17,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -1927,6 +1928,117 @@ export default function App({
     setTab("repository");
   }
   const workspaceView: WorkspaceView = tab === "repository" ? "history" : tab;
+  const activeWorkspaceId = changes?.workspace.id;
+  const activeSurface =
+    active && !diffWindow
+      ? activeWorkspaceId
+        ? `${activeWorkspaceId}:${workspaceView}`
+        : "welcome"
+      : null;
+  const previousSurface = useRef<{
+    surface: typeof activeSurface;
+    workspaceId?: string;
+    view: WorkspaceView;
+  }>(null);
+  useLayoutEffect(() => {
+    const previous = previousSurface.current;
+    previousSurface.current = {
+      surface: activeSurface,
+      workspaceId: activeWorkspaceId,
+      view: workspaceView,
+    };
+    if (
+      !previous ||
+      activeSurface === null ||
+      previous.surface === activeSurface ||
+      !document.documentElement.dataset.inputModality
+    )
+      return;
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    if (reducedMotion.matches) return;
+    const root = appRoot.current;
+    const content = root?.querySelector<HTMLElement>(".workspace-content");
+    if (!root || !content) return;
+    const order = Array.from(
+      root.querySelectorAll<HTMLElement>(
+        ".workspace-sidebar [data-workspace-view]",
+      ),
+      (item) => item.dataset.workspaceView,
+    );
+    const previousIndex = order.indexOf(previous.view);
+    const currentIndex = order.indexOf(workspaceView);
+    const returning =
+      previous.workspaceId === activeWorkspaceId &&
+      currentIndex >= 0 &&
+      (previousIndex === -1 || previousIndex > currentIndex);
+    const offset = returning
+      ? "clamp(-108px, -8vw, -64px)"
+      : "clamp(64px, 8vw, 108px)";
+
+    let animation: Animation | undefined;
+    let startFrame: number | undefined;
+    const animateContent = () => {
+      const surface = content.querySelector<HTMLElement>(
+        ":scope > :is(.workspace-page:not([hidden]), .welcome)",
+      );
+      if (
+        !surface?.firstElementChild ||
+        surface.querySelector(":scope > .workspace-pending")
+      )
+        return false;
+
+      observer.disconnect();
+      if (reducedMotion.matches) {
+        release();
+        return true;
+      }
+      const entry = surface.animate?.(
+        [
+          { transform: `translateX(${offset})`, opacity: 0.86 },
+          { transform: "none", opacity: 1 },
+        ],
+        { duration: 300, easing: "cubic-bezier(0.22, 0.72, 0.25, 1)" },
+      );
+      if (entry) {
+        animation = entry;
+        entry.onfinish = release;
+        entry.pause();
+        entry.currentTime = 0;
+        content.dataset.pageSliding = "";
+        content.addEventListener("pointermove", stop, true);
+        content.addEventListener("wheel", stop, {
+          capture: true,
+          passive: true,
+        });
+        startFrame = requestAnimationFrame(() => entry.play());
+      } else {
+        release();
+      }
+      return true;
+    };
+    const observer = new MutationObserver(animateContent);
+    const release = () => {
+      reducedMotion.removeEventListener("change", stop);
+      content.removeEventListener("pointermove", stop, true);
+      content.removeEventListener("wheel", stop, true);
+      delete content.dataset.pageSliding;
+    };
+    const stop = () => {
+      observer.disconnect();
+      release();
+      if (startFrame !== undefined) cancelAnimationFrame(startFrame);
+      if (animation) {
+        animation.onfinish = null;
+        animation.cancel();
+      }
+    };
+    reducedMotion.addEventListener("change", stop);
+    if (!animateContent()) {
+      observer.observe(content, { childList: true, subtree: true });
+    }
+    return stop;
+  }, [activeSurface, activeWorkspaceId, workspaceView]);
+
   function selectWorkspaceView(view: WorkspaceView) {
     if (view === "changes") setFocused(false);
     if (view === "history") showRepository("history");

@@ -224,6 +224,10 @@ export function WorkspaceTabs({
               }}
             />
           ))}
+          <Tabs.Indicator
+            className="workspace-tab-indicator"
+            aria-hidden="true"
+          />
         </Tabs.List>
         <DragOverlay dropAnimation={reduced ? null : { duration: 150 }}>
           {(source) => (
@@ -274,6 +278,7 @@ function WorkspacePageTab({
       value={id}
       ref={tabRef}
       className={`view-tab${active ? " active" : ""} ${className}`}
+      data-workspace-view={id}
       aria-current={active ? "page" : undefined}
       aria-label={count === undefined ? label : `${label} ${count}`}
       title={title}

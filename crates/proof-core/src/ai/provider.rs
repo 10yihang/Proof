@@ -1689,31 +1689,41 @@ pub(super) fn redact(text: &str) -> String {
         .filter(|c| !c.is_control() || matches!(c, '\n' | '\t'))
         .collect()
 }
+fn reported_timeout(text: &str) -> bool {
+    ["deadline exceeded", "timeout", "timed out"]
+        .iter()
+        .any(|phrase| text.contains(phrase))
+}
+
+fn ocr_oauth_transport_failure(text: &str) -> Option<(&'static str, &'static str, &'static str)> {
+    if !text.contains("chatgpt oauth transport failed") {
+        return None;
+    }
+    let endpoint = if text.contains("https://auth.openai.com/") {
+        "ChatGPT OAuth · auth.openai.com"
+    } else {
+        "ChatGPT OAuth"
+    };
+    Some(if reported_timeout(text) {
+        (
+            "OCR_CONNECTION_OAUTH_TIMEOUT",
+            "连接 ChatGPT 认证服务超时，请检查网络后重试。",
+            endpoint,
+        )
+    } else {
+        (
+            "OCR_CONNECTION_OAUTH_NETWORK",
+            "无法连接 ChatGPT 认证服务，请检查网络后重试。",
+            endpoint,
+        )
+    })
+}
+
 fn ocr_connection_failure(output: &process::Output) -> Error {
     let text = failure_text(output).to_ascii_lowercase();
-    let timed_out = ["context deadline exceeded", "timeout", "timed out"]
-        .iter()
-        .any(|phrase| text.contains(phrase));
-    let (code, message, detail) = if text.contains("chatgpt oauth transport failed") {
-        let detail = if text.contains("https://auth.openai.com/") {
-            "ChatGPT OAuth · auth.openai.com"
-        } else {
-            "ChatGPT OAuth"
-        };
-        if timed_out {
-            (
-                "OCR_CONNECTION_OAUTH_TIMEOUT",
-                "连接 ChatGPT 认证服务超时，请检查网络后重试。",
-                detail,
-            )
-        } else {
-            (
-                "OCR_CONNECTION_OAUTH_NETWORK",
-                "无法连接 ChatGPT 认证服务，请检查网络后重试。",
-                detail,
-            )
-        }
-    } else if timed_out {
+    let (code, message, detail) = if let Some(failure) = ocr_oauth_transport_failure(&text) {
+        failure
+    } else if reported_timeout(&text) {
         (
             "OCR_CONNECTION_TIMEOUT",
             OCR_CONNECTION_TIMEOUT_MESSAGE,
@@ -1795,8 +1805,18 @@ fn classify_agent_failure(lower: &str) -> (&'static str, &'static str) {
 }
 
 fn agent_failure(kind: AgentKind, phase: &str, output: &process::Output) -> Error {
-    let text = safe_failure_text(output);
-    let (code, message) = classify_agent_failure(&text.to_lowercase());
+    let ocr_failure = if kind == AgentKind::Ocr {
+        ocr_oauth_transport_failure(&failure_text(output).to_ascii_lowercase())
+    } else {
+        None
+    };
+    let (code, message, detail) = if let Some((code, message, detail)) = ocr_failure {
+        (code, message, detail.to_owned())
+    } else {
+        let detail = safe_failure_text(output);
+        let (code, message) = classify_agent_failure(&detail.to_lowercase());
+        (code, message, detail)
+    };
     Error::new(
         code,
         message,
@@ -1804,10 +1824,10 @@ fn agent_failure(kind: AgentKind, phase: &str, output: &process::Output) -> Erro
             "Provider: {}\nPhase: {phase}\nExit code: {}\n{}",
             provider_name(kind),
             output.code,
-            if text.is_empty() {
+            if detail.is_empty() {
                 "CLI 未返回可显示的错误信息。"
             } else {
-                &text
+                &detail
             }
         ),
     )
@@ -1963,11 +1983,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ocr_connection_reports_the_oauth_timeout_without_replaying_stderr() {
+    fn ocr_connection_and_review_explain_the_oauth_timeout_without_replaying_stderr() {
         let output = process::Output {
             code: 1,
             stdout: Vec::new(),
-            stderr: b"Error: resolve LLM endpoint: resolve OCR config file: ChatGPT OAuth transport failed: Post \"https://auth.openai.com/oauth/token\": context deadline exceeded\nResponse body: private-provider-output\n".to_vec(),
+            stderr: b"Error: resolve LLM endpoint: resolve OCR config file: ChatGPT OAuth transport failed: Post \"https://auth.openai.com/api/accounts/oauth/token\": context deadline exceeded\nResponse body: private-provider-output\n".to_vec(),
         };
         let error = ocr_connection_failure(&output);
         assert_eq!(error.code, "OCR_CONNECTION_OAUTH_TIMEOUT");
@@ -1975,6 +1995,13 @@ mod tests {
         assert_eq!(
             error.detail,
             "ChatGPT OAuth · auth.openai.com\nOCR · exit 1"
+        );
+        let review_error = agent_failure(AgentKind::Ocr, "analysis", &output);
+        assert_eq!(review_error.code, error.code);
+        assert_eq!(review_error.message, error.message);
+        assert_eq!(
+            review_error.detail,
+            "Provider: OpenCodeReview\nPhase: analysis\nExit code: 1\nChatGPT OAuth · auth.openai.com"
         );
     }
 
