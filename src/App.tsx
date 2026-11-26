@@ -99,6 +99,7 @@ import { CommitComposer } from "./components/CommitComposer";
 import { CommitWorkspace } from "./components/CommitWorkspace";
 import { shouldDismissDrawer } from "./components/panel-focus";
 import { isMacDesktop, useWindowMenu } from "./use-window-menu";
+import { WorkspacePage } from "./components/WorkspacePage";
 import { WorkspaceTabs, type WorkspaceView } from "./components/WorkspaceTabs";
 import { nextReviewFile, reviewCoverage } from "./review-coverage";
 import "./styles/review-flow.css";
@@ -2467,7 +2468,7 @@ export default function App({
               {!diffWindow &&
                 coverage &&
                 (overviewVisited || tab === "overview") && (
-                  <Tabs.Panel
+                  <WorkspacePage
                     keepMounted
                     hidden={tab !== "overview"}
                     value="overview"
@@ -2491,12 +2492,12 @@ export default function App({
                         onOpenDiff={openHistoryDiff}
                       />
                     </Suspense>
-                  </Tabs.Panel>
+                  </WorkspacePage>
                 )}
               {diffTabs
                 .filter((t) => t.workspaceId === changes.workspace.id)
                 .map((item) => (
-                  <Tabs.Panel
+                  <WorkspacePage
                     keepMounted
                     hidden={tab !== item.id}
                     value={item.id}
@@ -2590,9 +2591,9 @@ export default function App({
                         }
                       />
                     </Suspense>
-                  </Tabs.Panel>
+                  </WorkspacePage>
                 ))}
-              <Tabs.Panel
+              <WorkspacePage
                 keepMounted
                 hidden={tab !== "repository"}
                 value="history"
@@ -2624,8 +2625,8 @@ export default function App({
                     />
                   </Suspense>
                 )}
-              </Tabs.Panel>
-              <Tabs.Panel
+              </WorkspacePage>
+              <WorkspacePage
                 keepMounted
                 hidden={tab !== "files"}
                 value="files"
@@ -2650,8 +2651,8 @@ export default function App({
                     />
                   </Suspense>
                 )}
-              </Tabs.Panel>
-              <Tabs.Panel
+              </WorkspacePage>
+              <WorkspacePage
                 keepMounted
                 hidden={tab !== "changes" && tab !== "commit"}
                 value={tab === "commit" ? "commit" : "changes"}
@@ -3085,7 +3086,7 @@ export default function App({
                     )}
                   </div>
                 </ResizableWorkbench>
-              </Tabs.Panel>
+              </WorkspacePage>
             </>
           )}
           {/* 终端抽屉位于全局状态栏之上、贴窗口底部；所有标签页共用同一会话。 */}

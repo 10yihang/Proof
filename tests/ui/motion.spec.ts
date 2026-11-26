@@ -181,6 +181,40 @@ test("the first History transition slides in the loaded page at normal speed", a
   }
 });
 
+test("a failed History load leaves Local changes usable", async ({ page }) => {
+  let failHistory!: () => void;
+  const historyModule = new Promise<void>((resolve) => {
+    failHistory = resolve;
+  });
+  await page.route("**/src/components/RepositoryView.tsx*", async (route) => {
+    await historyModule;
+    await route.abort();
+  });
+
+  try {
+    await page.goto("/?demo=1");
+    const historyTab = page.getByRole("tab", { name: "History", exact: true });
+    const changesTab = page.getByRole("tab", { name: /^本地变更/ });
+    const history = page.locator(".history-page");
+    const changes = page.locator(".changes-page .diff-panel");
+    await expect(changes).toBeVisible();
+    await historyTab.click();
+    await expect(history.locator(".workspace-pending")).toBeVisible();
+    await changesTab.click();
+    await expect(changes).toBeVisible();
+
+    failHistory();
+    await expect(history).toContainText("无法显示此页面。");
+    await expect(changes).toBeVisible();
+    await historyTab.click();
+    await expect(history.getByRole("alert")).toBeVisible();
+    await changesTab.click();
+    await expect(changes).toBeVisible();
+  } finally {
+    failHistory();
+  }
+});
+
 test("opening a comparison and closing its tab slide in opposite directions", async ({
   page,
 }) => {

@@ -1949,5 +1949,6 @@
   "代码增删暂不可用": "Line changes unavailable",
   "行": "lines",
   "代码增删趋势": "Line change trend",
-  "最近 {days} 天": "Past {days} days"
+  "最近 {days} 天": "Past {days} days",
+  "无法显示此页面。": "Unable to display this page."
 }
